@@ -286,10 +286,10 @@ class _AddEdgeDialogState extends State<AddEdgeDialog> {
                       prerequisiteId: _prerequisiteId!,
                       relationType: _relationType,
                     );
-                    if (!mounted) return;
+                    if (!context.mounted) return;
                     Navigator.pop(context, true);
                   } catch (e) {
-                    if (!mounted) return;
+                    if (!context.mounted) return;
                     setState(() => _saving = false);
                     Ui.error(context, e);
                   }

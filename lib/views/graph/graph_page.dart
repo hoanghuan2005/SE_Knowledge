@@ -215,7 +215,13 @@ class _GraphPageState extends State<GraphPage> {
   Algorithm _algorithm(int edgeCount) {
     // Không có cạnh nào thì Sugiyama không có gì để phân tầng -> dùng lực đẩy.
     if (_layout == GraphLayout.force || edgeCount == 0) {
-      return FruchtermanReingoldAlgorithm(iterations: 600);
+      return FruchtermanReingoldAlgorithm(
+        FruchtermanReingoldConfiguration(
+          iterations: 600,
+          repulsionRate: 0.5,
+          attractionRate: 0.15,
+        ),
+      );
     }
     final config = SugiyamaConfiguration()
       ..nodeSeparation = 36

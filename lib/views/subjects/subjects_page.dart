@@ -143,7 +143,7 @@ class _SubjectsPageState extends State<SubjectsPage> {
               Expanded(
                 child: ListView.separated(
                   itemCount: order.length,
-                  separatorBuilder: (_, __) => const Divider(),
+                  separatorBuilder: (_, _) => const Divider(),
                   itemBuilder: (_, i) {
                     final s = order[i];
                     return ListTile(
@@ -219,7 +219,7 @@ class _Table extends StatelessWidget {
         Expanded(
           child: ListView.separated(
             itemCount: rows.length,
-            separatorBuilder: (_, __) => const Divider(),
+            separatorBuilder: (_, _) => const Divider(),
             itemBuilder: (context, i) {
               final s = rows[i];
               final selected = state.selectedSubjectId == s.id;

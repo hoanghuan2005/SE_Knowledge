@@ -215,7 +215,7 @@ class _VaultPageState extends State<VaultPage> {
         Expanded(
           child: ListView.separated(
             itemCount: _notes.length,
-            separatorBuilder: (_, __) => const Divider(),
+            separatorBuilder: (_, _) => const Divider(),
             itemBuilder: (context, i) {
               final note = _notes[i];
               final selected = _preview?.filePath == note.filePath;
