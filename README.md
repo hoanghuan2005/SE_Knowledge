@@ -96,36 +96,76 @@ lib/
 
 Chỉ cần ba thứ. Không cần JDK, Maven, MySQL, Docker hay Android SDK.
 
-**1. Flutter SDK 3.47.3 stable trở lên.** Bắt buộc, vì project yêu cầu Dart
-`^3.13.3`. Winget không có gói Flutter, tải bản zip chính thức rồi giải nén ra
-`C:\src\flutter`, sau đó thêm `C:\src\flutter\bin` vào PATH của User.
+| Cần cài | Vì sao |
+| --- | --- |
+| Flutter SDK 3.47.3 stable trở lên | Project yêu cầu Dart `^3.13.3` |
+| Visual Studio Build Tools 2022, workload C++ | Biên dịch `windows/runner` thành `.exe` |
+| Developer Mode của Windows | Flutter tạo symlink cho plugin native |
 
-```bash
-curl -o "%TEMP%\flutter.zip" https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_3.47.3-stable.zip
+### Cách nhanh, một lệnh
+
+Mở **Windows PowerShell** tại thư mục gốc project rồi chạy:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\setup_windows.ps1
 ```
 
-**2. Visual Studio Build Tools 2022 kèm workload C++.** Bắt buộc để build cho
-Windows. Đây không phải IDE, không có editor, chỉ là compiler MSVC kèm Windows
-SDK và CMake mà Flutter gọi ngầm. Bản Build Tools nhẹ hơn Visual Studio
-Community và Flutter chấp nhận nó.
+Script [tools/setup_windows.ps1](tools/setup_windows.ps1) làm gần hết mọi việc:
+tải và giải nén Flutter ra `C:\src\flutter`, thêm vào PATH của User, cài
+Visual Studio Build Tools qua winget, chạy `flutter pub get`, rồi in
+`flutter doctor`. Chạy lại nhiều lần được, bước nào xong rồi thì tự bỏ qua.
 
-```bash
+Hai việc script không tự làm được, nó sẽ nhắc ở cuối:
+
+- **Bật Developer Mode.** Việc này cần quyền Administrator. Script tự mở cửa sổ
+  Settings, bạn chỉ việc bấm công tắc ở dòng đầu tiên.
+- **Mở lại IntelliJ và terminal.** Tiến trình đọc PATH đúng lúc nó khởi động,
+  nên phải đóng hẳn rồi mở lại mới thấy lệnh `flutter`. Mở tab terminal mới bên
+  trong IntelliJ cũ thì không ăn.
+
+Visual Studio Build Tools **không phải IDE**, nó không có editor và không mở lên
+được. Đó chỉ là compiler MSVC kèm Windows SDK và CMake mà Flutter gọi ngầm. Bạn
+vẫn code hoàn toàn trong IntelliJ.
+
+### Kiểm tra
+
+```powershell
+flutter doctor
+```
+
+Ba dòng **Flutter**, **Windows Version** và **Visual Studio** phải xanh. Dòng
+**Android toolchain** báo đỏ là bình thường, project này build desktop nên không
+dùng Android SDK.
+
+### Nếu muốn làm thủ công
+
+Chỉ làm khi không muốn chạy script. Lưu ý PowerShell 5.1 không hỗ trợ toán tử
+`&&`, muốn nối nhiều lệnh thì dùng dấu `;`.
+
+```powershell
+Invoke-WebRequest -Uri "https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_3.47.3-stable.zip" -OutFile "$env:TEMP\flutter.zip"
+```
+
+```powershell
+Expand-Archive -Path "$env:TEMP\flutter.zip" -DestinationPath "C:\src"
+```
+
+```powershell
+[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';C:\src\flutter\bin', 'User')
+```
+
+```powershell
 winget install --id Microsoft.VisualStudio.2022.BuildTools --exact --override "--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.CMake.Project --includeRecommended"
 ```
 
-**3. Developer Mode của Windows.** Bắt buộc, vì Flutter tạo symbolic link để nối
-các plugin native vào project. Bật một lần cho cả máy.
-
-```bash
+```powershell
 start ms-settings:developers
 ```
 
-Kiểm tra lại, ba dòng Flutter, Visual Studio và Windows Version phải xanh. Dòng
-Android toolchain đỏ thì bỏ qua được, desktop không dùng tới.
-
-```bash
-flutter doctor
-```
+Nếu thích sửa PATH bằng giao diện thì nhấn `Windows + R`, gõ `sysdm.cpl`, vào
+tab **Advanced**, bấm **Environment Variables**, chọn dòng **Path** ở khung
+**trên** là *User variables*, bấm **Edit**, bấm **New**, gõ
+`C:\src\flutter\bin`, rồi bấm **OK** ba lần.
 
 ## Chạy ứng dụng
 
