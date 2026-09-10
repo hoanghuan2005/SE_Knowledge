@@ -92,11 +92,51 @@ lib/
     └── widgets/                   Bảng chi tiết môn dùng chung
 ```
 
-## Chạy ứng dụng
+## Cài đặt môi trường cho thành viên mới
+
+Chỉ cần ba thứ. Không cần JDK, Maven, MySQL, Docker hay Android SDK.
+
+**1. Flutter SDK 3.47.3 stable trở lên.** Bắt buộc, vì project yêu cầu Dart
+`^3.13.3`. Winget không có gói Flutter, tải bản zip chính thức rồi giải nén ra
+`C:\src\flutter`, sau đó thêm `C:\src\flutter\bin` vào PATH của User.
 
 ```bash
-flutter config --enable-windows-desktop
+curl -o "%TEMP%\flutter.zip" https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_3.47.3-stable.zip
+```
+
+**2. Visual Studio Build Tools 2022 kèm workload C++.** Bắt buộc để build cho
+Windows. Đây không phải IDE, không có editor, chỉ là compiler MSVC kèm Windows
+SDK và CMake mà Flutter gọi ngầm. Bản Build Tools nhẹ hơn Visual Studio
+Community và Flutter chấp nhận nó.
+
+```bash
+winget install --id Microsoft.VisualStudio.2022.BuildTools --exact --override "--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.CMake.Project --includeRecommended"
+```
+
+**3. Developer Mode của Windows.** Bắt buộc, vì Flutter tạo symbolic link để nối
+các plugin native vào project. Bật một lần cho cả máy.
+
+```bash
+start ms-settings:developers
+```
+
+Kiểm tra lại, ba dòng Flutter, Visual Studio và Windows Version phải xanh. Dòng
+Android toolchain đỏ thì bỏ qua được, desktop không dùng tới.
+
+```bash
+flutter doctor
+```
+
+## Chạy ứng dụng
+
+Sau khi `git clone` hoặc `git pull`, thư mục `.dart_tool/` và `build/` không nằm
+trong Git nên phải nạp lại dependency trước.
+
+```bash
 flutter pub get
+```
+
+```bash
 flutter run -d windows
 ```
 
@@ -106,11 +146,19 @@ Build bản phát hành:
 flutter build windows --release
 ```
 
-Chạy kiểm thử phần bóc tách Markdown:
+Chạy kiểm thử phần bóc tách Markdown, việc này không cần Visual Studio:
 
 ```bash
 flutter test
 ```
+
+Trong IntelliJ IDEA, cần bản có plugin **Flutter** và **Dart**. Vào Settings,
+Languages & Frameworks, Flutter, rồi trỏ Flutter SDK path tới `C:\src\flutter`.
+Chọn device `Windows (desktop)` trên thanh công cụ rồi bấm Run.
+
+Không có bước nào phải import cơ sở dữ liệu. Lần chạy đầu tiên app tự tạo file
+`se_knowledge.db` kèm dữ liệu mẫu. API key của trợ lý AI là tuỳ chọn, thiếu nó
+thì bốn tab còn lại vẫn hoạt động bình thường.
 
 ## Cách dùng
 
