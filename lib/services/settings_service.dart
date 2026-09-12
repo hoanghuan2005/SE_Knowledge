@@ -74,4 +74,12 @@ class SettingsService {
       await prefs.setString(AppConstants.keyAiModel, value);
     }
   }
+
+  // --- Theme ---
+
+  Future<String> getThemeMode() async =>
+      (await _p).getString(AppConstants.keyThemeMode) ?? 'dark';
+
+  Future<void> setThemeMode(String mode) async =>
+      (await _p).setString(AppConstants.keyThemeMode, mode);
 }

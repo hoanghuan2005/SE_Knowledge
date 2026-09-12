@@ -19,7 +19,7 @@ class SubjectDetailPanel extends StatelessWidget {
         final subject = AppState.instance.selectedSubject;
         return Container(
           width: 320,
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: AppColors.surface,
             border: Border(left: BorderSide(color: AppColors.divider)),
           ),
@@ -102,7 +102,7 @@ class _Detail extends StatelessWidget {
         const SizedBox(height: 12),
         Text(
           subject.name,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.w700,
             color: AppColors.textPrimary,
@@ -112,13 +112,13 @@ class _Detail extends StatelessWidget {
         const SizedBox(height: 8),
         Text(
           'Kỳ ${subject.semester}  ·  ${subject.credits} tín chỉ',
-          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
         ),
         if (subject.description.isNotEmpty) ...[
           const SizedBox(height: 14),
           Text(
             subject.description,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               height: 1.55,
               color: AppColors.textPrimary,
@@ -130,7 +130,7 @@ class _Detail extends StatelessWidget {
         const SizedBox(height: 12),
         Row(
           children: [
-            const Expanded(
+            Expanded(
               child: Text(
                 'Môn tiên quyết',
                 style: TextStyle(
@@ -152,8 +152,8 @@ class _Detail extends StatelessWidget {
           ],
         ),
         if (prereqs.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
             child: Text(
               'Không có — đây là môn nền tảng.',
               style: TextStyle(fontSize: 12.5, color: AppColors.textHint),
@@ -176,17 +176,20 @@ class _Detail extends StatelessWidget {
               onOpen: () => AppState.instance.select(p.id),
             ),
         const SizedBox(height: 20),
-        const Text(
-          'Mở ra các môn',
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
-          ),
-        ),
+       Padding(
+  padding: const EdgeInsets.only(bottom: 4),
+  child: Text(
+    'Mở ra các môn',
+    style: TextStyle(
+      fontSize: 13,
+      fontWeight: FontWeight.w700,
+      color: AppColors.textPrimary,
+    ),
+  ),
+),
         if (unlocks.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
             child: Text(
               'Chưa có môn nào phụ thuộc vào môn này.',
               style: TextStyle(fontSize: 12.5, color: AppColors.textHint),
@@ -259,7 +262,7 @@ class _EdgeTile extends StatelessWidget {
                     children: [
                       Text(
                         subject.code,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w700,
                           color: AppColors.textPrimary,
@@ -269,7 +272,7 @@ class _EdgeTile extends StatelessWidget {
                         subject.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11.5,
                           color: AppColors.textSecondary,
                         ),
@@ -306,7 +309,7 @@ class _NoteSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Ghi chú Obsidian',
           style: TextStyle(
             fontSize: 13,
@@ -317,18 +320,45 @@ class _NoteSection extends StatelessWidget {
         const SizedBox(height: 6),
         Text(
           hasNote ? subject.notePath! : 'Chưa xuất ra file .md nào.',
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 11.5,
             color: AppColors.textSecondary,
             height: 1.4,
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         SizedBox(
           width: double.infinity,
+          height: 36,
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.edit_note, size: 18),
+            label: const Text(
+              'Mở ghi chú Obsidian (.md)',
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            onPressed: () => AppState.instance.openNoteTab(subject),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          height: 32,
           child: OutlinedButton.icon(
-            icon: const Icon(Icons.save_alt, size: 16),
-            label: const Text('Xuất file .md'),
+            icon: const Icon(Icons.save_alt, size: 15),
+            label: const Text('Xuất lại file .md', style: TextStyle(fontSize: 11.5)),
+            style: OutlinedButton.styleFrom(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
             onPressed: !state.hasVault
                 ? null
                 : () async {
@@ -348,8 +378,8 @@ class _NoteSection extends StatelessWidget {
           ),
         ),
         if (!state.hasVault)
-          const Padding(
-            padding: EdgeInsets.only(top: 6),
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
             child: Text(
               'Chọn thư mục Vault ở tab Vault để bật chức năng này.',
               style: TextStyle(fontSize: 11, color: AppColors.textHint),

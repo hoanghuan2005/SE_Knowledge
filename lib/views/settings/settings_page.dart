@@ -85,27 +85,65 @@ class _SettingsPageState extends State<SettingsPage> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return Column(
-      children: [
-        const PageHeader(
-          title: 'Cài đặt',
-          subtitle: 'Mọi cấu hình chỉ nằm trên máy này, không gửi đi đâu',
-        ),
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.all(24),
-            children: [
-              _aiCard(),
-              const SizedBox(height: 16),
-              _storageCard(),
-              const SizedBox(height: 16),
-              _architectureCard(),
-              const SizedBox(height: 16),
-              _dangerCard(),
-            ],
+    return ListenableBuilder(
+      listenable: AppState.instance,
+      builder: (context, _) {
+        return Column(
+          children: [
+            const PageHeader(
+              title: 'Cài đặt',
+              subtitle: 'Mọi cấu hình chỉ nằm trên máy này, không gửi đi đâu',
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.all(24),
+                children: [
+                  _themeCard(),
+                  const SizedBox(height: 16),
+                  _aiCard(),
+                  const SizedBox(height: 16),
+                  _storageCard(),
+                  const SizedBox(height: 16),
+                  _architectureCard(),
+                  const SizedBox(height: 16),
+                  _dangerCard(),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _themeCard() {
+    final isDark = AppState.instance.isDark;
+    return _Section(
+      icon: isDark ? Icons.dark_mode_outlined : Icons.light_mode_outlined,
+      title: 'Giao diện ứng dụng',
+      description:
+          'Chọn phong cách giao diện phù hợp với bạn. Mặc định là Obsidian Dark '
+          'tối ưu cho mắt khi làm việc lâu.',
+      child: SegmentedButton<bool>(
+        showSelectedIcon: true,
+        segments: const [
+          ButtonSegment<bool>(
+            value: true,
+            icon: Icon(Icons.dark_mode_outlined, size: 16),
+            label: Text('Giao diện Tối (Obsidian Black)'),
           ),
-        ),
-      ],
+          ButtonSegment<bool>(
+            value: false,
+            icon: Icon(Icons.light_mode_outlined, size: 16),
+            label: Text('Giao diện Sáng (Light)'),
+          ),
+        ],
+        selected: {isDark},
+        onSelectionChanged: (s) {
+          final dark = s.first;
+          AppState.instance.setThemeMode(dark ? ThemeMode.dark : ThemeMode.light);
+        },
+      ),
     );
   }
 
@@ -295,7 +333,7 @@ class _Section extends StatelessWidget {
                 const SizedBox(width: 8),
                 Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
                     color: AppColors.textPrimary,
@@ -306,7 +344,7 @@ class _Section extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               description,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12.5,
                 height: 1.55,
                 color: AppColors.textSecondary,
@@ -338,7 +376,7 @@ class _KeyValue extends StatelessWidget {
             width: 160,
             child: Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12.5,
                 color: AppColors.textSecondary,
               ),
@@ -347,7 +385,7 @@ class _KeyValue extends StatelessWidget {
           Expanded(
             child: SelectableText(
               value,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12.5,
                 color: AppColors.textPrimary,
               ),

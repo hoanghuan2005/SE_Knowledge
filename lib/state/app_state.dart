@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 
 import '../models/graph_data.dart';
 import '../models/prerequisite.dart';
@@ -6,6 +6,7 @@ import '../models/subject.dart';
 import '../services/db_service.dart';
 import '../services/obsidian_service.dart';
 import '../services/settings_service.dart';
+import '../utils/app_colors.dart';
 
 /// Store trạng thái dùng chung, không cần package quản lý state bên ngoài.
 ///
@@ -19,6 +20,23 @@ class AppState extends ChangeNotifier {
   final ObsidianService _vault = ObsidianService.instance;
   final SettingsService _settings = SettingsService.instance;
 
+  // --- Theme Mode ---
+  ThemeMode _themeMode = ThemeMode.dark;
+  ThemeMode get themeMode => _themeMode;
+  bool get isDark => _themeMode == ThemeMode.dark;
+
+  Future<void> toggleTheme() async {
+    final next = isDark ? ThemeMode.light : ThemeMode.dark;
+    await setThemeMode(next);
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    _themeMode = mode;
+    AppColors.isDark = (mode == ThemeMode.dark);
+    await _settings.setThemeMode(mode == ThemeMode.dark ? 'dark' : 'light');
+    notifyListeners();
+  }
+
   GraphData _graph = GraphData.empty;
   GraphData get graph => _graph;
 
@@ -31,6 +49,38 @@ class AppState extends ChangeNotifier {
   Subject? get selectedSubject =>
       _selectedSubjectId == null ? null : _graph.byId[_selectedSubjectId];
 
+  // --- Workspace Note Tabs (Obsidian style) ---
+  final List<Subject> _openNoteTabs = [];
+  List<Subject> get openNoteTabs => List.unmodifiable(_openNoteTabs);
+
+  Subject? _activeNote;
+  Subject? get activeNote => _activeNote;
+
+  void openNoteTab(Subject subject) {
+    if (!_openNoteTabs.any((s) => s.id == subject.id || s.code.toUpperCase() == subject.code.toUpperCase())) {
+      _openNoteTabs.add(subject);
+    }
+    _activeNote = subject;
+    _selectedSubjectId = subject.id;
+    notifyListeners();
+  }
+
+  void closeNoteTab(Subject subject) {
+    _openNoteTabs.removeWhere((s) => s.id == subject.id || s.code.toUpperCase() == subject.code.toUpperCase());
+    if (_activeNote?.id == subject.id || _activeNote?.code.toUpperCase() == subject.code.toUpperCase()) {
+      _activeNote = _openNoteTabs.isNotEmpty ? _openNoteTabs.last : null;
+    }
+    notifyListeners();
+  }
+
+  void setActiveNote(Subject? subject) {
+    _activeNote = subject;
+    if (subject != null) {
+      _selectedSubjectId = subject.id;
+    }
+    notifyListeners();
+  }
+
   bool _loading = false;
   bool get loading => _loading;
 
@@ -39,6 +89,10 @@ class AppState extends ChangeNotifier {
 
   /// Nạp lần đầu khi app khởi động.
   Future<void> bootstrap() async {
+    final savedTheme = await _settings.getThemeMode();
+    _themeMode = savedTheme == 'light' ? ThemeMode.light : ThemeMode.dark;
+    AppColors.isDark = (_themeMode == ThemeMode.dark);
+
     _vaultPath = await _settings.getVaultPath();
     await refresh();
   }

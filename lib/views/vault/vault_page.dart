@@ -1,10 +1,12 @@
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
+import '../../models/subject.dart';
 import '../../services/obsidian_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
+import '../notes/obsidian_note_editor_page.dart';
 
 /// Cầu nối giữa file `.md` trên đĩa và SQLite.
 ///
@@ -198,13 +200,13 @@ class _VaultPageState extends State<VaultPage> {
         Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: AppColors.surface,
             border: Border(bottom: BorderSide(color: AppColors.divider)),
           ),
           child: Text(
             '${_notes.length} file .md',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 10.5,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.6,
@@ -220,7 +222,9 @@ class _VaultPageState extends State<VaultPage> {
               final note = _notes[i];
               final selected = _preview?.filePath == note.filePath;
               return Material(
-                color: selected ? AppColors.primaryLight : Colors.transparent,
+                color: selected
+                    ? AppColors.primary.withValues(alpha: AppColors.isDark ? 0.22 : 0.12)
+                    : Colors.transparent,
                 child: ListTile(
                   dense: true,
                   onTap: () => _openNote(note),
@@ -241,7 +245,7 @@ class _VaultPageState extends State<VaultPage> {
                   ),
                   trailing: Text(
                     'K${note.semester}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11,
                       color: AppColors.textSecondary,
                     ),
@@ -280,28 +284,70 @@ class _VaultPageState extends State<VaultPage> {
         Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: AppColors.surface,
             border: Border(bottom: BorderSide(color: AppColors.divider)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                '${note.code} — ${note.name}',
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                note.filePath,
-                style: const TextStyle(
-                  fontSize: 11.5,
-                  color: AppColors.textSecondary,
-                ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${note.code} — ${note.name}',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          note.filePath,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.edit_note, size: 16),
+                    label: const Text(
+                      'Soạn thảo (Obsidian Editor)',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                    onPressed: () {
+                      final existing = AppState.instance.graph.subjects
+                          .where((s) => s.code.toUpperCase() == note.code.toUpperCase())
+                          .firstOrNull;
+                      final subject = existing ??
+                          Subject.create(
+                            code: note.code,
+                            name: note.name,
+                            semester: note.semester,
+                            credits: note.credits,
+                            description: note.description,
+                            notePath: note.filePath,
+                          );
+                      ObsidianNoteEditorPage.open(context, subject);
+                    },
+                  ),
+                ],
               ),
               const SizedBox(height: 10),
               Wrap(
@@ -316,14 +362,16 @@ class _VaultPageState extends State<VaultPage> {
                       ),
                       decoration: BoxDecoration(
                         color: note.prerequisiteLinks.contains(link)
-                            ? AppColors.primaryLight
+                            ? (AppColors.isDark
+                                ? AppColors.primary.withValues(alpha: 0.3)
+                                : AppColors.primaryLight)
                             : AppColors.background,
                         borderRadius: BorderRadius.circular(5),
                         border: Border.all(color: AppColors.border),
                       ),
                       child: Text(
                         '[[$link]]',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
                           fontFamily: 'monospace',
                           color: AppColors.textPrimary,
@@ -343,7 +391,7 @@ class _VaultPageState extends State<VaultPage> {
               padding: const EdgeInsets.all(24),
               child: SelectableText(
                 _previewRaw,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12.5,
                   height: 1.6,
                   fontFamily: 'monospace',
@@ -371,7 +419,7 @@ class _VaultPageState extends State<VaultPage> {
             const SizedBox(height: 10),
             Text(
               report.summary,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 height: 1.5,
                 color: AppColors.textSecondary,

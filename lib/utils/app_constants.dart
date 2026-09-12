@@ -12,6 +12,7 @@ class AppConstants {
   static const String keyAiProvider = 'AI_PROVIDER';
   static const String keyAiApiKey = 'AI_API_KEY';
   static const String keyAiModel = 'AI_MODEL';
+  static const String keyThemeMode = 'THEME_MODE';
 
   // --- Nhà cung cấp AI ---
   static const String providerGemini = 'gemini';

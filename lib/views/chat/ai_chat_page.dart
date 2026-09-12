@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../models/chat_message.dart';
 import '../../services/ai_service.dart';
+import '../../services/chat_session_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
@@ -15,12 +16,11 @@ import '../../utils/ui_helpers.dart';
 class AiChatPage extends StatefulWidget {
   const AiChatPage({super.key});
 
-  @override
+  @override                                           
   State<AiChatPage> createState() => _AiChatPageState();
 }
 
 class _AiChatPageState extends State<AiChatPage> {
-  final List<ChatMessage> _messages = [];
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
   bool _sending = false;
@@ -55,10 +55,11 @@ class _AiChatPageState extends State<AiChatPage> {
     final text = (preset ?? _input.text).trim();
     if (text.isEmpty || _sending) return;
 
-    final history = List<ChatMessage>.from(_messages);
+    final session = ChatSessionService.instance.currentSession;
+    final history = List<ChatMessage>.from(session.messages);
 
     setState(() {
-      _messages.add(ChatMessage.user(text));
+      ChatSessionService.instance.addMessage(ChatMessage.user(text));
       _input.clear();
       _sending = true;
     });
@@ -71,17 +72,16 @@ class _AiChatPageState extends State<AiChatPage> {
         includeKnowledgeContext: _useContext,
       );
       if (!mounted) return;
-      setState(() => _messages.add(ChatMessage.assistant(answer)));
+      ChatSessionService.instance.addMessage(ChatMessage.assistant(answer));
     } on AiException catch (e) {
       if (!mounted) return;
-      setState(
-        () => _messages.add(ChatMessage.assistant(e.message, isError: true)),
+      ChatSessionService.instance.addMessage(
+        ChatMessage.assistant(e.message, isError: true),
       );
     } catch (e) {
       if (!mounted) return;
-      setState(
-        () =>
-            _messages.add(ChatMessage.assistant(e.toString(), isError: true)),
+      ChatSessionService.instance.addMessage(
+        ChatMessage.assistant(e.toString(), isError: true),
       );
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -91,57 +91,75 @@ class _AiChatPageState extends State<AiChatPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        PageHeader(
-          title: 'Trợ lý AI',
-          subtitle: _useContext
-              ? 'Đang gửi kèm ngữ cảnh đồ thị môn học từ SQLite'
-              : 'Đang hỏi thuần, không gửi dữ liệu môn học',
-          actions: [
-            Row(
-              children: [
-                const Text(
-                  'Gửi kèm ngữ cảnh',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    color: AppColors.textSecondary,
-                  ),
+    return ListenableBuilder(
+      listenable: Listenable.merge([ChatSessionService.instance, AppState.instance]),
+      builder: (context, _) {
+        final session = ChatSessionService.instance.currentSession;
+        final messages = session.messages;
+
+        return Column(
+          children: [
+            PageHeader(
+              title: session.title.isEmpty ? 'Trợ lý AI' : session.title,
+              subtitle: _useContext
+                  ? 'Đang gửi kèm ngữ cảnh đồ thị môn học từ SQLite'
+                  : 'Đang hỏi thuần, không gửi dữ liệu môn học',
+              actions: [
+                Row(
+                  children: [
+                    Text(
+                      'Gửi kèm ngữ cảnh',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    Switch(
+                      value: _useContext,
+                      onChanged: (v) => setState(() => _useContext = v),
+                    ),
+                  ],
                 ),
-                Switch(
-                  value: _useContext,
-                  onChanged: (v) => setState(() => _useContext = v),
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: 'Tạo đoạn chat mới',
+                  icon: const Icon(Icons.add_comment_outlined),
+                  onPressed: () {
+                    ChatSessionService.instance.newSession();
+                    setState(() {});
+                  },
+                ),
+                IconButton(
+                  tooltip: 'Xoá đoạn chat này',
+                  icon: const Icon(Icons.delete_sweep_outlined),
+                  onPressed: messages.isEmpty
+                      ? null
+                      : () => setState(() {
+                            ChatSessionService.instance.clearCurrentSession();
+                          }),
                 ),
               ],
             ),
-            const SizedBox(width: 8),
-            IconButton(
-              tooltip: 'Xoá hội thoại',
-              icon: const Icon(Icons.delete_sweep_outlined),
-              onPressed: _messages.isEmpty
-                  ? null
-                  : () => setState(_messages.clear),
+            Expanded(
+              child: messages.isEmpty
+                  ? _welcome()
+                  : ListView.builder(
+                      controller: _scroll,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 32,
+                        vertical: 20,
+                      ),
+                      itemCount: messages.length + (_sending ? 1 : 0),
+                      itemBuilder: (context, i) {
+                        if (i >= messages.length) return const _TypingBubble();
+                        return _Bubble(message: messages[i]);
+                      },
+                    ),
             ),
+            _composer(),
           ],
-        ),
-        Expanded(
-          child: _messages.isEmpty
-              ? _welcome()
-              : ListView.builder(
-                  controller: _scroll,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 32,
-                    vertical: 20,
-                  ),
-                  itemCount: _messages.length + (_sending ? 1 : 0),
-                  itemBuilder: (context, i) {
-                    if (i >= _messages.length) return const _TypingBubble();
-                    return _Bubble(message: _messages[i]);
-                  },
-                ),
-        ),
-        _composer(),
-      ],
+        );
+      },
     );
   }
 
@@ -164,7 +182,7 @@ class _AiChatPageState extends State<AiChatPage> {
                   color: AppColors.primary,
                 ),
                 const SizedBox(height: 16),
-                const Text(
+                Text(
                   'Hỏi về lộ trình học của bạn',
                   style: TextStyle(
                     fontSize: 18,
@@ -181,7 +199,7 @@ class _AiChatPageState extends State<AiChatPage> {
                       : 'Chưa có API key. Vào tab Cài đặt để nhập key của '
                             'Gemini hoặc OpenAI trước khi chat.',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     height: 1.5,
                     color: AppColors.textSecondary,
@@ -195,9 +213,20 @@ class _AiChatPageState extends State<AiChatPage> {
                   children: [
                     for (final s in _suggestions)
                       ActionChip(
+                        elevation: 0,
+                        pressElevation: 0,
+                        backgroundColor: AppColors.surface,
+                        side: BorderSide(color: AppColors.border),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         label: Text(
                           s,
-                          style: const TextStyle(fontSize: 12),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textPrimary,
+                          ),
                         ),
                         onPressed: configured ? () => _send(s) : null,
                       ),
@@ -214,7 +243,7 @@ class _AiChatPageState extends State<AiChatPage> {
   Widget _composer() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: AppColors.surface,
         border: Border(top: BorderSide(color: AppColors.divider)),
       ),
@@ -231,8 +260,30 @@ class _AiChatPageState extends State<AiChatPage> {
                 maxLines: 4,
                 minLines: 1,
                 textInputAction: TextInputAction.newline,
-                decoration: const InputDecoration(
+                style: TextStyle(
+                  fontSize: 13.5,
+                  color: AppColors.textPrimary,
+                ),
+                decoration: InputDecoration(
                   hintText: 'Nhập câu hỏi… (Enter để gửi, Shift+Enter xuống dòng)',
+                  hintStyle: TextStyle(
+                    fontSize: 12.5,
+                    color: AppColors.textHint,
+                  ),
+                  fillColor: AppColors.isDark ? const Color(0xFF16161A) : Colors.white,
+                  filled: true,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: AppColors.border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: AppColors.border),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: AppColors.primary, width: 1.6),
+                  ),
                 ),
               ),
             ),
@@ -269,13 +320,14 @@ class _Bubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isUser = message.isUser;
+    final isDark = AppColors.isDark;
     final bg = message.isError
-        ? const Color(0xFFFDECEF)
+        ? (isDark ? const Color(0xFF3B1E28) : const Color(0xFFFDECEF))
         : isUser
         ? AppColors.primary
         : AppColors.surface;
     final fg = message.isError
-        ? AppColors.error
+        ? (isDark ? const Color(0xFFFF7A8A) : AppColors.error)
         : isUser
         ? Colors.white
         : AppColors.textPrimary;
@@ -288,13 +340,15 @@ class _Bubble extends StatelessWidget {
             : MainAxisAlignment.start,
         children: [
           if (!isUser) ...[
-            const CircleAvatar(
+            CircleAvatar(
               radius: 14,
-              backgroundColor: AppColors.primaryLight,
+              backgroundColor: isDark
+                  ? const Color(0xFF2C2442)
+                  : AppColors.primaryLight,
               child: Icon(
                 Icons.auto_awesome,
                 size: 14,
-                color: AppColors.primaryDark,
+                color: isDark ? AppColors.primaryLight : AppColors.primaryDark,
               ),
             ),
             const SizedBox(width: 10),
@@ -334,23 +388,26 @@ class _TypingBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.only(bottom: 14),
+    final isDark = AppColors.isDark;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
       child: Row(
         children: [
           CircleAvatar(
             radius: 14,
-            backgroundColor: AppColors.primaryLight,
+            backgroundColor: isDark
+                ? const Color(0xFF2C2442)
+                : AppColors.primaryLight,
             child: SizedBox(
               width: 14,
               height: 14,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: AppColors.primaryDark,
+                color: isDark ? AppColors.primaryLight : AppColors.primaryDark,
               ),
             ),
           ),
-          SizedBox(width: 10),
+          const SizedBox(width: 10),
           Text(
             'Đang suy nghĩ…',
             style: TextStyle(fontSize: 13, color: AppColors.textSecondary),

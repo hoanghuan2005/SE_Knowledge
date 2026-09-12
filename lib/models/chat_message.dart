@@ -21,4 +21,21 @@ class ChatMessage {
       ChatMessage(role: ChatRole.assistant, content: content, isError: isError);
 
   bool get isUser => role == ChatRole.user;
+
+  Map<String, dynamic> toJson() => {
+        'role': role.name,
+        'content': content,
+        'at': at.toIso8601String(),
+        'isError': isError,
+      };
+
+  factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
+        role: ChatRole.values.firstWhere(
+          (e) => e.name == json['role'],
+          orElse: () => ChatRole.user,
+        ),
+        content: json['content'] as String? ?? '',
+        at: json['at'] != null ? DateTime.tryParse(json['at'] as String) : null,
+        isError: json['isError'] as bool? ?? false,
+      );
 }

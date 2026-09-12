@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'services/chat_session_service.dart';
 import 'services/db_service.dart';
 import 'services/settings_service.dart';
 import 'state/app_state.dart';
@@ -19,6 +20,7 @@ Future<void> main() async {
   DbService.registerFfi();
 
   await SettingsService.instance.init();
+  await ChatSessionService.instance.init();
   await AppState.instance.bootstrap();
 
   runApp(const SeKnowledgeApp());
@@ -29,11 +31,18 @@ class SeKnowledgeApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: AppConstants.appName,
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.lightTheme,
-      home: const AppShell(),
+    return ListenableBuilder(
+      listenable: AppState.instance,
+      builder: (context, _) {
+        return MaterialApp(
+          title: AppConstants.appName,
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: AppState.instance.themeMode,
+          home: const AppShell(),
+        );
+      },
     );
   }
 }

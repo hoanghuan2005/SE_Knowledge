@@ -89,7 +89,7 @@ class PageHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: AppColors.surface,
         border: Border(bottom: BorderSide(color: AppColors.divider)),
       ),
@@ -102,7 +102,7 @@ class PageHeader extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w700,
                     color: AppColors.textPrimary,
@@ -113,7 +113,7 @@ class PageHeader extends StatelessWidget {
                     padding: const EdgeInsets.only(top: 2),
                     child: Text(
                       subtitle,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13,
                         color: AppColors.textSecondary,
                       ),
@@ -157,7 +157,7 @@ class EmptyState extends StatelessWidget {
             Text(
               title,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w600,
                 color: AppColors.textPrimary,
@@ -167,7 +167,7 @@ class EmptyState extends StatelessWidget {
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 height: 1.5,
                 color: AppColors.textSecondary,

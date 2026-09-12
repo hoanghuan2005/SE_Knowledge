@@ -130,7 +130,7 @@ class _SubjectsPageState extends State<SubjectsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'Sắp xếp topo (thuật toán Kahn) trên đồ thị tiên quyết. '
                 'Học theo thứ tự này thì không môn nào bị thiếu tiên quyết.',
                 style: TextStyle(
@@ -200,7 +200,7 @@ class _Table extends StatelessWidget {
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: AppColors.surface,
             border: Border(bottom: BorderSide(color: AppColors.divider)),
           ),
@@ -227,7 +227,9 @@ class _Table extends StatelessWidget {
               final outDeg = state.graph.outDegree(s.id!);
 
               return Material(
-                color: selected ? AppColors.primaryLight : Colors.transparent,
+                color: selected
+                    ? AppColors.primary.withValues(alpha: AppColors.isDark ? 0.22 : 0.12)
+                    : Colors.transparent,
                 child: InkWell(
                   onTap: () => state.select(s.id),
                   onDoubleTap: () =>
@@ -254,7 +256,7 @@ class _Table extends StatelessWidget {
                               const SizedBox(width: 8),
                               Text(
                                 s.code,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 12.5,
                                   fontWeight: FontWeight.w700,
                                   color: AppColors.textPrimary,
@@ -268,7 +270,7 @@ class _Table extends StatelessWidget {
                             s.name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 13,
                               color: AppColors.textPrimary,
                             ),
@@ -307,7 +309,7 @@ class _Th extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       text,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 10.5,
         fontWeight: FontWeight.w700,
         letterSpacing: 0.6,
@@ -325,7 +327,7 @@ class _Td extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       text,
-      style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+      style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
     );
   }
 }

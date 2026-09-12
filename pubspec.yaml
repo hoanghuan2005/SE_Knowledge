@@ -30,6 +30,7 @@ dependencies:
 
   # --- Luu cau hinh cuc bo (API key, duong dan vault) ---
   shared_preferences: ^2.3.2
+  flutter_markdown: ^0.7.7+1
 
 dev_dependencies:
   flutter_test:
