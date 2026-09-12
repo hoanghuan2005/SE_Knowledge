@@ -8,20 +8,19 @@ import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
 
-/// Chế độ hiển thị của trình soạn thảo.
+/// Chế độ hiển thị: Soạn thảo trực tiếp (Edit) hoặc Xem trước/Đọc (Preview) trên CÙNG MỘT MÀN HÌNH.
 enum NoteViewMode {
-  /// Chỉ soạn thảo Markdown thô
+  /// Soạn thảo Markdown trực tiếp trên toàn màn hình (Notion style)
   edit,
 
-  /// Chia đôi màn hình: Trái soạn thảo - Phải xem trước
-  split,
-
-  /// Chỉ xem trước Markdown đã render
+  /// Chế độ đọc tài liệu đã render (Reading mode)
   preview,
 }
 
-/// Widget soạn thảo ghi chú chuẩn Obsidian được nhúng trực tiếp trong Workspace chính.
-/// Phía trên có thanh công cụ Markdown, ở giữa là trình soạn thảo/xem trước, phía dưới là Status Bar.
+/// Trình soạn thảo ghi chú chuẩn Notion / Obsidian:
+/// - Soạn thảo và đọc trên cùng MỘT màn hình duy nhất, chuyển đổi bằng nút chế độ.
+/// - Không thanh công cụ cồng kềnh: Định dạng nhanh qua CHUỘT PHẢI (Context Menu).
+/// - Tự động đồng bộ và lưu file .md vào Obsidian Vault.
 class ObsidianNoteEditorView extends StatefulWidget {
   final Subject subject;
 
@@ -37,7 +36,9 @@ class ObsidianNoteEditorView extends StatefulWidget {
 class _ObsidianNoteEditorViewState extends State<ObsidianNoteEditorView> {
   late final TextEditingController _controller;
   late final UndoHistoryController _undoController;
-  NoteViewMode _viewMode = NoteViewMode.split;
+  final FocusNode _focusNode = FocusNode();
+
+  NoteViewMode _viewMode = NoteViewMode.edit;
   bool _isLoading = true;
   bool _isSaving = false;
   bool _isDirty = false;
@@ -65,6 +66,7 @@ class _ObsidianNoteEditorViewState extends State<ObsidianNoteEditorView> {
   void dispose() {
     _controller.dispose();
     _undoController.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -202,21 +204,141 @@ class _ObsidianNoteEditorViewState extends State<ObsidianNoteEditorView> {
     final text = _controller.text;
     final selection = _controller.selection;
 
-    if (!selection.isValid) {
-      _controller.text = '$text$prefix$suffix';
-      _controller.selection = TextSelection.collapsed(offset: _controller.text.length);
-      return;
+    if (!selection.isValid || selection.isCollapsed) {
+      final offset = selection.isValid ? selection.baseOffset : text.length;
+      final newText = text.replaceRange(offset, offset, '$prefix$suffix');
+      _controller.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(offset: offset + prefix.length),
+      );
+    } else {
+      final selectedText = selection.textInside(text);
+      final replacement = '$prefix$selectedText$suffix';
+      final newText = text.replaceRange(selection.start, selection.end, replacement);
+      _controller.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection(
+          baseOffset: selection.start + prefix.length,
+          extentOffset: selection.start + prefix.length + selectedText.length,
+        ),
+      );
     }
+  }
 
-    final selectedText = selection.textInside(text);
-    final replacement = '$prefix$selectedText$suffix';
-    final newText = text.replaceRange(selection.start, selection.end, replacement);
+  /// Hiển thị Menu Chuột Phải (Right-Click Context Menu) chuẩn phong cách Notion / Obsidian
+  Future<void> _showRightClickMenu(Offset position) async {
+    final isDark = Theme.of(context).brightness == Brightness.dark || AppState.instance.isDark;
 
-    _controller.value = TextEditingValue(
-      text: newText,
-      selection: TextSelection(
-        baseOffset: selection.start + prefix.length,
-        extentOffset: selection.start + prefix.length + selectedText.length,
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        position.dx + 1,
+        position.dy + 1,
+      ),
+      elevation: 10,
+      color: isDark ? const Color(0xFF22222C) : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(color: isDark ? const Color(0xFF363644) : const Color(0xFFD6D4E2)),
+      ),
+      items: [
+        _menuHeader('TIÊU ĐỀ (HEADINGS)', isDark),
+        _menuItem('h1', Icons.title, 'Tiêu đề 1 (# )', isDark),
+        _menuItem('h2', Icons.format_size, 'Tiêu đề 2 (## )', isDark),
+        _menuItem('h3', Icons.format_size, 'Tiêu đề 3 (### )', isDark),
+        const PopupMenuDivider(height: 1),
+
+        _menuHeader('ĐỊNH DẠNG VĂN BẢN', isDark),
+        _menuItem('bold', Icons.format_bold, 'In đậm (**chữ**)', isDark),
+        _menuItem('italic', Icons.format_italic, 'In nghiêng (*chữ*)', isDark),
+        _menuItem('code', Icons.code, 'Đoạn mã (`code`)', isDark),
+        const PopupMenuDivider(height: 1),
+
+        _menuHeader('KHỐI NỘI DUNG (NOTION / OBSIDIAN)', isDark),
+        _menuItem('link', Icons.link, 'Liên kết môn [[Mã môn]]', isDark, isHighlight: true),
+        _menuItem('todo', Icons.check_box_outlined, 'Việc cần làm (- [ ])', isDark),
+        _menuItem('bullet', Icons.format_list_bulleted, 'Dấu đầu dòng (- )', isDark),
+        _menuItem('quote', Icons.format_quote, 'Trích dẫn (> )', isDark),
+        _menuItem('codeblock', Icons.integration_instructions_outlined, 'Khối code (```)', isDark),
+        _menuItem('divider', Icons.horizontal_rule, 'Đường phân cách (---)', isDark),
+        const PopupMenuDivider(height: 1),
+
+        _menuItem('undo', Icons.undo, 'Hoàn tác (Ctrl+Z)', isDark),
+        _menuItem('select_all', Icons.select_all, 'Chọn tất cả', isDark),
+      ],
+    );
+
+    if (selected == null) return;
+
+    switch (selected) {
+      case 'h1': _insertMarkdownSyntax('# '); break;
+      case 'h2': _insertMarkdownSyntax('## '); break;
+      case 'h3': _insertMarkdownSyntax('### '); break;
+      case 'bold': _insertMarkdownSyntax('**', '**'); break;
+      case 'italic': _insertMarkdownSyntax('*', '*'); break;
+      case 'code': _insertMarkdownSyntax('`', '`'); break;
+      case 'link': _insertMarkdownSyntax('[[', ']]'); break;
+      case 'todo': _insertMarkdownSyntax('- [ ] '); break;
+      case 'bullet': _insertMarkdownSyntax('- '); break;
+      case 'quote': _insertMarkdownSyntax('> '); break;
+      case 'codeblock': _insertMarkdownSyntax('```dart\n', '\n```'); break;
+      case 'divider': _insertMarkdownSyntax('\n---\n'); break;
+      case 'undo': _undoController.undo(); break;
+      case 'select_all':
+        _controller.selection = TextSelection(baseOffset: 0, extentOffset: _controller.text.length);
+        break;
+    }
+  }
+
+  PopupMenuItem<String> _menuHeader(String label, bool isDark) {
+    return PopupMenuItem<String>(
+      enabled: false,
+      height: 24,
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 9.5,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.8,
+          color: isDark ? const Color(0xFF75758A) : const Color(0xFF888899),
+        ),
+      ),
+    );
+  }
+
+  PopupMenuItem<String> _menuItem(
+    String value,
+    IconData icon,
+    String label,
+    bool isDark, {
+    bool isHighlight = false,
+  }) {
+    return PopupMenuItem<String>(
+      value: value,
+      height: 32,
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            size: 15,
+            color: isHighlight
+                ? AppColors.primary
+                : (isDark ? const Color(0xFFB0B0C2) : const Color(0xFF555566)),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: isHighlight ? FontWeight.w600 : FontWeight.w500,
+              color: isHighlight
+                  ? AppColors.primary
+                  : (isDark ? Colors.white : const Color(0xFF1E1E28)),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -230,7 +352,6 @@ class _ObsidianNoteEditorViewState extends State<ObsidianNoteEditorView> {
     final target = allSubjects.where((s) => s.code.toUpperCase() == code).firstOrNull;
 
     if (target != null) {
-      // Mở ngay môn đó thành tab trên thanh trên cùng
       AppState.instance.openNoteTab(target);
     } else {
       Ui.toast(context, 'Không tìm thấy môn học có mã: $code');
@@ -239,7 +360,7 @@ class _ObsidianNoteEditorViewState extends State<ObsidianNoteEditorView> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = AppColors.isDark;
+    final isDark = Theme.of(context).brightness == Brightness.dark || AppState.instance.isDark;
 
     return Shortcuts(
       shortcuts: {
@@ -256,14 +377,14 @@ class _ObsidianNoteEditorViewState extends State<ObsidianNoteEditorView> {
           color: AppColors.shellWorkspace,
           child: Column(
             children: [
-              // 1. THANH CÔNG CỤ SOẠN THẢO & ĐIỀU KHIỂN CHẾ ĐỘ
+              // 1. THANH TIÊU ĐỀ ĐIỀU KHIỂN TINH GỌN (NOTION STYLE)
               _buildTopBar(isDark),
 
-              // 2. VÙNG SOẠN THẢO / XEM TRƯỚC CHÍNH
+              // 2. MÀN HÌNH SOẠN THẢO DUY NHẤT (THEO CHẾ ĐỘ CHỌN)
               Expanded(
                 child: _isLoading
                     ? const Center(child: CircularProgressIndicator())
-                    : _buildWorkspaceContent(isDark),
+                    : _buildSingleWorkspaceContent(isDark),
               ),
 
               // 3. THANH TRẠNG THÁI STATUS BAR (OBSIDIAN STYLE)
@@ -277,7 +398,7 @@ class _ObsidianNoteEditorViewState extends State<ObsidianNoteEditorView> {
 
   Widget _buildTopBar(bool isDark) {
     return Container(
-      height: 40,
+      height: 38,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
         color: AppColors.surface,
@@ -286,14 +407,14 @@ class _ObsidianNoteEditorViewState extends State<ObsidianNoteEditorView> {
       child: Row(
         children: [
           // Tiêu đề tệp
-          Icon(Icons.article_outlined, size: 16, color: AppColors.primary),
+          Icon(Icons.description_outlined, size: 16, color: AppColors.primary),
           const SizedBox(width: 8),
           Text(
             '${widget.subject.code}.md',
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
+              color: isDark ? Colors.white : AppColors.textPrimary,
             ),
           ),
           if (_isDirty) ...[
@@ -307,53 +428,149 @@ class _ObsidianNoteEditorViewState extends State<ObsidianNoteEditorView> {
               ),
             ),
           ],
-
-          const SizedBox(width: 16),
-          const VerticalDivider(width: 1, indent: 8, endIndent: 8),
-          const SizedBox(width: 12),
-
-          // Các nút Markdown định dạng nhanh
-          if (_viewMode != NoteViewMode.preview) ...[
-            _toolbarBtn('# H1', () => _insertMarkdownSyntax('# ')),
-            _toolbarBtn('## H2', () => _insertMarkdownSyntax('## ')),
-            _toolbarBtn('B', () => _insertMarkdownSyntax('**', '**'), isBold: true),
-            _toolbarBtn('I', () => _insertMarkdownSyntax('*', '*'), isItalic: true),
-            _toolbarBtn('`code`', () => _insertMarkdownSyntax('`', '`')),
-            _toolbarBtn('[[Liên kết]]', () => _insertMarkdownSyntax('[[', ']]'), isLink: true),
-            _toolbarBtn('- [ ] Việc', () => _insertMarkdownSyntax('- [ ] ')),
-          ],
+          const SizedBox(width: 8),
+          Text(
+            '— ${widget.subject.name}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              color: isDark ? const Color(0xFF9E9EB3) : const Color(0xFF6B6B80),
+            ),
+          ),
 
           const Spacer(),
 
-          // Bộ chọn chế độ xem: Edit / Split / Preview
-          _buildViewModeToggle(isDark),
-          const SizedBox(width: 10),
-
-          // Nút lưu (Ctrl + S)
-          SizedBox(
-            height: 28,
-            child: ElevatedButton.icon(
-              icon: _isSaving
-                  ? const SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Icon(Icons.save_outlined, size: 14),
-              label: Text(
-                _isSaving ? 'Đang lưu...' : 'Lưu (Ctrl+S)',
-                style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
+          // Gợi ý chuột phải
+          if (_viewMode == NoteViewMode.edit)
+            Padding(
+              padding: const EdgeInsets.only(right: 14),
+              child: Row(
+                children: [
+                  Icon(Icons.mouse, size: 13, color: AppColors.textHint),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Chuột phải để định dạng H1, B, [[...]]',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textHint,
+                    ),
+                  ),
+                ],
               ),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
+            ),
+
+          // Bộ chuyển chế độ: Cây bút (Chỉnh sửa) vs Icon Page (Đọc)
+          Container(
+            height: 28,
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF262632) : const Color(0xFFEBE8F5),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: isDark ? const Color(0xFF383848) : const Color(0xFFD6D4E2),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Icon cây bút: Chế độ chỉnh sửa
+                Tooltip(
+                  message: 'Chế độ chỉnh sửa',
+                  child: InkWell(
+                    onTap: () {
+                      if (_viewMode != NoteViewMode.edit) {
+                        setState(() => _viewMode = NoteViewMode.edit);
+                      }
+                    },
+                    borderRadius: BorderRadius.circular(5),
+                    child: Container(
+                      height: 26,
+                      width: 28,
+                      decoration: BoxDecoration(
+                        color: _viewMode == NoteViewMode.edit
+                            ? AppColors.primary.withValues(alpha: 0.25)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      alignment: Alignment.center,
+                      child: Icon(
+                        Icons.edit_outlined,
+                        size: 15,
+                        color: _viewMode == NoteViewMode.edit
+                            ? AppColors.primary
+                            : (isDark
+                                ? const Color(0xFF9E9EB3)
+                                : const Color(0xFF6B6B80)),
+                      ),
+                    ),
+                  ),
+                ),
+                // Icon page: Chế độ đọc
+                Tooltip(
+                  message: 'Chế độ đọc (Xem trước)',
+                  child: InkWell(
+                    onTap: () {
+                      if (_viewMode != NoteViewMode.preview) {
+                        setState(() => _viewMode = NoteViewMode.preview);
+                      }
+                    },
+                    borderRadius: BorderRadius.circular(5),
+                    child: Container(
+                      height: 26,
+                      width: 28,
+                      decoration: BoxDecoration(
+                        color: _viewMode == NoteViewMode.preview
+                            ? AppColors.primary.withValues(alpha: 0.25)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      alignment: Alignment.center,
+                      child: Icon(
+                        Icons.description_outlined,
+                        size: 15,
+                        color: _viewMode == NoteViewMode.preview
+                            ? AppColors.primary
+                            : (isDark
+                                ? const Color(0xFF9E9EB3)
+                                : const Color(0xFF6B6B80)),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+
+          // Nút lưu (chỉ icon): Lưu (Ctrl+S)
+          Tooltip(
+            message: 'Lưu (Ctrl+S)',
+            child: InkWell(
+              onTap: _isSaving ? null : _saveNote,
+              borderRadius: BorderRadius.circular(6),
+              child: Container(
+                height: 28,
+                width: 28,
+                decoration: BoxDecoration(
+                  color: AppColors.primary,
                   borderRadius: BorderRadius.circular(6),
                 ),
+                alignment: Alignment.center,
+                child: _isSaving
+                    ? const SizedBox(
+                        width: 13,
+                        height: 13,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(
+                        Icons.save_outlined,
+                        size: 16,
+                        color: Colors.white,
+                      ),
               ),
-              onPressed: _isSaving ? null : _saveNote,
             ),
           ),
         ],
@@ -361,214 +578,123 @@ class _ObsidianNoteEditorViewState extends State<ObsidianNoteEditorView> {
     );
   }
 
-  Widget _buildViewModeToggle(bool isDark) {
-    return Container(
-      height: 28,
-      decoration: BoxDecoration(
-        color: AppColors.shellWorkspace,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: AppColors.shellBorder),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _viewModeButton(
-            mode: NoteViewMode.edit,
-            icon: Icons.edit_note,
-            tooltip: 'Chỉ soạn thảo',
-          ),
-          _viewModeButton(
-            mode: NoteViewMode.split,
-            icon: Icons.vertical_split_outlined,
-            tooltip: 'Chia đôi: Soạn thảo & Xem trước',
-          ),
-          _viewModeButton(
-            mode: NoteViewMode.preview,
-            icon: Icons.chrome_reader_mode_outlined,
-            tooltip: 'Chỉ xem trước (Đọc)',
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _viewModeButton({
-    required NoteViewMode mode,
-    required IconData icon,
-    required String tooltip,
-  }) {
-    final isSelected = _viewMode == mode;
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: () => setState(() => _viewMode = mode),
-        borderRadius: BorderRadius.circular(5),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          color: isSelected
-              ? AppColors.primary.withValues(alpha: 0.2)
-              : Colors.transparent,
-          child: Icon(
-            icon,
-            size: 16,
-            color: isSelected ? AppColors.primary : AppColors.textSecondary,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _toolbarBtn(
-    String label,
-    VoidCallback onTap, {
-    bool isBold = false,
-    bool isItalic = false,
-    bool isLink = false,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(4),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 11.5,
-            fontWeight: isBold ? FontWeight.bold : FontWeight.w500,
-            fontStyle: isItalic ? FontStyle.italic : FontStyle.normal,
-            color: isLink ? AppColors.primary : AppColors.textSecondary,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildWorkspaceContent(bool isDark) {
+  Widget _buildSingleWorkspaceContent(bool isDark) {
     if (_viewMode == NoteViewMode.edit) {
-      return _buildTextEditorPane(isDark);
-    } else if (_viewMode == NoteViewMode.preview) {
-      return _buildPreviewPane(isDark);
+      // 1 màn hình duy nhất: Soạn thảo Markdown kèm menu Chuột Phải
+      return GestureDetector(
+        onSecondaryTapDown: (details) => _showRightClickMenu(details.globalPosition),
+        child: Container(
+          color: AppColors.shellWorkspace,
+          padding: const EdgeInsets.fromLTRB(40, 24, 40, 24),
+          child: TextField(
+            controller: _controller,
+            undoController: _undoController,
+            focusNode: _focusNode,
+            maxLines: null,
+            expands: true,
+            keyboardType: TextInputType.multiline,
+            contextMenuBuilder: (context, editableTextState) {
+              // Bắt sự kiện chuột phải ngay trên TextField để mở Menu định dạng
+              final anchor = editableTextState.contextMenuAnchors.primaryAnchor;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _showRightClickMenu(anchor);
+              });
+              return const SizedBox.shrink();
+            },
+            style: TextStyle(
+              fontSize: 14,
+              height: 1.7,
+              fontFamily: 'monospace',
+              color: isDark ? const Color(0xFFEEEEF2) : const Color(0xFF1E1E24),
+            ),
+            cursorColor: AppColors.primary,
+            decoration: const InputDecoration(
+              border: InputBorder.none,
+              hintText: 'Nhấp chuột phải để chèn H1, H2, In đậm, Liên kết môn [[...]] hoặc bắt đầu gõ...',
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+        ),
+      );
     } else {
-      // Split view: 50% Edit, 50% Preview
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(child: _buildTextEditorPane(isDark)),
-          VerticalDivider(width: 1, color: AppColors.divider),
-          Expanded(child: _buildPreviewPane(isDark)),
-        ],
+      // 1 màn hình duy nhất: Xem trước / Đọc tài liệu đã render
+      final text = _controller.text;
+      final processedMarkdown = text.replaceAllMapped(
+        RegExp(r'\[\[([^\[\]]+?)\]\]'),
+        (match) {
+          final inner = match.group(1) ?? '';
+          final parts = inner.split('|');
+          final target = parts.first.trim();
+          final label = parts.length > 1 ? parts[1].trim() : target;
+          return '[$label](obsidian://$target)';
+        },
+      );
+
+      return Container(
+        color: AppColors.shellWorkspace,
+        child: Markdown(
+          data: processedMarkdown.isEmpty ? '_Chưa có nội dung ghi chú._' : processedMarkdown,
+          selectable: true,
+          padding: const EdgeInsets.fromLTRB(40, 24, 40, 24),
+          onTapLink: (text, href, title) {
+            if (href != null && href.startsWith('obsidian://')) {
+              final code = href.replaceFirst('obsidian://', '');
+              _handleLinkTap(code);
+            }
+          },
+          styleSheet: MarkdownStyleSheet(
+            p: TextStyle(
+              fontSize: 14,
+              height: 1.7,
+              color: isDark ? const Color(0xFFEEEEF2) : const Color(0xFF1E1E24),
+            ),
+            h1: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+              color: isDark ? Colors.white : const Color(0xFF1A1A2E),
+              height: 1.4,
+            ),
+            h2: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: isDark ? Colors.white : const Color(0xFF1A1A2E),
+              height: 1.4,
+            ),
+            h3: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: isDark ? Colors.white : const Color(0xFF1A1A2E),
+            ),
+            blockquote: TextStyle(
+              fontSize: 13.5,
+              color: isDark ? const Color(0xFF9E9EB3) : const Color(0xFF6B6B80),
+              fontStyle: FontStyle.italic,
+            ),
+            blockquoteDecoration: BoxDecoration(
+              color: isDark ? const Color(0xFF1E1E26) : const Color(0xFFF1F1F5),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            code: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 12.5,
+              color: AppColors.primary,
+              backgroundColor: isDark ? const Color(0xFF22222E) : const Color(0xFFEEEEF5),
+            ),
+            codeblockDecoration: BoxDecoration(
+              color: isDark ? const Color(0xFF181822) : const Color(0xFFF4F4F8),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.border),
+            ),
+            a: TextStyle(
+              color: AppColors.primary,
+              fontWeight: FontWeight.w600,
+              decoration: TextDecoration.underline,
+            ),
+            listBullet: TextStyle(color: AppColors.primary),
+          ),
+        ),
       );
     }
-  }
-
-  Widget _buildTextEditorPane(bool isDark) {
-    return Container(
-      color: AppColors.shellWorkspace,
-      padding: const EdgeInsets.fromLTRB(28, 16, 28, 16),
-      child: TextField(
-        controller: _controller,
-        undoController: _undoController,
-        maxLines: null,
-        expands: true,
-        keyboardType: TextInputType.multiline,
-        style: TextStyle(
-          fontSize: 13.5,
-          height: 1.65,
-          fontFamily: 'monospace',
-          color: AppColors.textPrimary,
-        ),
-        cursorColor: AppColors.primary,
-        decoration: const InputDecoration(
-          border: InputBorder.none,
-          hintText: 'Bắt đầu gõ ghi chú Markdown hoặc [[Mã_Môn]] tại đây...',
-          contentPadding: EdgeInsets.zero,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPreviewPane(bool isDark) {
-    final text = _controller.text;
-
-    // Bóc tách cú pháp [[CODE]] thành link [CODE](obsidian://CODE)
-    final processedMarkdown = text.replaceAllMapped(
-      RegExp(r'\[\[([^\[\]]+?)\]\]'),
-      (match) {
-        final inner = match.group(1) ?? '';
-        final parts = inner.split('|');
-        final target = parts.first.trim();
-        final label = parts.length > 1 ? parts[1].trim() : target;
-        return '[$label](obsidian://$target)';
-      },
-    );
-
-    return Container(
-      color: AppColors.shellWorkspace,
-      child: Markdown(
-        data: processedMarkdown.isEmpty
-            ? '_Chưa có nội dung ghi chú._'
-            : processedMarkdown,
-        selectable: true,
-        padding: const EdgeInsets.fromLTRB(28, 16, 28, 16),
-        onTapLink: (text, href, title) {
-          if (href != null && href.startsWith('obsidian://')) {
-            final code = href.replaceFirst('obsidian://', '');
-            _handleLinkTap(code);
-          }
-        },
-        styleSheet: MarkdownStyleSheet(
-          p: TextStyle(
-            fontSize: 13.5,
-            height: 1.65,
-            color: AppColors.textPrimary,
-          ),
-          h1: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.w800,
-            color: AppColors.textPrimary,
-            height: 1.4,
-          ),
-          h2: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
-            height: 1.4,
-          ),
-          h3: TextStyle(
-            fontSize: 14.5,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textPrimary,
-          ),
-          blockquote: TextStyle(
-            fontSize: 13,
-            color: AppColors.textSecondary,
-            fontStyle: FontStyle.italic,
-          ),
-          blockquoteDecoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1E1E26) : const Color(0xFFF1F1F5),
-            borderRadius: BorderRadius.circular(6),
-            border: Border(left: BorderSide(color: AppColors.primary, width: 3)),
-          ),
-          code: TextStyle(
-            fontFamily: 'monospace',
-            fontSize: 12,
-            color: AppColors.primary,
-            backgroundColor: isDark ? const Color(0xFF22222E) : const Color(0xFFEEEEF5),
-          ),
-          codeblockDecoration: BoxDecoration(
-            color: isDark ? const Color(0xFF181822) : const Color(0xFFF4F4F8),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: AppColors.border),
-          ),
-          a: TextStyle(
-            color: AppColors.primary,
-            fontWeight: FontWeight.w600,
-            decoration: TextDecoration.underline,
-          ),
-          listBullet: TextStyle(color: AppColors.primary),
-        ),
-      ),
-    );
   }
 
   Widget _buildStatusBar(bool isDark) {

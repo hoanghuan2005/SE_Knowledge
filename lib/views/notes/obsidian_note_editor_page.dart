@@ -706,7 +706,6 @@ class _ObsidianNoteEditorPageState extends State<ObsidianNoteEditorPage> {
           blockquoteDecoration: BoxDecoration(
             color: isDark ? const Color(0xFF1E1E26) : const Color(0xFFF1F1F5),
             borderRadius: BorderRadius.circular(6),
-            border: Border(left: BorderSide(color: AppColors.primary, width: 3.5)),
           ),
           code: TextStyle(
             fontFamily: 'monospace',

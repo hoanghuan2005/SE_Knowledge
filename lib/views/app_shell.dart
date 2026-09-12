@@ -1725,6 +1725,7 @@ class _ObsidianWorkspaceTabBar extends StatelessWidget {
                     title: 'Graph view',
                     icon: Icons.hub,
                     isActive: activeNote == null && currentIndex == 0,
+                    isDark: isDark,
                     onTap: onSelectGraphTab,
                     onClose: null,
                   ),
@@ -1735,6 +1736,7 @@ class _ObsidianWorkspaceTabBar extends StatelessWidget {
                       title: currentTabTitle,
                       icon: currentTabIcon,
                       isActive: true,
+                      isDark: isDark,
                       onTap: () => onSelectPageTab(currentIndex),
                       onClose: () => onClosePageTab(currentIndex),
                     ),
@@ -1745,6 +1747,7 @@ class _ObsidianWorkspaceTabBar extends StatelessWidget {
                       title: '${note.code}.md',
                       icon: Icons.article_outlined,
                       isActive: activeNote?.code.toUpperCase() == note.code.toUpperCase(),
+                      isDark: isDark,
                       onTap: () => onSelectNoteTab(note),
                       onClose: () => onCloseNoteTab(note),
                     ),
@@ -1819,29 +1822,34 @@ class _ObsidianWorkspaceTabBar extends StatelessWidget {
     required String title,
     required IconData icon,
     required bool isActive,
+    required bool isDark,
     required VoidCallback onTap,
     VoidCallback? onClose,
   }) {
+    final activeTextColor = isDark ? Colors.white : AppColors.primaryDark;
+    final inactiveTextColor =
+        isDark ? const Color(0xFF9E9EB3) : const Color(0xFF6B6B80);
+    final textColor = isActive ? activeTextColor : inactiveTextColor;
+    final iconColor = isActive ? AppColors.primary : inactiveTextColor;
+    final tabBg = isActive
+        ? (isDark ? const Color(0xFF262632) : const Color(0xFFE8E5F2))
+        : Colors.transparent;
+    final borderColor = isActive
+        ? (isDark ? const Color(0xFF454558) : const Color(0xFFD0CDDE))
+        : Colors.transparent;
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        height: 30,
+        height: 32,
         padding: const EdgeInsets.symmetric(horizontal: 10),
-        margin: const EdgeInsets.only(right: 3),
+        margin: const EdgeInsets.only(right: 4),
         decoration: BoxDecoration(
-          color: isActive ? AppColors.shellSidebar : Colors.transparent,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
-          border: Border(
-            top: BorderSide(
-              color: isActive ? AppColors.primary : Colors.transparent,
-              width: 2,
-            ),
-            left: BorderSide(
-              color: isActive ? AppColors.shellBorder : Colors.transparent,
-            ),
-            right: BorderSide(
-              color: isActive ? AppColors.shellBorder : Colors.transparent,
-            ),
+          color: tabBg,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: borderColor,
+            width: 1,
           ),
         ),
         child: Row(
@@ -1850,15 +1858,15 @@ class _ObsidianWorkspaceTabBar extends StatelessWidget {
             Icon(
               icon,
               size: 14,
-              color: isActive ? AppColors.primary : AppColors.shellTextMuted,
+              color: iconColor,
             ),
             const SizedBox(width: 7),
             Text(
               title,
               style: TextStyle(
                 fontSize: 12,
-                fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
-                color: isActive ? AppColors.shellText : AppColors.shellTextMuted,
+                fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                color: textColor,
               ),
             ),
             if (onClose != null) ...[
@@ -1871,7 +1879,7 @@ class _ObsidianWorkspaceTabBar extends StatelessWidget {
                   child: Icon(
                     Icons.close,
                     size: 12,
-                    color: AppColors.shellTextMuted,
+                    color: inactiveTextColor,
                   ),
                 ),
               ),
