@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/subject.dart';
 import '../services/chat_session_service.dart';
+import '../services/fap_markdown_parser.dart';
+import '../services/md_intake_service.dart';
 import '../state/app_state.dart';
 import '../utils/app_colors.dart';
 import 'chat/ai_chat_page.dart';
@@ -14,6 +18,7 @@ import 'subjects/subjects_page.dart';
 import 'vault/vault_page.dart';
 import 'widgets/subject_detail_panel.dart';
 import 'curriculum/curriculum_demo_view.dart';
+import 'fap/fap_import_dialog.dart';
 
 /// Intent để bắt phím tắt Ctrl+B toggle thanh bên.
 class _ToggleSidebarIntent extends Intent {
@@ -45,6 +50,29 @@ class _AppShellState extends State<AppShell> {
 
   final List<int> _history = [0];
   int _historyIndex = 0;
+
+  /// Lắng nghe markdown do extension Chrome đẩy sang cổng 127.0.0.1:8787.
+  StreamSubscription<IncomingNote>? _intakeSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _intakeSub = MdIntakeService.instance.onNote.listen(_onIncomingNote);
+  }
+
+  @override
+  void dispose() {
+    _intakeSub?.cancel();
+    super.dispose();
+  }
+
+  /// Bóc tách ngay khi nhận được, rồi mở hộp thoại xem trước. Chưa ghi gì vào
+  /// CSDL — người dùng phải xác nhận trên hộp thoại.
+  Future<void> _onIncomingNote(IncomingNote note) async {
+    final result = FapMarkdownParser.parse(note.markdown);
+    if (!mounted) return;
+    await FapImportDialog.show(context, note, result);
+  }
 
   static const List<String> _tabTitles = [
     'Graph view',
