@@ -6,10 +6,26 @@ import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
 import '../subjects/subject_form_dialog.dart';
+import 'subject_chat_panel.dart';
 
-/// Bảng chi tiết bên phải: thông tin môn, danh sách tiên quyết và môn mở ra.
-class SubjectDetailPanel extends StatelessWidget {
+/// Bảng bên phải: mặc định mở ngay khung "Hỏi AI" cho môn vừa chọn (đọc nội
+/// dung .md và tự đề xuất câu hỏi), tab "Chi tiết" bên cạnh giữ nguyên thông
+/// tin môn, tiên quyết và môn mở ra như trước.
+class SubjectDetailPanel extends StatefulWidget {
   const SubjectDetailPanel({super.key});
+
+  @override
+  State<SubjectDetailPanel> createState() => _SubjectDetailPanelState();
+}
+
+class _SubjectDetailPanelState extends State<SubjectDetailPanel> {
+  int? _lastSubjectId;
+
+  /// true = tab "Hỏi AI", false = tab "Chi tiết". Mỗi lần người dùng bấm
+  /// CHỌN MỘT MÔN KHÁC trên đồ thị, panel tự quay lại tab "Hỏi AI" — đúng ý
+  /// "bấm vào node là AI gen câu hỏi ngay", còn chọn lại "Chi tiết" thì giữ
+  /// nguyên cho tới khi đổi môn khác.
+  bool _showChat = true;
 
   @override
   Widget build(BuildContext context) {
@@ -17,6 +33,12 @@ class SubjectDetailPanel extends StatelessWidget {
       listenable: AppState.instance,
       builder: (context, _) {
         final subject = AppState.instance.selectedSubject;
+
+        if (subject?.id != _lastSubjectId) {
+          _lastSubjectId = subject?.id;
+          _showChat = true;
+        }
+
         return Container(
           width: 320,
           decoration: BoxDecoration(
@@ -25,9 +47,61 @@ class SubjectDetailPanel extends StatelessWidget {
           ),
           child: subject == null
               ? const _NoSelection()
-              : _Detail(subject: subject),
+              : Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                      child: _ModeToggle(
+                        showChat: _showChat,
+                        onChanged: (v) => setState(() => _showChat = v),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: _showChat
+                          ? SubjectChatPanel(
+                              key: ValueKey('chat-${subject.id}'),
+                              subject: subject,
+                            )
+                          : _Detail(subject: subject),
+                    ),
+                  ],
+                ),
         );
       },
+    );
+  }
+}
+
+class _ModeToggle extends StatelessWidget {
+  final bool showChat;
+  final ValueChanged<bool> onChanged;
+
+  const _ModeToggle({required this.showChat, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: SegmentedButton<bool>(
+        showSelectedIcon: false,
+        style: const ButtonStyle(visualDensity: VisualDensity.compact),
+        segments: const [
+          ButtonSegment<bool>(
+            value: true,
+            icon: Icon(Icons.auto_awesome, size: 14),
+            label: Text('Hỏi AI', style: TextStyle(fontSize: 12)),
+          ),
+          ButtonSegment<bool>(
+            value: false,
+            icon: Icon(Icons.info_outline, size: 14),
+            label: Text('Chi tiết', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+        selected: {showChat},
+        onSelectionChanged: (s) => onChanged(s.first),
+      ),
     );
   }
 }
