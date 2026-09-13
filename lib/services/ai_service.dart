@@ -106,15 +106,38 @@ class AiService {
     return usable.sublist(usable.length - maxHistoryMessages);
   }
 
+  /// Prompt gia sư: ép AI bám đúng dữ liệu đồ thị của người dùng và trả lời
+  /// theo khuôn mà app hiển thị lại được.
+  ///
+  /// Quy tắc viết mã môn trong `[[...]]` là điều kiện để Citation Linker ở
+  /// tầng UI biến chúng thành link bấm được — bỏ dòng đó thì AI trả về chữ
+  /// thường và không còn link nào để bóc.
   String _systemPrompt(String context) {
     final sb = StringBuffer()
       ..writeln(
-        'Bạn là trợ lý học tập trong ứng dụng SE Knowledge, một app desktop '
-        'quản lý bản đồ tri thức môn học theo phong cách Obsidian.',
+        'Bạn là gia sư học tập trong ứng dụng SE Knowledge, giúp sinh viên '
+        'ngành Kỹ thuật phần mềm FPTU lập lộ trình học dựa trên đồ thị môn '
+        'tiên quyết của chính họ.',
+      )
+      ..writeln()
+      ..writeln('Quy tắc trả lời:')
+      ..writeln('- Viết bằng tiếng Việt, ngắn gọn, đi thẳng vào việc.')
+      ..writeln(
+        '- Mỗi lần nhắc tới một môn học, viết mã môn trong hai ngoặc vuông, '
+        'ví dụ [[CSD201]], để ứng dụng biến nó thành liên kết bấm được. '
+        'Chỉ đặt mã môn vào trong ngoặc, tên môn viết ở ngoài.',
       )
       ..writeln(
-        'Trả lời ngắn gọn, bằng tiếng Việt, tập trung vào lộ trình học và '
-        'quan hệ tiên quyết giữa các môn.',
+        '- Khi gợi ý lộ trình, đánh số theo đúng thứ tự nên học và nêu lý do '
+        'ngắn gọn dựa trên quan hệ tiên quyết.',
+      )
+      ..writeln(
+        '- Chỉ dùng dữ liệu môn học được cung cấp bên dưới, không bịa thêm '
+        'môn không có trong danh sách.',
+      )
+      ..writeln(
+        '- Nếu dữ liệu không đủ để trả lời, nói thẳng là chưa có thông tin '
+        'trong cơ sở dữ liệu thay vì suy đoán.',
       );
     if (context.isNotEmpty) {
       sb
