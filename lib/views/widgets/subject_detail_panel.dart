@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../../models/subject.dart';
 import '../../services/obsidian_service.dart';
+import '../../services/subject_delete_guard.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
 import '../subjects/subject_form_dialog.dart';
 import 'subject_chat_panel.dart';
+import 'subject_delete_dialog.dart';
 
 /// Bảng bên phải: mặc định mở ngay khung "Hỏi AI" cho môn vừa chọn (đọc nội
 /// dung .md và tự đề xuất câu hỏi), tab "Chi tiết" bên cạnh giữ nguyên thông
@@ -280,20 +282,39 @@ class _Detail extends StatelessWidget {
     );
   }
 
+  /// Phân tích ràng buộc trước, rồi mới hỏi. Không dùng hộp thoại xác nhận
+  /// chung nữa vì nó luôn hiện đúng một câu, bất kể môn đang bị bao nhiêu môn
+  /// khác phụ thuộc — đúng chỗ dễ bẻ gãy đồ thị mà người dùng không hay biết.
   Future<void> _confirmDelete(BuildContext context) async {
-    final ok = await Ui.confirm(
-      context,
-      title: 'Xoá ${subject.code}?',
-      message:
-          'Mọi liên kết tiên quyết tới môn này cũng bị xoá theo '
-          '(ON DELETE CASCADE). File .md trong Vault vẫn được giữ lại.',
-      confirmLabel: 'Xoá',
-      destructive: true,
-    );
-    if (!ok) return;
+    final DeleteImpact impact;
     try {
-      await AppState.instance.deleteSubject(subject.id!);
-      if (context.mounted) Ui.success(context, 'Đã xoá ${subject.code}.');
+      impact = await AppState.instance.analyzeDelete(subject.id!);
+    } catch (e) {
+      if (context.mounted) Ui.error(context, e);
+      return;
+    }
+    if (!context.mounted) return;
+
+    final choice = await showDialog<SubjectDeleteChoice>(
+      context: context,
+      builder: (_) => SubjectDeleteDialog(impact: impact),
+    );
+    if (choice == null || !context.mounted) return;
+
+    try {
+      final result = await AppState.instance.deleteSubjectSafely(
+        impact,
+        strategy: choice.strategy,
+        deleteNoteFile: choice.deleteNoteFile,
+      );
+      if (!context.mounted) return;
+      // Xoá đã xong dù có cảnh báo, nên báo thành công rồi nối cảnh báo vào
+      // sau thay vì hiện báo lỗi làm người dùng tưởng thao tác thất bại.
+      if (result.warnings.isEmpty) {
+        Ui.success(context, result.summary);
+      } else {
+        Ui.toast(context, '${result.summary} ${result.warnings.join(' ')}');
+      }
     } catch (e) {
       if (context.mounted) Ui.error(context, e);
     }

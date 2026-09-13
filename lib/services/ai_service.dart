@@ -47,6 +47,12 @@ class AiService {
     required String question,
     List<ChatMessage> history = const [],
     bool includeKnowledgeContext = true,
+    /// Ngữ cảnh cố định do màn hình gọi tự cung cấp (ví dụ nội dung file .md
+    /// của một môn cụ thể). Khi có giá trị này, Graph RAG bị bỏ qua hoàn
+    /// toàn — dùng cho chat theo từng môn học (xem `SubjectChatService`),
+    /// khác với chat chung ở tab "Trợ lý AI" vốn dùng Graph RAG trên toàn
+    /// đồ thị.
+    String? extraContext,
     void Function(GraphRagSummary summary)? onContext,
     void Function(String delta)? onDelta,
   }) async {
@@ -60,12 +66,13 @@ class AiService {
 
     final model = await _settings.getModel(provider);
 
-    final ragContext = includeKnowledgeContext
-        ? await _graphRag.buildContext(question)
-        : null;
-    if (ragContext != null) onContext?.call(ragContext.summary);
+    GraphRagContext? ragContext;
+    if (extraContext == null && includeKnowledgeContext) {
+      ragContext = await _graphRag.buildContext(question);
+      onContext?.call(ragContext.summary);
+    }
 
-    final systemPrompt = _systemPrompt(ragContext?.promptText ?? '');
+    final systemPrompt = _systemPrompt(extraContext ?? ragContext?.promptText ?? '');
     final recent = _recentHistory(history);
 
     try {
