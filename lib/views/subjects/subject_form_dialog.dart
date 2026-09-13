@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/prerequisite.dart';
 import '../../models/subject.dart';
 import '../../state/app_state.dart';
+import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
 
 /// Hộp thoại thêm mới / sửa một môn học (một NODE của đồ thị).
@@ -330,9 +331,232 @@ class AddEdgeDialog extends StatefulWidget {
 }
 
 class _AddEdgeDialogState extends State<AddEdgeDialog> {
-  int? _prerequisiteId;
-  String _relationType = 'PREREQUISITE';
+  /// Cho chọn NHIỀU môn một lượt: dựng đồ thị thường phải nối vài cạnh liền
+  /// nhau, mở lại hộp thoại cho từng cạnh một là thừa thao tác.
+  final Set<int> _selectedIds = <int>{};
+  String _relationType = Prerequisite.kPrerequisite;
   bool _saving = false;
+
+  /// Chuột đang ở trên ô chọn môn. Tự theo dõi thay vì để InkWell lo, vì
+  /// InkWell tô phủ cả dòng helperText phía dưới viền.
+  bool _pickerHovered = false;
+
+  Future<void> _save() async {
+    if (_selectedIds.isEmpty || _saving) return;
+    setState(() => _saving = true);
+
+    final labelOf = {
+      for (final s in AppState.instance.graph.subjects)
+        if (s.id != null) s.id!: s.code,
+    };
+    final failures = <String>[];
+    var added = 0;
+
+    // Mỗi cạnh một try/catch riêng: một cạnh tạo chu trình không được làm hỏng
+    // những cạnh hợp lệ còn lại trong cùng lượt chọn.
+    for (final id in _selectedIds) {
+      try {
+        await AppState.instance.addEdge(
+          subjectId: widget.subject.id!,
+          prerequisiteId: id,
+          relationType: _relationType,
+        );
+        added++;
+      } catch (e) {
+        failures.add('${labelOf[id] ?? id} ($e)');
+      }
+    }
+
+    if (!mounted) return;
+    if (failures.isNotEmpty) {
+      Ui.error(
+        context,
+        'Không thêm được ${failures.length} liên kết: ${failures.join('; ')}',
+      );
+    }
+    if (added > 0) {
+      Navigator.pop(context, true);
+    } else {
+      // Hỏng sạch thì giữ hộp thoại lại để người dùng bỏ bớt môn rồi thử lại.
+      setState(() => _saving = false);
+    }
+  }
+
+  /// Chữ tóm tắt hiện trong ô khi menu đang đóng.
+  String _summary(List<Subject> options) {
+    final codes = options
+        .where((s) => _selectedIds.contains(s.id))
+        .map((s) => s.code)
+        .toList();
+    if (codes.isEmpty) return 'Chưa chọn môn nào';
+    return '${codes.length} môn: ${codes.join(', ')}';
+  }
+
+  /// Ô chọn môn: nhìn và mở giống hệt dropdown "Loại quan hệ", nhưng bên trong
+  /// là danh sách checkbox nên chọn được nhiều môn mà menu không tự đóng.
+  Widget _subjectPicker(List<Subject> options) {
+    final hasSelection = _selectedIds.isNotEmpty;
+
+    return MenuAnchor(
+      // Chặn bề ngang để tên môn dài không kéo menu tràn ra ngoài màn hình, và
+      // chặn chiều cao để danh sách dài thì cuộn bên trong menu.
+      style: const MenuStyle(
+        minimumSize: WidgetStatePropertyAll(Size(412, 0)),
+        maximumSize: WidgetStatePropertyAll(Size(412, 320)),
+      ),
+      // MenuAnchor neo theo cả InputDecorator, mà InputDecorator tính luôn
+      // dòng helperText bên dưới viền — nên menu mặc định rơi xuống dưới dòng
+      // chữ đó, chừa một khoảng trống nhìn hụt. Kéo lên đúng chiều cao dòng
+      // helper để menu bắt đầu ngay mép dưới ô và che dòng chữ lại.
+      alignmentOffset: const Offset(0, -12),
+      builder: (context, controller, _) {
+        // Cố tình KHÔNG dùng InkWell: nó bọc cả InputDecorator nên vệt
+        // hover/splash phủ luôn xuống dòng helperText, trông như cả khối bị
+        // đổi nền. Đặt hoverColor/splashColor trong suốt vẫn còn sót lớp phủ,
+        // nên bỏ hẳn Ink ra khỏi cây widget. MouseRegion giữ lại con trỏ bàn
+        // tay, HitTestBehavior.opaque giữ nguyên vùng bấm của cả ô.
+        return MouseRegion(
+          cursor: _saving
+              ? SystemMouseCursors.basic
+              : SystemMouseCursors.click,
+          onEnter: (_) {
+            if (!_pickerHovered) setState(() => _pickerHovered = true);
+          },
+          onExit: (_) {
+            if (_pickerHovered) setState(() => _pickerHovered = false);
+          },
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _saving
+                ? null
+                : () =>
+                      controller.isOpen ? controller.close() : controller.open(),
+            child: InputDecorator(
+              // Hover do InputDecorator vẽ, đúng cách DropdownButtonFormField
+              // đang làm cho ô "Loại quan hệ" — nên nền chỉ tô trong khung ô,
+              // không liếm xuống dòng helperText như InkWell trước đây.
+              isHovering: _pickerHovered && !_saving,
+              decoration: InputDecoration(
+                labelText: 'Môn phải học trước',
+                helperText: 'Bấm để mở danh sách, chọn được nhiều môn',
+                suffixIcon: Icon(
+                  controller.isOpen
+                      ? Icons.arrow_drop_up
+                      : Icons.arrow_drop_down,
+                ),
+              ),
+              child: Text(
+                _summary(options),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: hasSelection
+                    ? null
+                    : TextStyle(color: Theme.of(context).hintColor),
+              ),
+            ),
+          ),
+        );
+      },
+      menuChildren: [
+        // Cả danh sách gói trong MỘT child là lưới chip, không phải mỗi môn
+        // một dòng menu. Nhờ không dùng MenuItemButton nên bấm chip không kích
+        // hoạt cơ chế đóng menu của MenuAnchor — chọn liên tục nhiều môn được.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+          child: SizedBox(
+            width: 388,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [for (final s in options) _subjectChip(s)],
+                ),
+                if (hasSelection)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: _saving
+                          ? null
+                          : () => setState(_selectedIds.clear),
+                      icon: const Icon(Icons.clear, size: 16),
+                      label: Text('Bỏ chọn tất cả (${_selectedIds.length})'),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 32),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Một môn dưới dạng chip: chấm màu theo kỳ ở đầu, mã môn ở giữa, dấu `×`
+  /// để bỏ chọn ở cuối — dấu `×` chỉ hiện khi môn đang được chọn.
+  ///
+  /// Nhãn chỉ để mã môn cho chip gọn; tên đầy đủ nằm ở tooltip, vì
+  /// "CSD201 — Data Structures and Algorithms" nhét vào chip thì mỗi hàng chỉ
+  /// còn chỗ cho một môn.
+  Widget _subjectChip(Subject s) {
+    final selected = _selectedIds.contains(s.id);
+
+    return Tooltip(
+      message: '${s.code} — ${s.name}',
+      child: InputChip(
+        isEnabled: !_saving,
+        selected: selected,
+        // Tắt dấu tick mặc định, nếu không nó chen vào chỗ của avatar.
+        showCheckmark: false,
+        // Nền theo trạng thái. Lưu ý: hễ truyền `color` là RawChip đặt luôn
+        // hoverColor của InkWell bên trong thành trong suốt (chip.dart), tức
+        // toàn bộ hiệu ứng hover dồn hết vào resolver này — trả `hoverColor`
+        // mặc định của ThemeData (~4% alpha) thì nhìn như không có hover.
+        // Trả null ở mọi trạng thái không hover để chip giữ nguyên màu mặc
+        // định, kể cả màu của trạng thái đang chọn.
+        color: WidgetStateProperty.resolveWith((states) {
+          if (!states.contains(WidgetState.hovered)) return null;
+          return states.contains(WidgetState.selected)
+              ? AppColors.primary
+              : AppColors.primary.withValues(alpha: 0.55);
+        }),
+        // Thêm viền tím khi hover: nếu nền tím vẫn chìm trên theme tối thì
+        // đường viền vẫn cho thấy rõ con trỏ đang ở chip nào.
+        side: WidgetStateBorderSide.resolveWith(
+          (states) => states.contains(WidgetState.hovered)
+              ? const BorderSide(color: AppColors.primary, width: 1.5)
+              : null,
+        ),
+        avatar: CircleAvatar(
+          backgroundColor: AppColors.forSemester(s.semester),
+          child: Text(
+            '${s.semester}',
+            style: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
+          ),
+        ),
+        label: Text(s.code),
+        onSelected: (value) => setState(() {
+          if (value) {
+            _selectedIds.add(s.id!);
+          } else {
+            _selectedIds.remove(s.id!);
+          }
+        }),
+        onDeleted: selected
+            ? () => setState(() => _selectedIds.remove(s.id!))
+            : null,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -343,53 +567,53 @@ class _AddEdgeDialogState extends State<AddEdgeDialog> {
         .toSet();
 
     final options = state.graph.subjects
-        .where((s) => s.id != widget.subject.id && !existing.contains(s.id))
+        .where(
+          (s) =>
+              s.id != null &&
+              s.id != widget.subject.id &&
+              !existing.contains(s.id),
+        )
         .toList();
 
     return AlertDialog(
-      title: Text('Thêm tiên quyết cho ${widget.subject.code}'),
+      title: Text(
+        'Thêm tiên quyết cho ${widget.subject.code}',
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
       content: SizedBox(
-        width: 420,
+        width: 460,
         child: options.isEmpty
             ? const Text('Không còn môn nào khả dụng để làm tiên quyết.')
             : Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  DropdownButtonFormField<int>(
-                    initialValue: _prerequisiteId,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Môn phải học trước',
-                    ),
-                    items: [
-                      for (final s in options)
-                        DropdownMenuItem(
-                          value: s.id,
-                          child: Text(
-                            '${s.code} — ${s.name}',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                    ],
-                    onChanged: (v) => setState(() => _prerequisiteId = v),
-                  ),
-                  const SizedBox(height: 16),
                   DropdownButtonFormField<String>(
                     initialValue: _relationType,
-                    decoration: const InputDecoration(labelText: 'Loại quan hệ'),
+                    decoration: const InputDecoration(
+                      labelText: 'Loại quan hệ',
+                      helperText: 'Áp dụng cho mọi môn được chọn bên dưới',
+                    ),
                     items: const [
                       DropdownMenuItem(
-                        value: 'PREREQUISITE',
+                        value: Prerequisite.kPrerequisite,
                         child: Text('Tiên quyết bắt buộc'),
                       ),
                       DropdownMenuItem(
-                        value: 'RELATED',
+                        value: Prerequisite.kRelated,
                         child: Text('Liên quan / tham khảo'),
                       ),
                     ],
-                    onChanged: (v) =>
-                        setState(() => _relationType = v ?? 'PREREQUISITE'),
+                    onChanged: _saving
+                        ? null
+                        : (v) => setState(
+                            () =>
+                                _relationType = v ?? Prerequisite.kPrerequisite,
+                          ),
                   ),
+                  const SizedBox(height: 16),
+                  _subjectPicker(options),
                 ],
               ),
       ),
@@ -399,25 +623,21 @@ class _AddEdgeDialogState extends State<AddEdgeDialog> {
           child: const Text('Huỷ'),
         ),
         ElevatedButton(
-          onPressed: _saving || _prerequisiteId == null
-              ? null
-              : () async {
-                  setState(() => _saving = true);
-                  try {
-                    await AppState.instance.addEdge(
-                      subjectId: widget.subject.id!,
-                      prerequisiteId: _prerequisiteId!,
-                      relationType: _relationType,
-                    );
-                    if (!context.mounted) return;
-                    Navigator.pop(context, true);
-                  } catch (e) {
-                    if (!context.mounted) return;
-                    setState(() => _saving = false);
-                    Ui.error(context, e);
-                  }
-                },
-          child: const Text('Thêm liên kết'),
+          onPressed: _saving || _selectedIds.isEmpty ? null : _save,
+          child: _saving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : Text(
+                  _selectedIds.isEmpty
+                      ? 'Thêm liên kết'
+                      : 'Thêm ${_selectedIds.length} liên kết',
+                ),
         ),
       ],
     );
