@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../models/curriculum.dart';
 import '../models/graph_data.dart';
 import '../models/prerequisite.dart';
 import '../models/subject.dart';
@@ -21,7 +22,7 @@ class DbService {
   static final DbService instance = DbService._();
 
   static const String dbFileName = 'se_knowledge.db';
-  static const int dbVersion = 1;
+  static const int dbVersion = 2;
 
   Database? _db;
   String? _dbPath;
@@ -58,6 +59,22 @@ class DbService {
   }
 
   Future<void> _onCreate(Database db, int version) async {
+    // 1. Bảng Khung chương trình ngành (Curriculums)
+    await db.execute('''
+      CREATE TABLE curriculums (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        code          TEXT    NOT NULL UNIQUE,
+        name          TEXT    NOT NULL,
+        major         TEXT    NOT NULL,
+        total_credits INTEGER NOT NULL DEFAULT 145,
+        decision_no   TEXT    NOT NULL DEFAULT '',
+        description   TEXT    NOT NULL DEFAULT '',
+        created_at    TEXT    NOT NULL,
+        updated_at    TEXT    NOT NULL
+      )
+    ''');
+
+    // 2. Bảng Danh mục môn học gốc (Master Subjects)
     await db.execute('''
       CREATE TABLE subjects (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,6 +89,21 @@ class DbService {
       )
     ''');
 
+    // 3. Bảng Node môn học thuộc Khung chương trình (Curriculum Courses / Nodes)
+    await db.execute('''
+      CREATE TABLE curriculum_courses (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        curriculum_id INTEGER NOT NULL,
+        subject_id    INTEGER NOT NULL,
+        term          INTEGER NOT NULL DEFAULT 1,
+        credits       INTEGER NOT NULL DEFAULT 3,
+        UNIQUE (curriculum_id, subject_id),
+        FOREIGN KEY (curriculum_id) REFERENCES curriculums (id) ON DELETE CASCADE,
+        FOREIGN KEY (subject_id)    REFERENCES subjects (id)    ON DELETE CASCADE
+      )
+    ''');
+
+    // 4. Bảng liên kết tiên quyết giữa các môn (Prerequisites / Edges)
     await db.execute('''
       CREATE TABLE prerequisites (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,12 +124,56 @@ class DbService {
       'CREATE INDEX idx_prereq_parent ON prerequisites (prerequisite_id)',
     );
     await db.execute('CREATE INDEX idx_subject_sem ON subjects (semester)');
+    await db.execute(
+      'CREATE INDEX idx_curr_course_curr ON curriculum_courses (curriculum_id)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_curr_course_subj ON curriculum_courses (subject_id)',
+    );
+    await db.execute('CREATE INDEX idx_curr_code ON curriculums (code)');
 
     await _seed(db);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // Version 1 là bản đầu tiên, chưa có migration nào.
+    if (oldVersion < 2) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS curriculums (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          code          TEXT    NOT NULL UNIQUE,
+          name          TEXT    NOT NULL,
+          major         TEXT    NOT NULL,
+          total_credits INTEGER NOT NULL DEFAULT 145,
+          decision_no   TEXT    NOT NULL DEFAULT '',
+          description   TEXT    NOT NULL DEFAULT '',
+          created_at    TEXT    NOT NULL,
+          updated_at    TEXT    NOT NULL
+        )
+      ''');
+
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS curriculum_courses (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          curriculum_id INTEGER NOT NULL,
+          subject_id    INTEGER NOT NULL,
+          term          INTEGER NOT NULL DEFAULT 1,
+          credits       INTEGER NOT NULL DEFAULT 3,
+          UNIQUE (curriculum_id, subject_id),
+          FOREIGN KEY (curriculum_id) REFERENCES curriculums (id) ON DELETE CASCADE,
+          FOREIGN KEY (subject_id)    REFERENCES subjects (id)    ON DELETE CASCADE
+        )
+      ''');
+
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_curr_course_curr ON curriculum_courses (curriculum_id)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_curr_course_subj ON curriculum_courses (subject_id)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_curr_code ON curriculums (code)',
+      );
+    }
   }
 
   /// Dữ liệu mẫu để mở app lên là có đồ thị xem ngay (an toàn khi demo).
@@ -187,6 +263,35 @@ class DbService {
     await link(prj, dbi);
     await link(prm, prj);
     await link(swr, dbi, 'RELATED');
+
+    // Tạo khung chương trình mẫu (BIT_SE)
+    final currId = await db.insert('curriculums', {
+      'code': 'BIT_SE',
+      'name': 'Bachelor Program of Information Technology, Software Engineering Major',
+      'major': 'Kỹ thuật phần mềm (Software Engineering - SE)',
+      'total_credits': 145,
+      'decision_no': '577/QĐ-ĐHFPT',
+      'description': 'Đào tạo cử nhân ngành CNTT, chuyên ngành Kỹ thuật phần mềm.',
+      'created_at': now,
+      'updated_at': now,
+    });
+
+    Future<void> addNode(int subj, int term, int cr) {
+      return db.insert('curriculum_courses', {
+        'curriculum_id': currId,
+        'subject_id': subj,
+        'term': term,
+        'credits': cr,
+      });
+    }
+
+    await addNode(prf, 1, 3);
+    await addNode(mad, 1, 3);
+    await addNode(csd, 2, 3);
+    await addNode(dbi, 2, 3);
+    await addNode(prj, 3, 3);
+    await addNode(prm, 4, 3);
+    await addNode(swr, 4, 3);
   }
 
   // ------------------------------------------------------------------
@@ -399,6 +504,7 @@ class DbService {
     final db = await database;
     final s = await db.rawQuery('SELECT COUNT(*) AS c FROM subjects');
     final e = await db.rawQuery('SELECT COUNT(*) AS c FROM prerequisites');
+    final c = await db.rawQuery('SELECT COUNT(*) AS c FROM curriculums');
     final orphan = await db.rawQuery('''
       SELECT COUNT(*) AS c FROM subjects s
       WHERE NOT EXISTS (SELECT 1 FROM prerequisites p WHERE p.subject_id = s.id)
@@ -407,6 +513,7 @@ class DbService {
     return {
       'subjects': (s.first['c'] as int?) ?? 0,
       'edges': (e.first['c'] as int?) ?? 0,
+      'curriculums': (c.first['c'] as int?) ?? 0,
       'orphans': (orphan.first['c'] as int?) ?? 0,
     };
   }
@@ -455,18 +562,254 @@ class DbService {
     return result.length == byId.length ? result : null;
   }
 
+  /// Lấy danh sách các khung chương trình đã lưu trong CSDL
+  Future<List<Map<String, dynamic>>> getCurriculums() async {
+    final db = await database;
+    return db.query('curriculums', orderBy: 'code ASC');
+  }
+
+  /// Lấy danh sách môn học kèm học kỳ của 1 khung chương trình cụ thể
+  Future<List<Map<String, dynamic>>> getCoursesOfCurriculum(int curriculumId) async {
+    final db = await database;
+    return db.rawQuery('''
+      SELECT s.*, cc.term, cc.credits AS curr_credits
+      FROM subjects s
+      INNER JOIN curriculum_courses cc ON cc.subject_id = s.id
+      WHERE cc.curriculum_id = ?
+      ORDER BY cc.term ASC, s.code ASC
+    ''', [curriculumId]);
+  }
+
   /// Xoá toàn bộ dữ liệu (dùng trong Cài đặt khi muốn làm lại demo).
   Future<void> resetAll() async {
     final db = await database;
     await db.transaction((txn) async {
       await txn.delete('prerequisites');
+      await txn.delete('curriculum_courses');
       await txn.delete('subjects');
+      await txn.delete('curriculums');
     });
   }
 
   Future<void> close() async {
     await _db?.close();
     _db = null;
+  }
+
+  /// Nạp tự động toàn bộ khung chương trình (Curriculum) vào CSDL SQLite:
+  /// 1. Bảng `curriculums`: Lưu thông tin ngành/chuyên ngành & mã khung (VD: BIT_SE_K20B).
+  /// 2. Bảng `subjects`: Danh mục các môn học (Master Nodes - UPSERT bảo toàn ghi chú Obsidian).
+  /// 3. Bảng `curriculum_courses`: Định nghĩa các môn học thuộc về ngành đó ở kỳ (term) nào.
+  /// 4. Bảng `prerequisites`: Các liên kết điều kiện tiên quyết (Edges).
+  Future<CurriculumImportResult> importCurriculum(Curriculum curriculum) async {
+    final db = await database;
+    int insertedSubjects = 0;
+    int updatedSubjects = 0;
+    int insertedEdges = 0;
+    int curriculumId = 0;
+
+    final currCode = curriculum.code.trim().isNotEmpty
+        ? curriculum.code.trim()
+        : 'SE';
+
+    await db.transaction((txn) async {
+      final now = DateTime.now().toIso8601String();
+      final codeToId = <String, int>{};
+
+      // 1. Lưu hoặc cập nhật thông tin Khung chương trình (curriculums)
+      final currName = curriculum.name.trim().isNotEmpty
+          ? curriculum.name.trim()
+          : curriculum.major;
+      final currMajor = curriculum.major.trim().isNotEmpty
+          ? curriculum.major.trim()
+          : 'Software Engineering';
+      final totalCredits = curriculum.totalCredits > 0
+          ? curriculum.totalCredits
+          : (curriculum.calculatedTotalCredits > 0
+              ? curriculum.calculatedTotalCredits
+              : 145);
+
+      final existingCurrs = await txn.query(
+        'curriculums',
+        where: 'code = ?',
+        whereArgs: [currCode],
+        limit: 1,
+      );
+
+      if (existingCurrs.isNotEmpty) {
+        curriculumId = existingCurrs.first['id'] as int;
+        await txn.update(
+          'curriculums',
+          {
+            'name': currName,
+            'major': currMajor,
+            'total_credits': totalCredits,
+            'decision_no': curriculum.decisionNo,
+            'description': curriculum.description,
+            'updated_at': now,
+          },
+          where: 'id = ?',
+          whereArgs: [curriculumId],
+        );
+      } else {
+        curriculumId = await txn.insert('curriculums', {
+          'code': currCode,
+          'name': currName,
+          'major': currMajor,
+          'total_credits': totalCredits,
+          'decision_no': curriculum.decisionNo,
+          'description': curriculum.description,
+          'created_at': now,
+          'updated_at': now,
+        });
+      }
+
+      // 2. Lấy tất cả môn học hiện có trong DB để tra cứu nhanh
+      final existingRows = await txn.query('subjects');
+      final existingMap = <String, Map<String, dynamic>>{};
+      for (final row in existingRows) {
+        final code = (row['code'] as String).trim().toUpperCase();
+        existingMap[code] = row;
+        codeToId[code] = row['id'] as int;
+      }
+
+      // 3. Thu thập danh sách tất cả các Course trong Curriculum
+      final allCourses = <Course>[];
+      for (final semester in curriculum.semesters) {
+        for (final course in semester.courses) {
+          if (course.code.trim().isNotEmpty) {
+            allCourses.add(course);
+          }
+        }
+      }
+
+      // 4. Upsert từng môn học (Node) vào `subjects` và `curriculum_courses`
+      for (final course in allCourses) {
+        final code = course.code.trim().toUpperCase();
+        final name = course.name.trim().isEmpty ? code : course.name.trim();
+        final semester = course.term > 0 ? course.term : 1;
+        final credits = course.credits > 0 ? course.credits : 3;
+
+        int subjectId;
+        if (existingMap.containsKey(code)) {
+          final existing = existingMap[code]!;
+          subjectId = existing['id'] as int;
+          await txn.update(
+            'subjects',
+            {
+              'name': name,
+              'semester': semester,
+              'credits': credits,
+              'updated_at': now,
+            },
+            where: 'id = ?',
+            whereArgs: [subjectId],
+          );
+          codeToId[code] = subjectId;
+          updatedSubjects++;
+        } else {
+          subjectId = await txn.insert('subjects', {
+            'code': code,
+            'name': name,
+            'semester': semester,
+            'credits': credits,
+            'description': '',
+            'created_at': now,
+            'updated_at': now,
+          });
+          codeToId[code] = subjectId;
+          existingMap[code] = {'id': subjectId, 'code': code};
+          insertedSubjects++;
+        }
+
+        // Lưu liên kết môn với Khung chương trình ngành (curriculum_courses)
+        final existingNode = await txn.query(
+          'curriculum_courses',
+          where: 'curriculum_id = ? AND subject_id = ?',
+          whereArgs: [curriculumId, subjectId],
+          limit: 1,
+        );
+
+        if (existingNode.isEmpty) {
+          await txn.insert('curriculum_courses', {
+            'curriculum_id': curriculumId,
+            'subject_id': subjectId,
+            'term': semester,
+            'credits': credits,
+          });
+        } else {
+          await txn.update(
+            'curriculum_courses',
+            {
+              'term': semester,
+              'credits': credits,
+            },
+            where: 'curriculum_id = ? AND subject_id = ?',
+            whereArgs: [curriculumId, subjectId],
+          );
+        }
+      }
+
+      // 5. Lấy tất cả các edges hiện có để xây đồ thị và tránh trùng lặp
+      final existingEdgeRows = await txn.query('prerequisites');
+      final existingEdges = <String>{};
+      final parents = <int, List<int>>{};
+      for (final row in existingEdgeRows) {
+        final sId = row['subject_id'] as int;
+        final pId = row['prerequisite_id'] as int;
+        existingEdges.add('$sId->$pId');
+        parents.putIfAbsent(sId, () => []).add(pId);
+      }
+
+      // Kiểm tra chu trình cục bộ trong transaction
+      bool checkCycle(int subjectId, int prerequisiteId) {
+        final stack = <int>[prerequisiteId];
+        final seen = <int>{};
+        while (stack.isNotEmpty) {
+          final current = stack.removeLast();
+          if (current == subjectId) return true;
+          if (!seen.add(current)) continue;
+          stack.addAll(parents[current] ?? const []);
+        }
+        return false;
+      }
+
+      // 6. Thêm các liên kết tiên quyết (Edges)
+      for (final course in allCourses) {
+        final subjectCode = course.code.trim().toUpperCase();
+        final subjectId = codeToId[subjectCode];
+        if (subjectId == null) continue;
+
+        for (final prereqRaw in course.prerequisites) {
+          final prereqCode = prereqRaw.trim().toUpperCase();
+          final prereqId = codeToId[prereqCode];
+          if (prereqId == null || prereqId == subjectId) continue;
+
+          final edgeKey = '$subjectId->$prereqId';
+          if (existingEdges.contains(edgeKey)) continue;
+
+          // Bỏ qua nếu tạo chu trình
+          if (checkCycle(subjectId, prereqId)) continue;
+
+          await txn.insert('prerequisites', {
+            'subject_id': subjectId,
+            'prerequisite_id': prereqId,
+            'relation_type': Prerequisite.kPrerequisite,
+          });
+          existingEdges.add(edgeKey);
+          parents.putIfAbsent(subjectId, () => []).add(prereqId);
+          insertedEdges++;
+        }
+      }
+    });
+
+    return CurriculumImportResult(
+      curriculumId: curriculumId,
+      curriculumCode: currCode,
+      insertedSubjects: insertedSubjects,
+      updatedSubjects: updatedSubjects,
+      insertedEdges: insertedEdges,
+    );
   }
 
   /// Kích thước file .db theo byte (hiển thị trong Cài đặt).
@@ -476,6 +819,29 @@ class DbService {
     final file = File(path);
     return await file.exists() ? file.length() : 0;
   }
+}
+
+/// Kết quả sau khi nạp Curriculum vào CSDL SQLite.
+class CurriculumImportResult {
+  final int curriculumId;
+  final String curriculumCode;
+  final int insertedSubjects;
+  final int updatedSubjects;
+  final int insertedEdges;
+
+  const CurriculumImportResult({
+    required this.curriculumId,
+    required this.curriculumCode,
+    required this.insertedSubjects,
+    required this.updatedSubjects,
+    required this.insertedEdges,
+  });
+
+  int get totalSubjects => insertedSubjects + updatedSubjects;
+
+  @override
+  String toString() =>
+      'CurriculumImportResult(id: $curriculumId, code: $curriculumCode, inserted: $insertedSubjects, updated: $updatedSubjects, edges: $insertedEdges)';
 }
 
 /// Lỗi nghiệp vụ từ tầng DB (trùng khoá, chu trình, ...) để UI hiển thị tử tế.

@@ -244,6 +244,7 @@ class _SettingsPageState extends State<SettingsPage> {
               _KeyValue(
                 label: 'Dữ liệu hiện có',
                 value:
+                    '${state.stats['curriculums'] ?? 0} khung CTĐT · '
                     '${state.stats['subjects'] ?? 0} môn · '
                     '${state.stats['edges'] ?? 0} liên kết · '
                     '${state.stats['orphans'] ?? 0} môn rời rạc',

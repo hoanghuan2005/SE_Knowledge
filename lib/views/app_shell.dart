@@ -13,6 +13,7 @@ import 'subjects/subject_form_dialog.dart';
 import 'subjects/subjects_page.dart';
 import 'vault/vault_page.dart';
 import 'widgets/subject_detail_panel.dart';
+import 'curriculum/curriculum_demo_view.dart';
 
 /// Intent để bắt phím tắt Ctrl+B toggle thanh bên.
 class _ToggleSidebarIntent extends Intent {
@@ -51,6 +52,7 @@ class _AppShellState extends State<AppShell> {
     'Obsidian Vault',
     'Trợ lý học tập AI',
     'Cài đặt hệ thống',
+    'Khung CTĐT (FLM Demo)',
   ];
 
   static const List<IconData> _tabIcons = [
@@ -59,6 +61,7 @@ class _AppShellState extends State<AppShell> {
     Icons.folder_copy_outlined,
     Icons.auto_awesome,
     Icons.settings_outlined,
+    Icons.school_outlined,
   ];
 
   void _switchTab(int newIndex) {
@@ -239,6 +242,7 @@ class _AppShellState extends State<AppShell> {
                                         VaultPage(),
                                         AiChatPage(),
                                         SettingsPage(),
+                                        CurriculumDemoView(),
                                       ],
                                     ),
                             ),
@@ -333,6 +337,13 @@ class _ObsidianRibbon extends StatelessWidget {
             tooltip: 'Trợ lý học tập AI (Đoạn chat)',
             isSelected: currentIndex == 3,
             onTap: () => onSelectTab(3),
+          ),
+          const SizedBox(height: 6),
+          _RibbonIconButton(
+            icon: currentIndex == 5 ? Icons.school : Icons.school_outlined,
+            tooltip: 'Khung CTĐT FLM (Crawler & Normalizer Demo)',
+            isSelected: currentIndex == 5,
+            onTap: () => onSelectTab(5),
           ),
 
           const Spacer(),

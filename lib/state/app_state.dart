@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import '../models/graph_data.dart';
 import '../models/prerequisite.dart';
 import '../models/subject.dart';
+import '../models/curriculum.dart';
 import '../services/db_service.dart';
 import '../services/obsidian_service.dart';
 import '../services/settings_service.dart';
+import '../services/curriculum_parser_service.dart';
 import '../utils/app_colors.dart';
 
 /// Store trạng thái dùng chung, không cần package quản lý state bên ngoài.
@@ -217,5 +219,60 @@ class AppState extends ChangeNotifier {
     await _db.resetAll();
     _selectedSubjectId = null;
     await refresh();
+  }
+
+  // --- Curriculum (FLM Scraper & Cache & Auto DB Sync) ---
+  Curriculum? _curriculum;
+  Curriculum? get curriculum => _curriculum;
+
+  bool _isScrapingCurriculum = false;
+  bool get isScrapingCurriculum => _isScrapingCurriculum;
+
+  String? _curriculumError;
+  String? get curriculumError => _curriculumError;
+
+  CurriculumImportResult? _lastImportResult;
+  CurriculumImportResult? get lastImportResult => _lastImportResult;
+
+  /// Nạp đối tượng Curriculum vào CSDL SQLite và cập nhật toàn bộ đồ thị
+  Future<CurriculumImportResult> importCurriculumToDb(Curriculum curriculum) async {
+    final res = await _db.importCurriculum(curriculum);
+    _lastImportResult = res;
+    await refresh();
+    return res;
+  }
+
+  /// Bóc tách chương trình học. Mặc định [autoSaveToDb] = true:
+  /// Ngay khi cào xong sẽ tự động lưu thẳng vào CSDL SQLite và làm mới đồ thị.
+  Future<Curriculum> loadCurriculum({
+    String? rawHtml,
+    bool forceRefresh = false,
+    bool autoSaveToDb = true,
+  }) async {
+    _isScrapingCurriculum = true;
+    _curriculumError = null;
+    notifyListeners();
+
+    try {
+      final result = await CurriculumParserService.instance.getCurriculum(
+        rawHtml: rawHtml,
+        forceRefresh: forceRefresh,
+      );
+      _curriculum = result;
+
+      // Tự động lưu vào SQLite DB nếu có môn học hợp lệ
+      if (autoSaveToDb && result.semesters.isNotEmpty) {
+        _lastImportResult = await _db.importCurriculum(result);
+        await refresh();
+      }
+
+      return result;
+    } catch (e) {
+      _curriculumError = e.toString();
+      rethrow;
+    } finally {
+      _isScrapingCurriculum = false;
+      notifyListeners();
+    }
   }
 }
