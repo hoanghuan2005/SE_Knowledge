@@ -3,6 +3,7 @@ import 'package:desktop_webview_window/desktop_webview_window.dart';
 
 import 'services/chat_session_service.dart';
 import 'services/db_service.dart';
+import 'services/md_intake_service.dart';
 import 'services/settings_service.dart';
 import 'state/app_state.dart';
 import 'utils/app_constants.dart';
@@ -28,6 +29,10 @@ Future<void> main(List<String> args) async {
   await SettingsService.instance.init();
   await ChatSessionService.instance.init();
   await AppState.instance.bootstrap();
+
+  // Cổng nhận markdown từ extension Chrome. Hỏng thì chỉ ghi `lastError`,
+  // không được phép chặn khởi động app.
+  await MdIntakeService.instance.start();
 
   runApp(const SeKnowledgeApp());
 }

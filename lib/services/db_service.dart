@@ -8,6 +8,7 @@ import '../models/curriculum.dart';
 import '../models/graph_data.dart';
 import '../models/prerequisite.dart';
 import '../models/subject.dart';
+import 'fap_markdown_parser.dart';
 
 /// Tầng truy cập dữ liệu duy nhất của ứng dụng.
 ///
@@ -22,7 +23,7 @@ class DbService {
   static final DbService instance = DbService._();
 
   static const String dbFileName = 'se_knowledge.db';
-  static const int dbVersion = 2;
+  static const int dbVersion = 3;
 
   Database? _db;
   String? _dbPath;
@@ -132,6 +133,8 @@ class DbService {
     );
     await db.execute('CREATE INDEX idx_curr_code ON curriculums (code)');
 
+    await _createFapTables(db);
+
     await _seed(db);
   }
 
@@ -174,6 +177,214 @@ class DbService {
         'CREATE INDEX IF NOT EXISTS idx_curr_code ON curriculums (code)',
       );
     }
+
+    if (oldVersion < 3) {
+      await _createFapTables(db);
+    }
+  }
+
+  /// 10 bảng phục vụ nhập dữ liệu từ FAP (PHẦN 2 + PHẦN 3 của `schema_full.sql`).
+  ///
+  /// Migration thuần cộng thêm: không DROP, không đổi cột nào của các bảng cũ,
+  /// và KHÔNG gọi `_seed` — file .db trên máy người dùng đang có dữ liệu thật.
+  ///
+  /// Thứ tự tạo bảng là bắt buộc vì có khoá ngoại phụ thuộc nhau: `curricula`
+  /// trước `program_learning_outcomes`/`curriculum_subjects`; `syllabi` trước
+  /// `materials`/`learning_outcomes`/`sessions`/`assessments`;
+  /// `learning_outcomes` trước hai bảng nối `*_learning_outcomes`.
+  ///
+  /// Phân biệt với hai bảng cũ cùng chủ đề: `curriculums` +
+  /// `curriculum_courses` là khung CTĐT của luồng scraper/demo cũ, còn
+  /// `curricula` + `curriculum_subjects` dưới đây là dữ liệu nhập trực tiếp từ
+  /// FAP. Hai bộ tồn tại song song, không ghi đè nhau.
+  Future<void> _createFapTables(Database db) async {
+    // --- PHẦN 2: Chương trình đào tạo (trang "Curriculum Details") ---
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS curricula (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        fap_curriculum_id INTEGER UNIQUE,
+        code              TEXT    NOT NULL,
+        name_vn           TEXT,
+        name_en           TEXT,
+        description       TEXT,
+        decision_no       TEXT,
+        decision_date     TEXT,
+        total_credits     INTEGER,
+        source_url        TEXT,
+        synced_at         TEXT    NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_curricula_code ON curricula (code)',
+    );
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS program_learning_outcomes (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        curriculum_id INTEGER NOT NULL,
+        code          TEXT    NOT NULL,
+        description   TEXT    NOT NULL,
+        UNIQUE (curriculum_id, code),
+        FOREIGN KEY (curriculum_id) REFERENCES curricula (id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_plo_curriculum ON program_learning_outcomes (curriculum_id)',
+    );
+
+    // Bảng nối nhiều-nhiều BẮT BUỘC: kỳ học / tín chỉ / tiên quyết là thuộc
+    // tính THEO TỪNG CHƯƠNG TRÌNH, không phải thuộc tính cố định của môn.
+    // Xem mục 4 trong FAP_Syllabus_Schema.md.
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS curriculum_subjects (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        curriculum_id         INTEGER NOT NULL,
+        subject_id            INTEGER NOT NULL,
+        semester              INTEGER,
+        credits               INTEGER,
+        raw_prerequisite_text TEXT,
+        UNIQUE (curriculum_id, subject_id),
+        FOREIGN KEY (curriculum_id) REFERENCES curricula (id) ON DELETE CASCADE,
+        FOREIGN KEY (subject_id)    REFERENCES subjects (id)   ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_cursub_curriculum ON curriculum_subjects (curriculum_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_cursub_subject ON curriculum_subjects (subject_id)',
+    );
+
+    // --- PHẦN 3: Syllabus chi tiết (trang "Syllabus Details") ---
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS syllabi (
+        id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+        subject_id               INTEGER NOT NULL,
+        fap_syllabus_id          INTEGER UNIQUE,
+        name_en                  TEXT,
+        name_native              TEXT,
+        degree_level             TEXT,
+        learning_teaching_method TEXT,
+        time_allocation          TEXT,
+        description              TEXT,
+        student_tasks            TEXT,
+        tools                    TEXT,
+        scoring_scale            INTEGER,
+        decision_no              TEXT,
+        decision_date            TEXT,
+        is_approved              INTEGER NOT NULL DEFAULT 0,
+        is_scored                INTEGER NOT NULL DEFAULT 1,
+        min_avg_mark_to_pass     REAL,
+        is_active                INTEGER NOT NULL DEFAULT 1,
+        approved_date            TEXT,
+        raw_prerequisite_text    TEXT,
+        source_url               TEXT,
+        synced_at                TEXT    NOT NULL,
+        FOREIGN KEY (subject_id) REFERENCES subjects (id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_syllabi_subject ON syllabi (subject_id)',
+    );
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS materials (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        syllabus_id    INTEGER NOT NULL,
+        seq_no         INTEGER,
+        description    TEXT    NOT NULL,
+        author         TEXT,
+        publisher      TEXT,
+        published_date TEXT,
+        edition        TEXT,
+        isbn           TEXT,
+        is_main        INTEGER NOT NULL DEFAULT 0,
+        is_hard_copy   INTEGER NOT NULL DEFAULT 0,
+        is_online      INTEGER NOT NULL DEFAULT 0,
+        note           TEXT,
+        FOREIGN KEY (syllabus_id) REFERENCES syllabi (id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_materials_syllabus ON materials (syllabus_id)',
+    );
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS learning_outcomes (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        syllabus_id INTEGER NOT NULL,
+        code        TEXT    NOT NULL,
+        detail      TEXT    NOT NULL,
+        UNIQUE (syllabus_id, code),
+        FOREIGN KEY (syllabus_id) REFERENCES syllabi (id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_lo_syllabus ON learning_outcomes (syllabus_id)',
+    );
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sessions (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        syllabus_id       INTEGER NOT NULL,
+        session_no        INTEGER NOT NULL,
+        topic             TEXT    NOT NULL,
+        teaching_type     TEXT,
+        itu               TEXT,
+        student_materials TEXT,
+        download_url      TEXT,
+        student_tasks     TEXT,
+        urls              TEXT,
+        UNIQUE (syllabus_id, session_no),
+        FOREIGN KEY (syllabus_id) REFERENCES syllabi (id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sessions_syllabus ON sessions (syllabus_id)',
+    );
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS session_learning_outcomes (
+        session_id INTEGER NOT NULL,
+        clo_id     INTEGER NOT NULL,
+        PRIMARY KEY (session_id, clo_id),
+        FOREIGN KEY (session_id) REFERENCES sessions (id)          ON DELETE CASCADE,
+        FOREIGN KEY (clo_id)     REFERENCES learning_outcomes (id) ON DELETE CASCADE
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS assessments (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        syllabus_id         INTEGER NOT NULL,
+        seq_no              INTEGER,
+        category            TEXT    NOT NULL,
+        type                TEXT,
+        part                INTEGER,
+        weight_percent      REAL    NOT NULL,
+        completion_criteria TEXT,
+        duration            TEXT,
+        question_type       TEXT,
+        no_question         INTEGER,
+        knowledge_skill     TEXT,
+        grading_guide       TEXT,
+        note                TEXT,
+        FOREIGN KEY (syllabus_id) REFERENCES syllabi (id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_assessments_syllabus ON assessments (syllabus_id)',
+    );
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS assessment_learning_outcomes (
+        assessment_id INTEGER NOT NULL,
+        clo_id        INTEGER NOT NULL,
+        PRIMARY KEY (assessment_id, clo_id),
+        FOREIGN KEY (assessment_id) REFERENCES assessments (id)       ON DELETE CASCADE,
+        FOREIGN KEY (clo_id)        REFERENCES learning_outcomes (id) ON DELETE CASCADE
+      )
+    ''');
   }
 
   /// Dữ liệu mẫu để mở app lên là có đồ thị xem ngay (an toàn khi demo).
@@ -817,6 +1028,7 @@ class DbService {
       await txn.delete('curriculum_courses');
       await txn.delete('subjects');
       await txn.delete('curriculums');
+      await txn.delete('curricula');
     });
   }
 
@@ -1041,6 +1253,269 @@ class DbService {
     );
   }
 
+  // ------------------------------------------------------------------
+  // NHẬP DỮ LIỆU TỪ FAP (trang "Curriculum Details")
+  // ------------------------------------------------------------------
+  //
+  // Mọi phương thức dưới đây nhận [txn] tuỳ chọn để [importFapCurriculum] gói
+  // được cả lượt nhập vào MỘT transaction: hỏng giữa chừng thì rollback sạch,
+  // không để lại chương trình đã tạo mà thiếu môn.
+
+  /// Upsert một chương trình đào tạo theo `fap_curriculum_id` (UNIQUE).
+  ///
+  /// Trang FAP không có `curid` thì lùi về đối chiếu theo `code`, để vẫn nhận
+  /// ra chương trình cũ thay vì tạo bản trùng.
+  Future<int> upsertCurriculum({
+    required int? fapCurriculumId,
+    required String code,
+    String? nameVn,
+    String? nameEn,
+    String? description,
+    String? decisionNo,
+    String? decisionDate,
+    int? totalCredits,
+    String? sourceUrl,
+    DatabaseExecutor? txn,
+  }) async {
+    final db = txn ?? await database;
+    final values = <String, Object?>{
+      'fap_curriculum_id': fapCurriculumId,
+      'code': code,
+      'name_vn': nameVn,
+      'name_en': nameEn,
+      'description': description,
+      'decision_no': decisionNo,
+      'decision_date': decisionDate,
+      'total_credits': totalCredits,
+      'source_url': sourceUrl,
+      'synced_at': DateTime.now().toIso8601String(),
+    };
+
+    final existing = fapCurriculumId != null
+        ? await db.query(
+            'curricula',
+            columns: ['id'],
+            where: 'fap_curriculum_id = ?',
+            whereArgs: [fapCurriculumId],
+            limit: 1,
+          )
+        : await db.query(
+            'curricula',
+            columns: ['id'],
+            where: 'code = ?',
+            whereArgs: [code],
+            limit: 1,
+          );
+
+    if (existing.isNotEmpty) {
+      final id = existing.first['id'] as int;
+      await db.update('curricula', values, where: 'id = ?', whereArgs: [id]);
+      return id;
+    }
+    return db.insert('curricula', values);
+  }
+
+  /// Thay toàn bộ PLO của một chương trình.
+  ///
+  /// Xoá rồi chèn lại là đủ và luôn đúng vì PLO thuần tuý đến từ FAP, người
+  /// dùng không tự thêm dòng nào nên không có gì để mất.
+  Future<void> replacePlos(
+    int curriculumId,
+    List<FapPloRow> plos, {
+    DatabaseExecutor? txn,
+  }) async {
+    final db = txn ?? await database;
+    await db.delete(
+      'program_learning_outcomes',
+      where: 'curriculum_id = ?',
+      whereArgs: [curriculumId],
+    );
+    for (final plo in plos) {
+      await db.insert('program_learning_outcomes', {
+        'curriculum_id': curriculumId,
+        'code': plo.code,
+        'description': plo.description,
+      });
+    }
+  }
+
+  /// Upsert một môn vào bảng `subjects` theo luồng FAP.
+  ///
+  /// Môn CHƯA tồn tại: chèn đầy đủ, lấy luôn kỳ/tín chỉ của chương trình này
+  /// làm giá trị khởi tạo.
+  ///
+  /// Môn ĐÃ tồn tại: CHỈ cập nhật `name` (FAP là nguồn chuẩn cho tên) và
+  /// `updated_at`. Tuyệt đối không đụng tới `semester`, `credits`,
+  /// `description`, `note_path` — đó là thuộc tính THEO TỪNG CHƯƠNG TRÌNH và
+  /// chỗ của chúng là `curriculum_subjects`. Ghi đè ở đây thì nhập chương
+  /// trình thứ hai sẽ phá dữ liệu của chương trình thứ nhất trên các môn dùng
+  /// chung (PRF192, MAD101, DBI202...). Xem mục 4 trong FAP_Syllabus_Schema.md.
+  ///
+  /// Vì vậy KHÔNG dùng [upsertSubjectByCode] cho luồng này: hàm đó ghi đè
+  /// semester/credits — đúng cho Obsidian Vault, sai cho FAP.
+  Future<int> upsertSubjectFromFap({
+    required String code,
+    required String name,
+    required int semester,
+    required int credits,
+    DatabaseExecutor? txn,
+  }) async {
+    final db = txn ?? await database;
+    final normalized = code.trim().toUpperCase();
+    final now = DateTime.now().toIso8601String();
+
+    final existing = await db.query(
+      'subjects',
+      columns: ['id'],
+      where: 'code = ?',
+      whereArgs: [normalized],
+      limit: 1,
+    );
+
+    if (existing.isNotEmpty) {
+      final id = existing.first['id'] as int;
+      await db.update(
+        'subjects',
+        {'name': name, 'updated_at': now},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      return id;
+    }
+
+    return db.insert('subjects', {
+      'code': normalized,
+      'name': name,
+      // FAP ghi kỳ 0 cho các môn chuẩn bị (OTP101, PEN, PHE...). Đồ thị và
+      // thanh bên nhóm môn theo kỳ nên quy về kỳ 1, còn con số 0 nguyên bản
+      // vẫn nằm ở `curriculum_subjects.semester`.
+      'semester': semester > 0 ? semester : 1,
+      // Ngược lại, 0 tín chỉ là sự thật về môn nên giữ nguyên.
+      'credits': credits,
+      'description': '',
+      'created_at': now,
+      'updated_at': now,
+    });
+  }
+
+  /// Upsert một dòng của bảng nối, theo UNIQUE `(curriculum_id, subject_id)`.
+  Future<void> upsertCurriculumSubject({
+    required int curriculumId,
+    required int subjectId,
+    int? semester,
+    int? credits,
+    String? rawPrerequisiteText,
+    DatabaseExecutor? txn,
+  }) async {
+    final db = txn ?? await database;
+    final values = <String, Object?>{
+      'curriculum_id': curriculumId,
+      'subject_id': subjectId,
+      'semester': semester,
+      'credits': credits,
+      'raw_prerequisite_text': rawPrerequisiteText,
+    };
+
+    final existing = await db.query(
+      'curriculum_subjects',
+      columns: ['id'],
+      where: 'curriculum_id = ? AND subject_id = ?',
+      whereArgs: [curriculumId, subjectId],
+      limit: 1,
+    );
+
+    if (existing.isEmpty) {
+      await db.insert('curriculum_subjects', values);
+      return;
+    }
+    await db.update(
+      'curriculum_subjects',
+      values,
+      where: 'id = ?',
+      whereArgs: [existing.first['id'] as int],
+    );
+  }
+
+  /// Ghi trọn một trang "Curriculum Details" đã bóc tách xuống CSDL.
+  ///
+  /// Tên khác [importCurriculum] vì Dart không nạp chồng được: hàm kia phục vụ
+  /// luồng scraper cũ và ghi vào `curriculums`/`curriculum_courses`, hàm này
+  /// ghi vào bộ bảng FAP `curricula`/`curriculum_subjects`.
+  ///
+  /// KHÔNG tạo cạnh tiên quyết ở bước này. `raw_prerequisite_text` chỉ được
+  /// lưu nguyên văn; việc bóc mã môn ra thành cạnh `prerequisites` là Giai
+  /// đoạn 5.4.
+  Future<FapImportResult> importFapCurriculum(FapCurriculumImport data) async {
+    final db = await database;
+    var curriculumId = 0;
+    var insertedSubjects = 0;
+    var updatedSubjects = 0;
+    var links = 0;
+
+    await db.transaction((txn) async {
+      curriculumId = await upsertCurriculum(
+        fapCurriculumId: data.fapCurriculumId,
+        code: data.code,
+        nameEn: data.name,
+        decisionNo: data.decisionNo,
+        totalCredits: data.totalCredits,
+        sourceUrl: data.sourceUrl,
+        txn: txn,
+      );
+
+      await replacePlos(curriculumId, data.plos, txn: txn);
+
+      // Chụp trước danh sách mã môn đang có để đếm mới/cũ bằng một truy vấn,
+      // thay vì hỏi lại CSDL cho từng môn.
+      final existingRows = await txn.query('subjects', columns: ['code']);
+      final existingCodes = <String>{
+        for (final row in existingRows)
+          (row['code'] as String).trim().toUpperCase(),
+      };
+
+      for (final row in data.subjects) {
+        final code = row.code.trim().toUpperCase();
+        if (code.isEmpty) continue;
+
+        final isNew = !existingCodes.contains(code);
+        final subjectId = await upsertSubjectFromFap(
+          code: code,
+          name: row.fullName,
+          semester: row.semester,
+          credits: row.credits,
+          txn: txn,
+        );
+
+        if (isNew) {
+          existingCodes.add(code);
+          insertedSubjects++;
+        } else {
+          updatedSubjects++;
+        }
+
+        await upsertCurriculumSubject(
+          curriculumId: curriculumId,
+          subjectId: subjectId,
+          semester: row.semester,
+          credits: row.credits,
+          rawPrerequisiteText:
+              row.rawPrerequisite.isEmpty ? null : row.rawPrerequisite,
+          txn: txn,
+        );
+        links++;
+      }
+    });
+
+    return FapImportResult(
+      curriculumId: curriculumId,
+      curriculumCode: data.code,
+      insertedSubjects: insertedSubjects,
+      updatedSubjects: updatedSubjects,
+      plos: data.plos.length,
+      curriculumSubjects: links,
+    );
+  }
+
   /// Kích thước file .db theo byte (hiển thị trong Cài đặt).
   Future<int> databaseSizeInBytes() async {
     final path = _dbPath;
@@ -1071,6 +1546,39 @@ class CurriculumImportResult {
   @override
   String toString() =>
       'CurriculumImportResult(id: $curriculumId, code: $curriculumCode, inserted: $insertedSubjects, updated: $updatedSubjects, edges: $insertedEdges)';
+}
+
+/// Kết quả sau khi ghi một trang Curriculum Details của FAP xuống CSDL.
+class FapImportResult {
+  final int curriculumId;
+  final String curriculumCode;
+
+  /// Số môn lần đầu xuất hiện trong `subjects`.
+  final int insertedSubjects;
+
+  /// Số môn đã có sẵn, chỉ được làm mới phần tên.
+  final int updatedSubjects;
+
+  final int plos;
+
+  /// Số dòng ghi vào bảng nối `curriculum_subjects`.
+  final int curriculumSubjects;
+
+  const FapImportResult({
+    required this.curriculumId,
+    required this.curriculumCode,
+    required this.insertedSubjects,
+    required this.updatedSubjects,
+    required this.plos,
+    required this.curriculumSubjects,
+  });
+
+  int get totalSubjects => insertedSubjects + updatedSubjects;
+
+  @override
+  String toString() =>
+      'FapImportResult($curriculumCode: $insertedSubjects mon moi, '
+      '$updatedSubjects mon cap nhat, $plos PLO, $curriculumSubjects lien ket)';
 }
 
 /// Lỗi nghiệp vụ từ tầng DB (trùng khoá, chu trình, ...) để UI hiển thị tử tế.

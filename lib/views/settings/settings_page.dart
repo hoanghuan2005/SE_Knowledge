@@ -1,7 +1,9 @@
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
 import '../../services/db_service.dart';
+import '../../services/md_intake_service.dart';
 import '../../services/obsidian_launcher.dart';
 import '../../services/settings_service.dart';
 import '../../state/app_state.dart';
@@ -217,6 +219,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   _aiCard(),
                   const SizedBox(height: 16),
                   _fapCard(),
+                  const SizedBox(height: 16),
+                  _intakeCard(),
                   const SizedBox(height: 16),
                   _storageCard(),
                   const SizedBox(height: 16),
@@ -498,6 +502,60 @@ class _SettingsPageState extends State<SettingsPage> {
           label: const Text('Cập nhật từ FAP'),
           onPressed: () => _mockAction('Cập nhật từ FAP'),
         ),
+      ),
+    );
+  }
+
+  /// Trạng thái cổng nhận markdown từ extension Chrome (Giai đoạn 5.2').
+  ///
+  /// Không có nút bật/tắt: server lên cùng app và chỉ nghe ở loopback, nên
+  /// không có gì để người dùng phải quyết định.
+  Widget _intakeCard() {
+    final intake = MdIntakeService.instance;
+    final running = intake.isRunning;
+    return _Section(
+      icon: Icons.download_for_offline_outlined,
+      title: 'Nhận dữ liệu từ Chrome',
+      description:
+          'Mở trang FAP trong Chrome (đã đăng nhập sẵn) rồi bấm nút của '
+          'extension "Page to Markdown Note" — trang sẽ được gửi thẳng vào đây '
+          'để xem trước trước khi ghi vào CSDL.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                running ? Icons.check_circle : Icons.error_outline,
+                size: 16,
+                color: running ? AppColors.success : AppColors.error,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SelectableText(
+                  intake.statusText,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: running
+                        ? AppColors.textPrimary
+                        : AppColors.error,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _KeyValue(
+            label: 'Thư mục nhận file',
+            value: AppState.instance.hasVault
+                ? p.join(
+                    AppState.instance.vaultPath!,
+                    MdIntakeService.vaultSubfolder,
+                  )
+                : 'fap_inbox trong thư mục dữ liệu ứng dụng '
+                    '(chưa chọn Obsidian Vault)',
+          ),
+        ],
       ),
     );
   }
