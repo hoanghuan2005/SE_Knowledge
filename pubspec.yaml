@@ -22,6 +22,9 @@ dependencies:
   # --- Chon thu muc Obsidian Vault ---
   file_selector: ^1.0.3
 
+  # --- Mo app ngoai (Obsidian) qua URI scheme ---
+  url_launcher: ^6.3.2
+
   # --- Ve do thi tri thuc ---
   graphview: ^1.2.0
 

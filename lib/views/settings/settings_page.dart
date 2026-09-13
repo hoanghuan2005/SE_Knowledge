@@ -1,11 +1,22 @@
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/db_service.dart';
+import '../../services/obsidian_launcher.dart';
 import '../../services/settings_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_constants.dart';
 import '../../utils/ui_helpers.dart';
+import '../widgets/vault_import_plan_dialog.dart';
+
+/// Trạng thái hiển thị (thuần UI) cho nút "Test kết nối" ở khối Trợ lý AI.
+///
+/// MOCK: chưa gọi API thật. Khi làm phần "Cài đặt — Test connect Gemini API"
+/// (xem Prompts_GiaiDoan_2345.md, Giai đoạn 3), thay `_mockTestConnection()`
+/// bằng lời gọi `AiService.instance.testConnection(...)` thật và map kết quả
+/// (thành công/thất bại) vào đúng 2 case success/failure bên dưới.
+enum _MockConnStatus { idle, testing, success, failure }
 
 /// Cấu hình cục bộ và thông tin kiến trúc (tiện lúc demo bảo vệ đồ án).
 class SettingsPage extends StatefulWidget {
@@ -24,6 +35,15 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _obscureKey = true;
   bool _loaded = false;
   int _dbSize = 0;
+
+  /// Khoá hai nút Xuất/Nhập Vault trong lúc đang chạy, tránh bấm chồng nhau
+  /// làm hai lượt ghi cùng đụng vào một thư mục.
+  bool _vaultBusy = false;
+
+  // --- MOCK: trạng thái demo cho các nút chưa nối logic thật ---
+  // Xem Prompts_GiaiDoan_2345.md để biết nút nào ứng với giai đoạn nào.
+  _MockConnStatus _connStatus = _MockConnStatus.idle;
+  bool _mockNextOk = true;
 
   @override
   void initState() {
@@ -79,6 +99,98 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// MOCK — Test connect (Giai đoạn 3, Prompts_GiaiDoan_2345.md).
+  ///
+  /// Chưa gọi Gemini/OpenAI thật, chỉ giả lập độ trễ mạng rồi luân phiên
+  /// tick xanh / tick đỏ để xem trước giao diện. Khi làm thật: gọi
+  /// `AiService.instance.testConnection(provider, apiKey, model)`, set
+  /// `success` nếu request trả 200, `failure` cho mọi lỗi (401, timeout,...).
+  Future<void> _mockTestConnection() async {
+    setState(() => _connStatus = _MockConnStatus.testing);
+    await Future.delayed(const Duration(milliseconds: 900));
+    if (!mounted) return;
+    setState(() {
+      _connStatus = _mockNextOk ? _MockConnStatus.success : _MockConnStatus.failure;
+      _mockNextOk = !_mockNextOk;
+    });
+  }
+
+  /// MOCK dùng chung cho các nút chưa có backend thật (Browse Vault, Mở bằng
+  /// Obsidian, Xuất/Nhập Vault trong Cài đặt, Cập nhật từ FAP). Chỉ hiện
+  /// toast xác nhận đã bấm — không đọc/ghi gì. Xem Prompts_GiaiDoan_2345.md
+  /// (Giai đoạn 2, 4, 5) để nối từng nút vào logic thật.
+  void _mockAction(String label) {
+    Ui.success(context, '$label — bản demo (mock), chưa nối logic thật.');
+  }
+
+  // ------------------------------------------------------------------
+  // EXPORT / IMPORT VAULT — logic thật, dùng chung backend với tab Vault
+  // ------------------------------------------------------------------
+
+  /// Ghi toàn bộ môn trong SQLite thành file `.md` trong Vault.
+  ///
+  /// `exportAll` gọi `mergeMarkdown` cho file đã tồn tại, nên chỉ ba khối app
+  /// sở hữu (front matter, "Môn tiên quyết", "Mở ra các môn") bị ghi đè; mọi
+  /// mục người dùng tự thêm được giữ nguyên.
+  Future<void> _exportToVault() async {
+    final ok = await Ui.confirm(
+      context,
+      title: 'Ghi đồ thị ra Vault?',
+      message:
+          'Mỗi môn trong CSDL sẽ thành một file <MÃ MÔN>.md, kèm front matter '
+          'và các liên kết [[...]]. Phần ghi chú bạn tự viết trong file vẫn '
+          'được giữ lại.',
+      confirmLabel: 'Ghi ra Vault',
+    );
+    if (!ok || !mounted) return;
+
+    setState(() => _vaultBusy = true);
+    try {
+      final count = await AppState.instance.exportToVault();
+      if (mounted) Ui.success(context, 'Đã ghi $count file .md ra Vault.');
+    } catch (e) {
+      if (mounted) Ui.error(context, e);
+    } finally {
+      if (mounted) setState(() => _vaultBusy = false);
+    }
+  }
+
+  /// Đọc Vault về SQLite, nhưng cho xem trước rồi mới ghi.
+  ///
+  /// Dùng `planImport` + `applyVaultPlan` thay vì `importFromVault` một phát,
+  /// vì luồng nhập có một thao tác làm mất dữ liệu: gỡ những liên kết đã bị
+  /// xoá khỏi file `.md`. Người dùng cần thấy danh sách đó trước khi đồng ý.
+  Future<void> _importFromVault() async {
+    setState(() => _vaultBusy = true);
+    try {
+      final plan = await AppState.instance.planImportFromVault();
+      if (!mounted) return;
+
+      if (plan.isEmpty) {
+        Ui.toast(context, 'Vault không có thay đổi nào so với CSDL.');
+        return;
+      }
+
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => VaultImportPlanDialog(plan: plan),
+      );
+      if (ok != true || !mounted) return;
+
+      final report = await AppState.instance.applyVaultPlan(plan);
+      if (!mounted) return;
+      if (report.warnings.isEmpty) {
+        Ui.success(context, report.summary);
+      } else {
+        Ui.toast(context, '${report.summary} ${report.warnings.join(' ')}');
+      }
+    } catch (e) {
+      if (mounted) Ui.error(context, e);
+    } finally {
+      if (mounted) setState(() => _vaultBusy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_loaded) {
@@ -100,7 +212,11 @@ class _SettingsPageState extends State<SettingsPage> {
                 children: [
                   _themeCard(),
                   const SizedBox(height: 16),
+                  _vaultCard(),
+                  const SizedBox(height: 16),
                   _aiCard(),
+                  const SizedBox(height: 16),
+                  _fapCard(),
                   const SizedBox(height: 16),
                   _storageCard(),
                   const SizedBox(height: 16),
@@ -203,15 +319,185 @@ class _SettingsPageState extends State<SettingsPage> {
             decoration: const InputDecoration(labelText: 'Tên model'),
           ),
           const SizedBox(height: 16),
-          Align(
-            alignment: Alignment.centerRight,
-            child: ElevatedButton.icon(
-              icon: const Icon(Icons.save, size: 18),
-              label: const Text('Lưu cấu hình'),
-              onPressed: _saveAi,
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _connStatusBadge(),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    icon: _connStatus == _MockConnStatus.testing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.network_check, size: 18),
+                    label: const Text('Test kết nối'),
+                    onPressed: _connStatus == _MockConnStatus.testing
+                        ? null
+                        : _mockTestConnection,
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.save, size: 18),
+                    label: const Text('Lưu cấu hình'),
+                    onPressed: _saveAi,
+                  ),
+                ],
+              ),
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  /// MOCK — dải trạng thái tick xanh/tick đỏ cho "Test kết nối" ở trên.
+  Widget _connStatusBadge() {
+    switch (_connStatus) {
+      case _MockConnStatus.idle:
+        return const SizedBox.shrink();
+      case _MockConnStatus.testing:
+        return Text(
+          'Đang kiểm tra…',
+          style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+        );
+      case _MockConnStatus.success:
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.check_circle, size: 18, color: Colors.green),
+            SizedBox(width: 6),
+            Text(
+              'Kết nối OK (demo)',
+              style: TextStyle(fontSize: 12.5, color: Colors.green),
+            ),
+          ],
+        );
+      case _MockConnStatus.failure:
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cancel, size: 18, color: AppColors.error),
+            const SizedBox(width: 6),
+            Text(
+              'Kết nối thất bại (demo)',
+              style: TextStyle(fontSize: 12.5, color: AppColors.error),
+            ),
+          ],
+        );
+    }
+  }
+
+  /// Khối Obsidian Vault.
+  ///
+  /// Trỏ tới thư mục Vault và mở nó bằng app Obsidian ngoài.
+  ///
+  /// Dùng chung `getDirectoryPath` của `file_selector` như `_pickVault()`
+  /// trong `vault_page.dart`, và [ObsidianLauncher] cho URI `obsidian://`.
+  Future<void> _browseVault() async {
+    final path = await getDirectoryPath(confirmButtonText: 'Chọn Vault');
+    if (path == null) return;
+    await AppState.instance.setVaultPath(path);
+    if (!mounted) return;
+    Ui.success(context, 'Đã trỏ Vault tới $path');
+  }
+
+  /// Mở cả Vault bằng Obsidian; thất bại thì lùi về File Explorer.
+  Future<void> _openVaultInObsidian() async {
+    final path = AppState.instance.vaultPath;
+    if (path == null) return;
+
+    final ok = await ObsidianLauncher.openVault(path);
+    if (ok || !mounted) return;
+
+    Ui.error(
+      context,
+      'Không mở được bằng Obsidian. Thường do một trong hai: máy chưa cài '
+      'Obsidian, hoặc thư mục này chưa từng được mở như một Vault trong '
+      'Obsidian (Obsidian không tự thêm vault lạ qua URI). Đang mở bằng '
+      'File Explorer thay thế.',
+    );
+    await ObsidianLauncher.openInExplorer(path);
+  }
+
+  /// "Xuất ra Vault" và "Nhập từ Vault" dùng chung backend với tab Vault;
+  /// "Browse..." và "Mở bằng Obsidian" nay cũng đã chạy thật.
+  Widget _vaultCard() {
+    return ListenableBuilder(
+      listenable: AppState.instance,
+      builder: (context, _) {
+        final vaultPath = AppState.instance.vaultPath;
+        return _Section(
+          icon: Icons.folder_special,
+          title: 'Obsidian Vault',
+          description:
+              'Trỏ tới đúng thư mục Vault trên máy, mở thẳng bằng app '
+              'Obsidian, hoặc đồng bộ hai chiều với CSDL. Muốn mở bằng '
+              'Obsidian thì thư mục này phải từng được mở như một Vault '
+              'trong Obsidian ít nhất một lần.',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _KeyValue(
+                label: 'Đường dẫn Vault',
+                value: vaultPath ?? '(chưa chọn)',
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.folder_open, size: 18),
+                    label: const Text('Browse...'),
+                    onPressed: _browseVault,
+                  ),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.launch, size: 18),
+                    label: const Text('Mở bằng Obsidian'),
+                    onPressed: vaultPath == null ? null : _openVaultInObsidian,
+                  ),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.upload_file, size: 18),
+                    label: const Text('Xuất ra Vault'),
+                    onPressed: _vaultBusy || vaultPath == null
+                        ? null
+                        : _exportToVault,
+                  ),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.download, size: 18),
+                    label: const Text('Nhập từ Vault'),
+                    onPressed: _vaultBusy || vaultPath == null
+                        ? null
+                        : _importFromVault,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// MOCK — Cập nhật từ FAP (Giai đoạn 5, module cào dữ liệu của Huân).
+  Widget _fapCard() {
+    return _Section(
+      icon: Icons.cloud_sync,
+      title: 'Cập nhật từ FAP',
+      description:
+          'Cào chương trình đào tạo / đề cương môn học trực tiếp từ FAP '
+          '(module của Huân). Đang ở dạng mock — chờ hoàn thiện phần đăng '
+          'nhập giữ session và cào dữ liệu ở Giai đoạn 5.',
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: OutlinedButton.icon(
+          icon: const Icon(Icons.cloud_download, size: 18),
+          label: const Text('Cập nhật từ FAP'),
+          onPressed: () => _mockAction('Cập nhật từ FAP'),
+        ),
       ),
     );
   }
@@ -236,10 +522,6 @@ class _SettingsPageState extends State<SettingsPage> {
               _KeyValue(
                 label: 'Kích thước',
                 value: '${(_dbSize / 1024).toStringAsFixed(1)} KB',
-              ),
-              _KeyValue(
-                label: 'Obsidian Vault',
-                value: state.vaultPath ?? '(chưa chọn)',
               ),
               _KeyValue(
                 label: 'Dữ liệu hiện có',

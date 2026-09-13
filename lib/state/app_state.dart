@@ -8,6 +8,7 @@ import '../services/db_service.dart';
 import '../services/obsidian_service.dart';
 import '../services/settings_service.dart';
 import '../services/curriculum_parser_service.dart';
+import '../services/subject_delete_guard.dart';
 import '../utils/app_colors.dart';
 
 /// Store trạng thái dùng chung, không cần package quản lý state bên ngoài.
@@ -139,6 +140,35 @@ class AppState extends ChangeNotifier {
     await refresh();
   }
 
+  /// Xem trước hậu quả của việc xoá một môn, để dựng hộp thoại cảnh báo.
+  /// Chỉ đọc, chưa ghi gì xuống CSDL.
+  Future<DeleteImpact> analyzeDelete(int subjectId) =>
+      SubjectDeleteGuard.instance.analyze(subjectId);
+
+  /// Xoá môn sau khi người dùng đã xác nhận trên hộp thoại.
+  ///
+  /// [strategy] chọn giữa xoá thẳng và nối tắt các liên kết bắc cầu;
+  /// [deleteNoteFile] quyết định có xoá luôn file `.md` trong Vault không —
+  /// giữ file lại thì lần nhập dữ liệu sau sẽ tạo lại đúng môn vừa xoá.
+  Future<DeleteResult> deleteSubjectSafely(
+    DeleteImpact impact, {
+    DeleteStrategy strategy = DeleteStrategy.cascade,
+    bool deleteNoteFile = false,
+  }) async {
+    final result = await SubjectDeleteGuard.instance.execute(
+      impact,
+      strategy: strategy,
+      deleteNoteFile: deleteNoteFile,
+    );
+    if (_selectedSubjectId == impact.target.id) _selectedSubjectId = null;
+    _openNoteTabs.removeWhere((s) => s.id == impact.target.id);
+    if (_activeNote?.id == impact.target.id) {
+      _activeNote = _openNoteTabs.isNotEmpty ? _openNoteTabs.last : null;
+    }
+    await refresh();
+    return result;
+  }
+
   // --- Liên kết tiên quyết ---
 
   Future<void> addEdge({
@@ -199,6 +229,22 @@ class AppState extends ChangeNotifier {
       throw ObsidianException('Chưa chọn thư mục Obsidian Vault.');
     }
     final report = await _vault.importVault(path);
+    await refresh();
+    return report;
+  }
+
+  /// Xem trước thay đổi trước khi nạp Vault vào CSDL. Chưa ghi gì.
+  Future<VaultSyncPlan> planImportFromVault() {
+    final path = _vaultPath;
+    if (path == null || path.isEmpty) {
+      throw ObsidianException('Chưa chọn thư mục Obsidian Vault.');
+    }
+    return _vault.planImport(path);
+  }
+
+  /// Ghi một kế hoạch đã được người dùng xác nhận xuống CSDL.
+  Future<VaultSyncReport> applyVaultPlan(VaultSyncPlan plan) async {
+    final report = await _vault.applyPlan(plan);
     await refresh();
     return report;
   }

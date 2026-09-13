@@ -956,53 +956,7 @@ class _VaultSidebarContent extends StatelessWidget {
               child: ListView(
                 padding: const EdgeInsets.all(12),
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: AppColors.obsidianRibbon,
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: AppColors.obsidianBorder),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.check_circle, size: 14, color: AppColors.success),
-                            const SizedBox(width: 6),
-                            Text(
-                              'Trạng thái Vault',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.obsidianText,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          state.hasVault
-                              ? 'Thư mục: ${state.vaultPath}'
-                              : 'Chưa liên kết thư mục Vault nào.',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.obsidianTextMuted,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '${state.stats['subjects'] ?? 0} file môn học (.md)\n'
-                          '${state.stats['edges'] ?? 0} liên kết quan hệ',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.obsidianText,
-                            height: 1.4,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  _statusCard(state),
                   const SizedBox(height: 12),
                   Text(
                     'Định dạng Markdown hỗ trợ:',
@@ -1037,6 +991,179 @@ class _VaultSidebarContent extends StatelessWidget {
         );
       },
     );
+  }
+
+  /// Thẻ trạng thái Vault.
+  ///
+  /// Chỉ hiển thị những con số app thật sự biết. Trước đây dòng này ghi
+  /// "N file môn học (.md)" nhưng N lấy từ `stats['subjects']` — tức là đếm
+  /// bản ghi trong SQLite, không hề quét thư mục. Vault có thể trống trơn mà
+  /// vẫn báo 7 file. Nay tách bạch: số trong CSDL và số đã thực sự ghi ra
+  /// `.md` trong đúng Vault đang liên kết.
+  Widget _statusCard(AppState state) {
+    final linked = state.hasVault;
+    final subjects = state.stats['subjects'] ?? 0;
+    final edges = state.stats['edges'] ?? 0;
+    final orphans = state.stats['orphans'] ?? 0;
+    final exported = _exportedIntoVault(state);
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.obsidianRibbon,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: AppColors.obsidianBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                linked ? Icons.check_circle : Icons.warning_amber_rounded,
+                size: 14,
+                color: linked ? AppColors.success : AppColors.warning,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  linked ? 'Đã liên kết Vault' : 'Chưa liên kết Vault',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.obsidianText,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (!linked)
+            Text(
+              'Chọn một thư mục Obsidian Vault để ghi các môn ra file .md.',
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.4,
+                color: AppColors.obsidianTextMuted,
+              ),
+            )
+          else
+            Tooltip(
+              message: state.vaultPath!,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _folderName(state.vaultPath!),
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.obsidianText,
+                    ),
+                  ),
+                  Text(
+                    state.vaultPath!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      height: 1.35,
+                      color: AppColors.obsidianTextMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 8),
+          Divider(height: 1, color: AppColors.obsidianBorder),
+          const SizedBox(height: 6),
+          _statRow('$subjects', 'môn học trong CSDL'),
+          if (linked)
+            _statRow(
+              '$exported',
+              exported < subjects
+                  ? 'đã ghi ra .md trong Vault này'
+                  : 'đã ghi ra .md — khớp với CSDL',
+              highlight: exported < subjects,
+            ),
+          _statRow('$edges', 'liên kết tiên quyết'),
+          if (orphans > 0) _statRow('$orphans', 'môn chưa có liên kết nào'),
+          if (linked && exported < subjects) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Còn ${subjects - exported} môn chưa có file .md — bấm '
+              '"Ghi ra Vault" để xuất nốt.',
+              style: TextStyle(
+                fontSize: 10.5,
+                height: 1.4,
+                color: AppColors.warning,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Một dòng "số — nhãn", canh cột cho các con số thẳng hàng nhau.
+  Widget _statRow(String value, String label, {bool highlight = false}) {
+    final color = highlight ? AppColors.warning : AppColors.obsidianText;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 24,
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1.35,
+                  color: AppColors.obsidianTextMuted,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Số môn đã có file `.md` nằm trong ĐÚNG Vault đang liên kết.
+  ///
+  /// `notePath` là đường dẫn tuyệt đối và có thể còn trỏ tới một Vault cũ, nên
+  /// chỉ kiểm tra "khác rỗng" là đếm nhầm — phải so với `vaultPath` hiện tại.
+  int _exportedIntoVault(AppState state) {
+    final vault = _normalizePath(state.vaultPath ?? '');
+    if (vault.isEmpty) return 0;
+    return state.graph.subjects
+        .where((s) => _normalizePath(s.notePath ?? '').startsWith(vault))
+        .length;
+  }
+
+  /// Đưa về một dạng duy nhất để so sánh: bỏ khoảng trắng thừa, thống nhất
+  /// dấu phân cách và bỏ phân biệt hoa thường (Windows không phân biệt).
+  String _normalizePath(String path) =>
+      path.trim().replaceAll('/', r'\').toLowerCase();
+
+  /// Tên thư mục cuối trong đường dẫn, giữ nguyên hoa thường để hiển thị.
+  String _folderName(String path) {
+    final parts = path.trim().split(RegExp(r'[\\/]'))
+      ..removeWhere((e) => e.isEmpty);
+    return parts.isEmpty ? path : parts.last;
   }
 }
 

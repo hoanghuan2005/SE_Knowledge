@@ -17,7 +17,32 @@ class SettingsService {
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
+    await _migrateLegacyAiConfig();
   }
+
+  /// Bản cũ lưu chung một API key / model cho mọi provider, nên đổi tab
+  /// Gemini <-> OpenAI vẫn hiện lại cùng một key. Di chuyển giá trị cũ (nếu
+  /// có) sang đúng slot của provider đang chọn lúc đó, chạy một lần duy nhất.
+  Future<void> _migrateLegacyAiConfig() async {
+    final prefs = _prefs!;
+    final legacyKey = prefs.getString(AppConstants.keyAiApiKey);
+    final legacyModel = prefs.getString(AppConstants.keyAiModel);
+    if (legacyKey == null && legacyModel == null) return;
+
+    final provider =
+        prefs.getString(AppConstants.keyAiProvider) ?? AppConstants.providerGemini;
+    if (legacyKey != null) {
+      await prefs.setString(_apiKeyStorageKey(provider), legacyKey);
+      await prefs.remove(AppConstants.keyAiApiKey);
+    }
+    if (legacyModel != null) {
+      await prefs.setString(_modelStorageKey(provider), legacyModel);
+      await prefs.remove(AppConstants.keyAiModel);
+    }
+  }
+
+  String _apiKeyStorageKey(String provider) => '${AppConstants.keyAiApiKey}_$provider';
+  String _modelStorageKey(String provider) => '${AppConstants.keyAiModel}_$provider';
 
   // --- Obsidian Vault ---
 
@@ -42,36 +67,44 @@ class SettingsService {
   Future<void> setAiProvider(String provider) async =>
       (await _p).setString(AppConstants.keyAiProvider, provider);
 
-  Future<String?> getApiKey() async =>
-      (await _p).getString(AppConstants.keyAiApiKey);
+  /// [provider] mặc định là provider đang được chọn nếu không truyền vào.
+  /// Mỗi provider (Gemini / OpenAI) có API key riêng, đổi tab không còn dùng
+  /// chung một key nữa.
+  Future<String?> getApiKey([String? provider]) async {
+    final p = provider ?? await getAiProvider();
+    return (await _p).getString(_apiKeyStorageKey(p));
+  }
 
-  Future<void> setApiKey(String? key) async {
+  Future<void> setApiKey(String? key, [String? provider]) async {
     final prefs = await _p;
+    final p = provider ?? await getAiProvider();
     final value = key?.trim() ?? '';
     if (value.isEmpty) {
-      await prefs.remove(AppConstants.keyAiApiKey);
+      await prefs.remove(_apiKeyStorageKey(p));
     } else {
-      await prefs.setString(AppConstants.keyAiApiKey, value);
+      await prefs.setString(_apiKeyStorageKey(p), value);
     }
   }
 
-  Future<String> getModel() async {
+  /// Tương tự [getApiKey]: model cũng lưu riêng theo từng provider.
+  Future<String> getModel([String? provider]) async {
     final prefs = await _p;
-    final saved = prefs.getString(AppConstants.keyAiModel);
+    final p = provider ?? await getAiProvider();
+    final saved = prefs.getString(_modelStorageKey(p));
     if (saved != null && saved.isNotEmpty) return saved;
-    final provider = await getAiProvider();
-    return provider == AppConstants.providerOpenAi
+    return p == AppConstants.providerOpenAi
         ? AppConstants.defaultOpenAiModel
         : AppConstants.defaultGeminiModel;
   }
 
-  Future<void> setModel(String? model) async {
+  Future<void> setModel(String? model, [String? provider]) async {
     final prefs = await _p;
+    final p = provider ?? await getAiProvider();
     final value = model?.trim() ?? '';
     if (value.isEmpty) {
-      await prefs.remove(AppConstants.keyAiModel);
+      await prefs.remove(_modelStorageKey(p));
     } else {
-      await prefs.setString(AppConstants.keyAiModel, value);
+      await prefs.setString(_modelStorageKey(p), value);
     }
   }
 

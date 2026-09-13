@@ -364,9 +364,44 @@ class DbService {
   }
 
   /// Xoá môn học. ON DELETE CASCADE tự dọn sạch mọi edge liên quan.
+  ///
+  /// Xoá thẳng, không cảnh báo. Giao diện nên gọi qua `SubjectDeleteGuard` để
+  /// người dùng biết trước mình sắp mất những liên kết nào.
   Future<void> deleteSubject(int id) async {
     final db = await database;
     await db.delete('subjects', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Xoá môn học sau khi đã nối tắt các liên kết bắc cầu, trong **một
+  /// transaction duy nhất**.
+  ///
+  /// Xoá một môn nằm giữa chuỗi `A -> B -> C` làm mất cả hai cạnh. Truyền
+  /// [rewireEdges] gồm cạnh `A -> C` để lộ trình học không bị đứt. Gói chung
+  /// một transaction để không bao giờ rơi vào trạng thái nửa vời: nối tắt
+  /// xong mà xoá hỏng, hoặc xoá xong mà chưa kịp nối.
+  ///
+  /// Các cạnh truyền vào phải được kiểm tra chu trình từ trước (xem
+  /// `SubjectDeleteGuard`) — ở đây chỉ ghi, không kiểm tra lại.
+  Future<void> deleteSubjectWithRewire({
+    required int id,
+    List<Prerequisite> rewireEdges = const [],
+  }) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final edge in rewireEdges) {
+        await txn.insert(
+          'prerequisites',
+          {
+            'subject_id': edge.subjectId,
+            'prerequisite_id': edge.prerequisiteId,
+            'relation_type': edge.relationType,
+          },
+          // Cạnh đã tồn tại thì bỏ qua, không làm hỏng cả transaction.
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+      await txn.delete('subjects', where: 'id = ?', whereArgs: [id]);
+    });
   }
 
   /// Tìm môn theo mã, chưa có thì tạo mới. Dùng khi đồng bộ từ Obsidian Vault.
