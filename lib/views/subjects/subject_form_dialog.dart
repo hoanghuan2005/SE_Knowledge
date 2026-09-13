@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../models/prerequisite.dart';
 import '../../models/subject.dart';
 import '../../state/app_state.dart';
 import '../../utils/ui_helpers.dart';
@@ -32,6 +33,9 @@ class _SubjectFormDialogState extends State<SubjectFormDialog> {
   late int _credits;
   bool _saving = false;
 
+  /// Id cac mon duoc chon lam tien quyet, dong bo lai voi CSDL luc luu.
+  final Set<int> _selectedPrerequisiteIds = <int>{};
+
   bool get _isEdit => widget.subject != null;
 
   @override
@@ -43,6 +47,14 @@ class _SubjectFormDialogState extends State<SubjectFormDialog> {
     _description = TextEditingController(text: s?.description ?? '');
     _semester = s?.semester ?? 1;
     _credits = s?.credits ?? 3;
+    if (s?.id != null) {
+      _selectedPrerequisiteIds.addAll(
+        AppState.instance
+            .prerequisitesOf(s!.id!)
+            .map((e) => e.id)
+            .whereType<int>(),
+      );
+    }
   }
 
   @override
@@ -58,6 +70,7 @@ class _SubjectFormDialogState extends State<SubjectFormDialog> {
     setState(() => _saving = true);
 
     try {
+      final int subjectId;
       if (_isEdit) {
         await AppState.instance.updateSubject(
           widget.subject!.copyWith(
@@ -68,8 +81,9 @@ class _SubjectFormDialogState extends State<SubjectFormDialog> {
             description: _description.text.trim(),
           ),
         );
+        subjectId = widget.subject!.id!;
       } else {
-        await AppState.instance.addSubject(
+        subjectId = await AppState.instance.addSubject(
           Subject.create(
             code: _code.text,
             name: _name.text,
@@ -79,13 +93,120 @@ class _SubjectFormDialogState extends State<SubjectFormDialog> {
           ),
         );
       }
+
+      final failures = await _syncPrerequisites(subjectId);
+
       if (!mounted) return;
+      // Mon da luu thanh cong roi: canh bao cac canh loi nhung khong chan.
+      if (failures.isNotEmpty) {
+        Ui.error(
+          context,
+          'Đã lưu môn, nhưng ${failures.length} liên kết tiên quyết không '
+          'áp dụng được: ${failures.join('; ')}',
+        );
+      }
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
       Ui.error(context, e);
     }
+  }
+
+  /// Đưa tập tiên quyết trong CSDL về đúng [_selectedPrerequisiteIds].
+  ///
+  /// Mỗi cạnh được xử lý độc lập: một cạnh hỏng (trùng hoặc tạo chu trình ->
+  /// DbConflictException) không làm hỏng các cạnh còn lại. Trả về danh sách mô
+  /// tả lỗi để màn hình gọi hiển thị sau khi môn đã lưu xong.
+  Future<List<String>> _syncPrerequisites(int subjectId) async {
+    // Đọc lại từ state ngay lúc lưu, nên cạnh thêm qua AddEdgeDialog cũng được
+    // tính đúng thay vì bị coi là "vừa bỏ chọn".
+    final before = _isEdit
+        ? AppState.instance
+              .prerequisitesOf(subjectId)
+              .map((e) => e.id)
+              .whereType<int>()
+              .toSet()
+        : <int>{};
+    final after = _selectedPrerequisiteIds;
+
+    final labelOf = {
+      for (final s in AppState.instance.graph.subjects)
+        if (s.id != null) s.id!: s.code,
+    };
+    final failures = <String>[];
+
+    for (final id in after.difference(before)) {
+      try {
+        await AppState.instance.addEdge(
+          subjectId: subjectId,
+          prerequisiteId: id,
+          relationType: Prerequisite.kPrerequisite,
+        );
+      } catch (e) {
+        failures.add('${labelOf[id] ?? id} ($e)');
+      }
+    }
+
+    for (final id in before.difference(after)) {
+      try {
+        await AppState.instance.removeEdge(
+          subjectId: subjectId,
+          prerequisiteId: id,
+        );
+      } catch (e) {
+        failures.add('${labelOf[id] ?? id} ($e)');
+      }
+    }
+
+    return failures;
+  }
+
+  /// Khối chọn nhiều môn tiên quyết ngay trong form chính.
+  Widget _buildPrerequisitePicker() {
+    final candidates = AppState.instance.graph.subjects
+        .where((s) => s.id != null && s.id != widget.subject?.id)
+        .toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Môn tiên quyết (chọn nhiều)',
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
+        const SizedBox(height: 8),
+        if (candidates.isEmpty)
+          const Text('Chưa có môn nào khác để chọn làm tiên quyết.')
+        else
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 180),
+            child: SingleChildScrollView(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final s in candidates)
+                    FilterChip(
+                      label: Text('${s.code} — ${s.name}'),
+                      selected: _selectedPrerequisiteIds.contains(s.id),
+                      onSelected: _saving
+                          ? null
+                          : (selected) => setState(() {
+                              if (selected) {
+                                _selectedPrerequisiteIds.add(s.id!);
+                              } else {
+                                _selectedPrerequisiteIds.remove(s.id!);
+                              }
+                            }),
+                    ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   @override
@@ -160,6 +281,8 @@ class _SubjectFormDialogState extends State<SubjectFormDialog> {
                     alignLabelWithHint: true,
                   ),
                 ),
+                const SizedBox(height: 16),
+                _buildPrerequisitePicker(),
               ],
             ),
           ),
