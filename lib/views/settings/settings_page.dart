@@ -6,7 +6,6 @@ import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_constants.dart';
 import '../../utils/ui_helpers.dart';
-import '../widgets/vault_import_plan_dialog.dart';
 
 /// Trạng thái hiển thị (thuần UI) cho nút "Test kết nối" ở khối Trợ lý AI.
 ///
@@ -33,10 +32,6 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _obscureKey = true;
   bool _loaded = false;
   int _dbSize = 0;
-
-  /// Khoá hai nút Xuất/Nhập Vault trong lúc đang chạy, tránh bấm chồng nhau
-  /// làm hai lượt ghi cùng đụng vào một thư mục.
-  bool _vaultBusy = false;
 
   // --- MOCK: trạng thái demo cho các nút chưa nối logic thật ---
   // Xem Prompts_GiaiDoan_2345.md để biết nút nào ứng với giai đoạn nào.
@@ -119,74 +114,6 @@ class _SettingsPageState extends State<SettingsPage> {
   /// (Giai đoạn 2, 4, 5) để nối từng nút vào logic thật.
   void _mockAction(String label) {
     Ui.success(context, '$label — bản demo (mock), chưa nối logic thật.');
-  }
-
-  // ------------------------------------------------------------------
-  // EXPORT / IMPORT VAULT — logic thật, dùng chung backend với tab Vault
-  // ------------------------------------------------------------------
-
-  /// Ghi toàn bộ môn trong SQLite thành file `.md` trong Vault.
-  ///
-  /// `exportAll` gọi `mergeMarkdown` cho file đã tồn tại, nên chỉ ba khối app
-  /// sở hữu (front matter, "Môn tiên quyết", "Mở ra các môn") bị ghi đè; mọi
-  /// mục người dùng tự thêm được giữ nguyên.
-  Future<void> _exportToVault() async {
-    final ok = await Ui.confirm(
-      context,
-      title: 'Ghi đồ thị ra Vault?',
-      message:
-          'Mỗi môn trong CSDL sẽ thành một file <MÃ MÔN>.md, kèm front matter '
-          'và các liên kết [[...]]. Phần ghi chú bạn tự viết trong file vẫn '
-          'được giữ lại.',
-      confirmLabel: 'Ghi ra Vault',
-    );
-    if (!ok || !mounted) return;
-
-    setState(() => _vaultBusy = true);
-    try {
-      final count = await AppState.instance.exportToVault();
-      if (mounted) Ui.success(context, 'Đã ghi $count file .md ra Vault.');
-    } catch (e) {
-      if (mounted) Ui.error(context, e);
-    } finally {
-      if (mounted) setState(() => _vaultBusy = false);
-    }
-  }
-
-  /// Đọc Vault về SQLite, nhưng cho xem trước rồi mới ghi.
-  ///
-  /// Dùng `planImport` + `applyVaultPlan` thay vì `importFromVault` một phát,
-  /// vì luồng nhập có một thao tác làm mất dữ liệu: gỡ những liên kết đã bị
-  /// xoá khỏi file `.md`. Người dùng cần thấy danh sách đó trước khi đồng ý.
-  Future<void> _importFromVault() async {
-    setState(() => _vaultBusy = true);
-    try {
-      final plan = await AppState.instance.planImportFromVault();
-      if (!mounted) return;
-
-      if (plan.isEmpty) {
-        Ui.toast(context, 'Vault không có thay đổi nào so với CSDL.');
-        return;
-      }
-
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (_) => VaultImportPlanDialog(plan: plan),
-      );
-      if (ok != true || !mounted) return;
-
-      final report = await AppState.instance.applyVaultPlan(plan);
-      if (!mounted) return;
-      if (report.warnings.isEmpty) {
-        Ui.success(context, report.summary);
-      } else {
-        Ui.toast(context, '${report.summary} ${report.warnings.join(' ')}');
-      }
-    } catch (e) {
-      if (mounted) Ui.error(context, e);
-    } finally {
-      if (mounted) setState(() => _vaultBusy = false);
-    }
   }
 
   @override
@@ -388,14 +315,15 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  /// Khối Obsidian Vault.
+  /// MOCK — Browse Vault / Mở bằng Obsidian / Xuất-Nhập Vault
+  /// (Giai đoạn 2 và 4, Prompts_GiaiDoan_2345.md).
   ///
-  /// "Xuất ra Vault" và "Nhập từ Vault" đã chạy thật, dùng chung backend với
-  /// tab Vault. Hai nút còn lại vẫn là mock (Giai đoạn 2,
-  /// Prompts_GiaiDoan_2345.md): "Browse..." cần `file_selector`
-  /// (`getDirectoryPath`, xem `_pickVault()` trong `vault_page.dart`), "Mở
-  /// bằng Obsidian" cần thêm package `url_launcher` để mở
-  /// `obsidian://open?path=...`.
+  /// "Xuất ra Vault" và "Nhập từ Vault" thực ra đã có sẵn logic thật ở
+  /// `AppState.instance.exportToVault()` / `importFromVault()` (dùng trong
+  /// `vault_page.dart`) — chỉ cần đổi `_mockAction(...)` thành gọi 2 hàm đó
+  /// là xong. "Browse..." cần `file_selector` (`getDirectoryPath`, xem
+  /// `_pickVault()` trong `vault_page.dart`). "Mở bằng Obsidian" cần thêm
+  /// package `url_launcher` để mở `obsidian://open?path=...`.
   Widget _vaultCard() {
     return ListenableBuilder(
       listenable: AppState.instance,
@@ -406,8 +334,8 @@ class _SettingsPageState extends State<SettingsPage> {
           title: 'Obsidian Vault',
           description:
               'Trỏ tới đúng thư mục Vault trên máy, mở thẳng bằng app '
-              'Obsidian, hoặc đồng bộ hai chiều với CSDL. Xuất/Nhập đã chạy '
-              'thật; Browse và Mở bằng Obsidian còn là bản mock.',
+              'Obsidian, hoặc đồng bộ hai chiều với CSDL. Các nút bên dưới '
+              'đang là bản mock — sẽ nối logic thật dần theo từng giai đoạn.',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -433,16 +361,12 @@ class _SettingsPageState extends State<SettingsPage> {
                   OutlinedButton.icon(
                     icon: const Icon(Icons.upload_file, size: 18),
                     label: const Text('Xuất ra Vault'),
-                    onPressed: _vaultBusy || vaultPath == null
-                        ? null
-                        : _exportToVault,
+                    onPressed: () => _mockAction('Xuất dữ liệu ra Vault'),
                   ),
                   OutlinedButton.icon(
                     icon: const Icon(Icons.download, size: 18),
                     label: const Text('Nhập từ Vault'),
-                    onPressed: _vaultBusy || vaultPath == null
-                        ? null
-                        : _importFromVault,
+                    onPressed: () => _mockAction('Nhập dữ liệu từ Vault'),
                   ),
                 ],
               ),
