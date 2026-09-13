@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../../models/subject.dart';
+import '../../services/obsidian_launcher.dart';
 import '../../services/obsidian_service.dart';
 import '../../services/subject_delete_guard.dart';
 import '../../state/app_state.dart';
@@ -396,6 +399,40 @@ class _NoteSection extends StatelessWidget {
 
   const _NoteSection({required this.subject});
 
+  /// Mở file `.md` của môn này bằng app Obsidian ngoài.
+  ///
+  /// Khác hẳn nút "Mở ghi chú Obsidian (.md)" phía trên — nút đó mở trình
+  /// soạn thảo NGAY TRONG app qua `openNoteTab`.
+  Future<void> _openInObsidian(BuildContext context) async {
+    final state = AppState.instance;
+    final notePath = subject.notePath!;
+
+    // File có thể đã bị xoá/đổi tên ngoài app, lúc đó Obsidian mở ra tab
+    // trống chứ không báo gì — chặn trước cho rõ nguyên nhân.
+    if (!await File(notePath).exists()) {
+      if (!context.mounted) return;
+      Ui.error(
+        context,
+        'Không thấy file $notePath nữa. Bấm "Xuất lại file .md" trước đã.',
+      );
+      return;
+    }
+
+    final ok = await ObsidianLauncher.openNote(
+      vaultPath: state.vaultPath!,
+      notePath: notePath,
+    );
+    if (ok || !context.mounted) return;
+
+    Ui.error(
+      context,
+      'Không mở được bằng Obsidian. Thường do một trong hai: máy chưa cài '
+      'Obsidian, hoặc thư mục Vault này chưa từng được mở như một Vault '
+      'trong Obsidian. Cũng có thể file nằm ngoài Vault đang chọn — thử '
+      '"Xuất lại file .md".',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = AppState.instance;
@@ -470,6 +507,26 @@ class _NoteSection extends StatelessWidget {
                       if (context.mounted) Ui.error(context, e);
                     }
                   },
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          height: 32,
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.launch, size: 15),
+            label: const Text(
+              'Mở trong Obsidian',
+              style: TextStyle(fontSize: 11.5),
+            ),
+            style: OutlinedButton.styleFrom(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            onPressed: !state.hasVault || !hasNote
+                ? null
+                : () => _openInObsidian(context),
           ),
         ),
         if (!state.hasVault)

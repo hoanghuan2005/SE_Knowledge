@@ -1,6 +1,8 @@
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/db_service.dart';
+import '../../services/obsidian_launcher.dart';
 import '../../services/settings_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
@@ -390,12 +392,38 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// Khối Obsidian Vault.
   ///
-  /// "Xuất ra Vault" và "Nhập từ Vault" đã chạy thật, dùng chung backend với
-  /// tab Vault. Hai nút còn lại vẫn là mock (Giai đoạn 2,
-  /// Prompts_GiaiDoan_2345.md): "Browse..." cần `file_selector`
-  /// (`getDirectoryPath`, xem `_pickVault()` trong `vault_page.dart`), "Mở
-  /// bằng Obsidian" cần thêm package `url_launcher` để mở
-  /// `obsidian://open?path=...`.
+  /// Trỏ tới thư mục Vault và mở nó bằng app Obsidian ngoài.
+  ///
+  /// Dùng chung `getDirectoryPath` của `file_selector` như `_pickVault()`
+  /// trong `vault_page.dart`, và [ObsidianLauncher] cho URI `obsidian://`.
+  Future<void> _browseVault() async {
+    final path = await getDirectoryPath(confirmButtonText: 'Chọn Vault');
+    if (path == null) return;
+    await AppState.instance.setVaultPath(path);
+    if (!mounted) return;
+    Ui.success(context, 'Đã trỏ Vault tới $path');
+  }
+
+  /// Mở cả Vault bằng Obsidian; thất bại thì lùi về File Explorer.
+  Future<void> _openVaultInObsidian() async {
+    final path = AppState.instance.vaultPath;
+    if (path == null) return;
+
+    final ok = await ObsidianLauncher.openVault(path);
+    if (ok || !mounted) return;
+
+    Ui.error(
+      context,
+      'Không mở được bằng Obsidian. Thường do một trong hai: máy chưa cài '
+      'Obsidian, hoặc thư mục này chưa từng được mở như một Vault trong '
+      'Obsidian (Obsidian không tự thêm vault lạ qua URI). Đang mở bằng '
+      'File Explorer thay thế.',
+    );
+    await ObsidianLauncher.openInExplorer(path);
+  }
+
+  /// "Xuất ra Vault" và "Nhập từ Vault" dùng chung backend với tab Vault;
+  /// "Browse..." và "Mở bằng Obsidian" nay cũng đã chạy thật.
   Widget _vaultCard() {
     return ListenableBuilder(
       listenable: AppState.instance,
@@ -406,8 +434,9 @@ class _SettingsPageState extends State<SettingsPage> {
           title: 'Obsidian Vault',
           description:
               'Trỏ tới đúng thư mục Vault trên máy, mở thẳng bằng app '
-              'Obsidian, hoặc đồng bộ hai chiều với CSDL. Xuất/Nhập đã chạy '
-              'thật; Browse và Mở bằng Obsidian còn là bản mock.',
+              'Obsidian, hoặc đồng bộ hai chiều với CSDL. Muốn mở bằng '
+              'Obsidian thì thư mục này phải từng được mở như một Vault '
+              'trong Obsidian ít nhất một lần.',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -423,12 +452,12 @@ class _SettingsPageState extends State<SettingsPage> {
                   OutlinedButton.icon(
                     icon: const Icon(Icons.folder_open, size: 18),
                     label: const Text('Browse...'),
-                    onPressed: () => _mockAction('Browse thư mục Vault'),
+                    onPressed: _browseVault,
                   ),
                   OutlinedButton.icon(
                     icon: const Icon(Icons.launch, size: 18),
                     label: const Text('Mở bằng Obsidian'),
-                    onPressed: () => _mockAction('Mở Vault bằng app Obsidian'),
+                    onPressed: vaultPath == null ? null : _openVaultInObsidian,
                   ),
                   OutlinedButton.icon(
                     icon: const Icon(Icons.upload_file, size: 18),
