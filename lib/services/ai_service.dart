@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -11,7 +12,8 @@ import 'settings_service.dart';
 /// Gọi thẳng REST API của Gemini hoặc OpenAI bằng package `http`.
 ///
 /// Không có backend trung gian: app desktop là client duy nhất, request đi
-/// trực tiếp từ máy người dùng tới nhà cung cấp AI.
+/// trực tiếp từ máy người dùng tới nhà cung cấp AI. Nội dung được đọc theo
+/// kiểu streaming (SSE) nên chữ hiện dần thay vì đứng im chờ trọn câu trả lời.
 class AiService {
   AiService._();
   static final AiService instance = AiService._();
@@ -19,7 +21,14 @@ class AiService {
   final SettingsService _settings = SettingsService.instance;
   final GraphRagService _graphRag = GraphRagService.instance;
 
+  /// Hết hạn khi không nhận thêm được mẩu nội dung nào trong khoảng này.
+  /// Với stream thì đây là khoảng chờ giữa hai chunk, không phải tổng thời
+  /// gian, nên câu trả lời dài vẫn chạy thoải mái.
   static const Duration timeout = Duration(seconds: 45);
+
+  /// Số tin nhắn cũ gửi kèm. Gửi trọn lịch sử thì càng chat lâu prompt càng
+  /// phình ra, đi ngược lại chính mục tiêu tiết kiệm token của Graph RAG.
+  static const int maxHistoryMessages = 8;
 
   Future<bool> get isConfigured async {
     final key = await _settings.getApiKey();
@@ -31,10 +40,15 @@ class AiService {
   /// Khi [includeKnowledgeContext] bật, câu hỏi được đối chiếu với đồ thị
   /// tiên quyết trong SQLite (Graph RAG) để chỉ gửi kèm subgraph liên quan
   /// trực tiếp, thay vì toàn bộ CSDL.
+  ///
+  /// [onContext] gọi ngay khi trích xong ngữ cảnh (trước lúc chờ mạng), còn
+  /// [onDelta] gọi mỗi lần nhận thêm một mẩu chữ, để UI hiện dần.
   Future<AiAnswer> ask({
     required String question,
     List<ChatMessage> history = const [],
     bool includeKnowledgeContext = true,
+    void Function(GraphRagSummary summary)? onContext,
+    void Function(String delta)? onDelta,
   }) async {
     final provider = await _settings.getAiProvider();
     final apiKey = (await _settings.getApiKey(provider))?.trim() ?? '';
@@ -49,32 +63,47 @@ class AiService {
     final ragContext = includeKnowledgeContext
         ? await _graphRag.buildContext(question)
         : null;
+    if (ragContext != null) onContext?.call(ragContext.summary);
+
     final systemPrompt = _systemPrompt(ragContext?.promptText ?? '');
+    final recent = _recentHistory(history);
 
     try {
       final text = provider == AppConstants.providerOpenAi
-          ? await _askOpenAi(
+          ? await _streamOpenAi(
               apiKey: apiKey,
               model: model,
               systemPrompt: systemPrompt,
-              history: history,
+              history: recent,
               question: question,
+              onDelta: onDelta,
             )
-          : await _askGemini(
+          : await _streamGemini(
               apiKey: apiKey,
               model: model,
               systemPrompt: systemPrompt,
-              history: history,
+              history: recent,
               question: question,
+              onDelta: onDelta,
             );
       return AiAnswer(text: text, ragSummary: ragContext?.summary);
     } on AiException {
       rethrow;
+    } on TimeoutException {
+      throw AiException('Nhà cung cấp AI phản hồi quá chậm, thử lại sau.');
     } on http.ClientException catch (e) {
       throw AiException('Không kết nối được tới nhà cung cấp AI: ${e.message}');
     } catch (e) {
       throw AiException('Lỗi khi gọi AI: $e');
     }
+  }
+
+  /// Bỏ các tin báo lỗi cũ (chúng không phải câu trả lời thật) và chỉ giữ
+  /// vài lượt gần nhất.
+  List<ChatMessage> _recentHistory(List<ChatMessage> history) {
+    final usable = history.where((m) => !m.isError).toList();
+    if (usable.length <= maxHistoryMessages) return usable;
+    return usable.sublist(usable.length - maxHistoryMessages);
   }
 
   String _systemPrompt(String context) {
@@ -100,15 +129,16 @@ class AiService {
   // GEMINI
   // ------------------------------------------------------------------
 
-  Future<String> _askGemini({
+  Future<String> _streamGemini({
     required String apiKey,
     required String model,
     required String systemPrompt,
     required List<ChatMessage> history,
     required String question,
-  }) async {
+    void Function(String delta)? onDelta,
+  }) {
     final uri = Uri.parse(
-      '${AppConstants.geminiBaseUrl}/models/$model:generateContent',
+      '${AppConstants.geminiBaseUrl}/models/$model:streamGenerateContent?alt=sse',
     );
 
     final contents = <Map<String, Object?>>[
@@ -127,60 +157,44 @@ class AiService {
       },
     ];
 
-    final response = await http
-        .post(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey,
-          },
-          body: jsonEncode({
-            'systemInstruction': {
-              'parts': [
-                {'text': systemPrompt},
-              ],
-            },
-            'contents': contents,
-            'generationConfig': {'temperature': 0.4, 'maxOutputTokens': 1024},
-          }),
-        )
-        .timeout(timeout);
-
-    final body = _decode(response);
-
-    if (response.statusCode != 200) {
-      throw AiException(_errorMessage(response.statusCode, body));
-    }
-
-    final candidates = body['candidates'] as List?;
-    if (candidates == null || candidates.isEmpty) {
-      throw AiException('Gemini không trả về nội dung nào.');
-    }
-    final parts =
-        ((candidates.first as Map)['content'] as Map?)?['parts'] as List?;
-    final text = parts
-        ?.map((x) => (x as Map)['text'])
-        .whereType<String>()
-        .join('\n')
-        .trim();
-
-    if (text == null || text.isEmpty) {
-      throw AiException('Gemini trả về nội dung rỗng.');
-    }
-    return text;
+    return _consumeSse(
+      uri: uri,
+      headers: {'Content-Type': 'application/json', 'x-goog-api-key': apiKey},
+      body: jsonEncode({
+        'systemInstruction': {
+          'parts': [
+            {'text': systemPrompt},
+          ],
+        },
+        'contents': contents,
+        'generationConfig': {'temperature': 0.4, 'maxOutputTokens': 1024},
+      }),
+      onDelta: onDelta,
+      extract: (chunk) {
+        final candidates = chunk['candidates'] as List?;
+        if (candidates == null || candidates.isEmpty) return null;
+        final parts =
+            ((candidates.first as Map)['content'] as Map?)?['parts'] as List?;
+        return parts
+            ?.map((p) => (p as Map)['text'])
+            .whereType<String>()
+            .join();
+      },
+    );
   }
 
   // ------------------------------------------------------------------
   // OPENAI (và mọi endpoint tương thích OpenAI)
   // ------------------------------------------------------------------
 
-  Future<String> _askOpenAi({
+  Future<String> _streamOpenAi({
     required String apiKey,
     required String model,
     required String systemPrompt,
     required List<ChatMessage> history,
     required String question,
-  }) async {
+    void Function(String delta)? onDelta,
+  }) {
     final uri = Uri.parse('${AppConstants.openAiBaseUrl}/chat/completions');
 
     final messages = <Map<String, String>>[
@@ -190,45 +204,86 @@ class AiService {
       {'role': 'user', 'content': question},
     ];
 
-    final response = await http
-        .post(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $apiKey',
-          },
-          body: jsonEncode({
-            'model': model,
-            'messages': messages,
-            'temperature': 0.4,
-          }),
-        )
-        .timeout(timeout);
-
-    final body = _decode(response);
-
-    if (response.statusCode != 200) {
-      throw AiException(_errorMessage(response.statusCode, body));
-    }
-
-    final choices = body['choices'] as List?;
-    if (choices == null || choices.isEmpty) {
-      throw AiException('OpenAI không trả về nội dung nào.');
-    }
-    final text =
-        ((choices.first as Map)['message'] as Map?)?['content'] as String?;
-
-    if (text == null || text.trim().isEmpty) {
-      throw AiException('OpenAI trả về nội dung rỗng.');
-    }
-    return text.trim();
+    return _consumeSse(
+      uri: uri,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $apiKey',
+      },
+      body: jsonEncode({
+        'model': model,
+        'messages': messages,
+        'temperature': 0.4,
+        'stream': true,
+      }),
+      onDelta: onDelta,
+      extract: (chunk) {
+        final choices = chunk['choices'] as List?;
+        if (choices == null || choices.isEmpty) return null;
+        return ((choices.first as Map)['delta'] as Map?)?['content'] as String?;
+      },
+    );
   }
 
   // ------------------------------------------------------------------
 
-  Map<String, Object?> _decode(http.Response response) {
+  /// Đọc một stream Server-Sent Events, ghép các mẩu chữ lại và bắn từng mẩu
+  /// ra [onDelta]. [extract] là phần khác nhau giữa hai nhà cung cấp: lấy
+  /// đoạn text nằm trong một chunk JSON.
+  Future<String> _consumeSse({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+    required String? Function(Map<String, Object?> chunk) extract,
+    void Function(String delta)? onDelta,
+  }) async {
+    final client = http.Client();
     try {
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final request = http.Request('POST', uri)
+        ..headers.addAll(headers)
+        ..body = body;
+
+      final response = await client.send(request).timeout(timeout);
+
+      if (response.statusCode != 200) {
+        final raw = await response.stream.bytesToString();
+        throw AiException(_errorMessage(response.statusCode, _decode(raw)));
+      }
+
+      final buffer = StringBuffer();
+      final lines = response.stream
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .timeout(timeout);
+
+      await for (final line in lines) {
+        if (!line.startsWith('data:')) continue;
+        final payload = line.substring(5).trim();
+        if (payload.isEmpty || payload == '[DONE]') continue;
+
+        final chunk = _decode(payload);
+        if (chunk.isEmpty) continue;
+
+        final delta = extract(chunk);
+        if (delta == null || delta.isEmpty) continue;
+
+        buffer.write(delta);
+        onDelta?.call(delta);
+      }
+
+      final text = buffer.toString().trim();
+      if (text.isEmpty) {
+        throw AiException('Nhà cung cấp AI trả về nội dung rỗng.');
+      }
+      return text;
+    } finally {
+      client.close();
+    }
+  }
+
+  Map<String, Object?> _decode(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
       return decoded is Map<String, Object?> ? decoded : {};
     } catch (_) {
       return {};
