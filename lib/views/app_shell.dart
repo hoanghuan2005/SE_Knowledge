@@ -335,7 +335,13 @@ class _ObsidianRibbon extends StatelessWidget {
               ),
             ),
             child: _RibbonIconButton(
-              icon: isSidebarOpen ? Icons.view_sidebar : Icons.view_sidebar_outlined,
+              iconWidget: SidebarToggleIcon(
+                isOpen: isSidebarOpen,
+                size: 18,
+                color: isSidebarOpen
+                    ? (AppColors.isDark ? Colors.white : AppColors.primaryDark)
+                    : AppColors.shellTextMuted,
+              ),
               tooltip: isSidebarOpen ? 'Thu gọn thanh bên (Ctrl+B)' : 'Mở thanh bên (Ctrl+B)',
               isActive: isSidebarOpen,
               onTap: onToggleSidebar,
@@ -413,20 +419,107 @@ class _ObsidianRibbon extends StatelessWidget {
   }
 }
 
+/// Icon đóng/mở thanh bên chuẩn phong cách Obsidian / VS Code / Lucide
+class SidebarToggleIcon extends StatelessWidget {
+  final bool isOpen;
+  final double size;
+  final Color? color;
+
+  const SidebarToggleIcon({
+    super.key,
+    required this.isOpen,
+    this.size = 18,
+    this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveColor =
+        color ?? IconTheme.of(context).color ?? AppColors.obsidianTextMuted;
+    return CustomPaint(
+      size: Size(size, size),
+      painter: _SidebarTogglePainter(
+        isOpen: isOpen,
+        color: effectiveColor,
+      ),
+    );
+  }
+}
+
+class _SidebarTogglePainter extends CustomPainter {
+  final bool isOpen;
+  final Color color;
+
+  _SidebarTogglePainter({required this.isOpen, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+
+    // Kích thước chuẩn tỉ lệ giao diện panel: rộng 15.5, cao 12.5 căn giữa
+    const rectW = 15.5;
+    const rectH = 12.5;
+    final left = (w - rectW) / 2;
+    final top = (h - rectH) / 2;
+    final rect = Rect.fromLTWH(left, top, rectW, rectH);
+    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(2.5));
+
+    final strokePaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.3
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    // Vị trí thanh phân cách sidebar (khoảng 36% từ mép trái)
+    final splitX = left + rectW * 0.36;
+
+    // Nếu sidebar đang mở: đổ màu mờ tinh tế ở cột sidebar bên trái
+    if (isOpen) {
+      final fillPaint = Paint()
+        ..color = color.withValues(alpha: 0.28)
+        ..style = PaintingStyle.fill;
+      final leftRect = Rect.fromLTRB(left, top, splitX, top + rectH);
+      canvas.save();
+      canvas.clipRRect(rrect);
+      canvas.drawRect(leftRect, fillPaint);
+      canvas.restore();
+    }
+
+    // Vẽ khung viền bo góc
+    canvas.drawRRect(rrect, strokePaint);
+
+    // Vẽ đường chia cột thanh bên
+    canvas.drawLine(
+      Offset(splitX, top),
+      Offset(splitX, top + rectH),
+      strokePaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _SidebarTogglePainter oldDelegate) {
+    return oldDelegate.isOpen != isOpen || oldDelegate.color != color;
+  }
+}
+
 class _RibbonIconButton extends StatefulWidget {
-  final IconData icon;
+  final IconData? icon;
+  final Widget? iconWidget;
   final String tooltip;
   final VoidCallback onTap;
   final bool isSelected;
   final bool isActive;
 
   const _RibbonIconButton({
-    required this.icon,
+    this.icon,
+    this.iconWidget,
     required this.tooltip,
     required this.onTap,
     this.isSelected = false,
     this.isActive = false,
-  });
+  }) : assert(icon != null || iconWidget != null, 'Either icon or iconWidget must be provided');
 
   @override
   State<_RibbonIconButton> createState() => _RibbonIconButtonState();
@@ -471,13 +564,16 @@ class _RibbonIconButtonState extends State<_RibbonIconButton> {
                       ),
                     ),
                   ),
-                Icon(
-                  widget.icon,
-                  size: 19,
-                  color: active
-                      ? (AppColors.isDark ? Colors.white : AppColors.primaryDark)
-                      : (_hovered ? AppColors.obsidianText : AppColors.obsidianTextMuted),
-                ),
+                if (widget.iconWidget != null)
+                  widget.iconWidget!
+                else
+                  Icon(
+                    widget.icon!,
+                    size: 19,
+                    color: active
+                        ? (AppColors.isDark ? Colors.white : AppColors.primaryDark)
+                        : (_hovered ? AppColors.obsidianText : AppColors.obsidianTextMuted),
+                  ),
               ],
             ),
           ),
@@ -629,9 +725,9 @@ class _AiChatSidebarContentState extends State<_AiChatSidebarContent> {
                     onPressed: () => chatService.newSession(),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.chevron_left, size: 18),
+                    icon: const Icon(Icons.keyboard_double_arrow_left_rounded, size: 18),
                     color: AppColors.obsidianTextMuted,
-                    tooltip: 'Thu gọn thanh bên',
+                    tooltip: 'Thu gọn thanh bên (Ctrl+B)',
                     splashRadius: 14,
                     onPressed: widget.onCloseSidebar,
                   ),
@@ -977,9 +1073,9 @@ class _VaultSidebarContent extends StatelessWidget {
                     onPressed: () => state.refresh(),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.chevron_left, size: 18),
+                    icon: const Icon(Icons.keyboard_double_arrow_left_rounded, size: 18),
                     color: AppColors.obsidianTextMuted,
-                    tooltip: 'Thu gọn thanh bên',
+                    tooltip: 'Thu gọn thanh bên (Ctrl+B)',
                     splashRadius: 14,
                     onPressed: onCloseSidebar,
                   ),
@@ -1238,9 +1334,9 @@ class _SettingsSidebarContent extends StatelessWidget {
               ),
               const Spacer(),
               IconButton(
-                icon: const Icon(Icons.chevron_left, size: 18),
+                icon: const Icon(Icons.keyboard_double_arrow_left_rounded, size: 18),
                 color: AppColors.obsidianTextMuted,
-                tooltip: 'Thu gọn thanh bên',
+                tooltip: 'Thu gọn thanh bên (Ctrl+B)',
                 splashRadius: 14,
                 onPressed: onCloseSidebar,
               ),
@@ -1459,9 +1555,9 @@ class _FilesSidebarContentState extends State<_FilesSidebarContent> {
                   ),
                   const Spacer(),
                   IconButton(
-                    icon: const Icon(Icons.chevron_left, size: 18),
+                    icon: const Icon(Icons.keyboard_double_arrow_left_rounded, size: 18),
                     color: AppColors.obsidianTextMuted,
-                    tooltip: 'Thu gọn thanh bên',
+                    tooltip: 'Thu gọn thanh bên (Ctrl+B)',
                     splashRadius: 14,
                     onPressed: widget.onCloseSidebar,
                   ),
@@ -2353,36 +2449,16 @@ class _ObsidianWorkspaceTabBar extends StatelessWidget {
             onPressed: () => AppState.instance.toggleTheme(),
           ),
           const SizedBox(width: 4),
-
-          // Shortcut gợi ý
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: AppColors.shellHover,
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: AppColors.shellBorder),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.keyboard, size: 12, color: AppColors.shellTextMuted),
-                const SizedBox(width: 4),
-                Text(
-                  'Ctrl + B để đóng/mở sidebar',
-                  style: TextStyle(fontSize: 10.5, color: AppColors.shellTextMuted),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-
           IconButton(
-            icon: Icon(
-              isSidebarOpen ? Icons.view_sidebar : Icons.view_sidebar_outlined,
-              size: 16,
+            icon: SidebarToggleIcon(
+              isOpen: isSidebarOpen,
+              size: 17,
+              color: isSidebarOpen
+                  ? (AppColors.isDark ? Colors.white : AppColors.primaryDark)
+                  : AppColors.shellTextMuted,
             ),
-            color: AppColors.shellTextMuted,
             splashRadius: 14,
-            tooltip: isSidebarOpen ? 'Thu gọn sidebar' : 'Mở sidebar',
+            tooltip: isSidebarOpen ? 'Thu gọn thanh bên (Ctrl+B)' : 'Mở thanh bên (Ctrl+B)',
             onPressed: onToggleSidebar,
           ),
         ],
