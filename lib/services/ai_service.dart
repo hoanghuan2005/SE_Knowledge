@@ -41,6 +41,10 @@ class AiService {
   /// tiên quyết trong SQLite (Graph RAG) để chỉ gửi kèm subgraph liên quan
   /// trực tiếp, thay vì toàn bộ CSDL.
   ///
+  /// [extraContext] là ngữ cảnh do phía gọi tự chuẩn bị (ví dụ khung chat
+  /// gắn theo một môn học). Khi có nó, Graph RAG toàn đồ thị bị bỏ qua hoàn
+  /// toàn để câu trả lời không lẫn dữ liệu của môn khác.
+  ///
   /// [onContext] gọi ngay khi trích xong ngữ cảnh (trước lúc chờ mạng), còn
   /// [onDelta] gọi mỗi lần nhận thêm một mẩu chữ, để UI hiện dần.
   Future<AiAnswer> ask({
