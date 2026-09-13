@@ -77,18 +77,20 @@ class PageHeader extends StatelessWidget {
   final String title;
   final String subtitle;
   final List<Widget> actions;
+  final EdgeInsetsGeometry? padding;
 
   const PageHeader({
     super.key,
     required this.title,
     this.subtitle = '',
     this.actions = const [],
+    this.padding,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      padding: padding ?? const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
         color: AppColors.surface,
         border: Border(bottom: BorderSide(color: AppColors.divider)),
@@ -103,18 +105,18 @@ class PageHeader extends StatelessWidget {
                 Text(
                   title,
                   style: TextStyle(
-                    fontSize: 20,
+                    fontSize: 16,
                     fontWeight: FontWeight.w700,
                     color: AppColors.textPrimary,
                   ),
                 ),
                 if (subtitle.isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.only(top: 2),
+                    padding: const EdgeInsets.only(top: 1),
                     child: Text(
                       subtitle,
                       style: TextStyle(
-                        fontSize: 13,
+                        fontSize: 11.5,
                         color: AppColors.textSecondary,
                       ),
                     ),

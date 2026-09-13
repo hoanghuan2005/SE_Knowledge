@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:file_selector/file_selector.dart';
 import '../../models/curriculum.dart';
 import '../../services/curriculum_cache_manager.dart';
 import '../../services/curriculum_parser_service.dart';
@@ -20,6 +22,10 @@ class _CurriculumDemoViewState extends State<CurriculumDemoView> {
   );
   final TextEditingController _cookieController = TextEditingController();
 
+  int _inputModeIndex = 0; // 0: Upload File HTML (Extension), 1: Dán mã HTML
+  String? _uploadedFileName;
+  int? _uploadedFileSize;
+
   Curriculum? _curriculum;
   bool _isLoading = false;
   String _dataSourceNote = 'Sẵn sàng';
@@ -29,11 +35,19 @@ class _CurriculumDemoViewState extends State<CurriculumDemoView> {
   @override
   void initState() {
     super.initState();
+    _htmlController.addListener(_onHtmlChanged);
     _checkCacheAndLoadInitial();
+  }
+
+  void _onHtmlChanged() {
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
   void dispose() {
+    _htmlController.removeListener(_onHtmlChanged);
     _htmlController.dispose();
     _urlController.dispose();
     _cookieController.dispose();
@@ -47,6 +61,152 @@ class _CurriculumDemoViewState extends State<CurriculumDemoView> {
       // Tự động nạp Offline-First khi mở màn hình (không auto-save DB để tránh ghi đè ban đầu)
       await _loadCurriculum(rawHtml: null, autoSaveToDb: false);
     }
+  }
+
+  /// Chọn file .html do Chrome Extension tải về máy
+  Future<void> _pickHtmlFile() async {
+    try {
+      const typeGroup = XTypeGroup(
+        label: 'HTML Files',
+        extensions: ['html', 'htm'],
+      );
+      final file = await openFile(acceptedTypeGroups: [typeGroup]);
+      if (file == null) return;
+
+      final content = await file.readAsString();
+      final size = await file.length();
+
+      setState(() {
+        _uploadedFileName = file.name;
+        _uploadedFileSize = size;
+        _htmlController.text = content;
+        _dataSourceNote = 'Đã nạp file: ${file.name}';
+        _dataSourceColor = Colors.teal;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF1B5E20),
+            behavior: SnackBarBehavior.floating,
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_outline, color: Colors.white, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '📄 Đã nạp file "${file.name}" (${(size / 1024).toStringAsFixed(1)} KB).\nBấm "Bóc Tách DOM" để chuẩn hóa môn học.',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.red,
+            content: Text('Lỗi khi đọc file HTML: $e'),
+          ),
+        );
+      }
+    }
+  }
+
+  void _clearUploadedFile() {
+    setState(() {
+      _uploadedFileName = null;
+      _uploadedFileSize = null;
+      _htmlController.clear();
+      _dataSourceNote = 'Sẵn sàng';
+      _dataSourceColor = Colors.grey;
+    });
+  }
+
+  Future<void> _pasteFromClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (data?.text != null && data!.text!.isNotEmpty) {
+      setState(() {
+        _htmlController.text = data.text!;
+        _uploadedFileName = null;
+        _uploadedFileSize = null;
+        _dataSourceNote = 'Đã dán HTML từ Clipboard (${_htmlController.text.length} ký tự)';
+        _dataSourceColor = Colors.orange;
+      });
+    }
+  }
+
+  Future<void> _fetchFromUrl() async {
+    final url = _urlController.text.trim();
+    if (url.isEmpty) return;
+
+    setState(() {
+      _isLoading = true;
+      _dataSourceNote = 'Đang gửi HTTP GET tới FLM...';
+      _dataSourceColor = Colors.orange;
+    });
+
+    final service = CurriculumParserService.instance;
+    final html = await service.fetchHtmlFromFlm(
+      url: url,
+      sessionCookie: _cookieController.text.trim(),
+    );
+
+    if (!mounted) return;
+
+    if (html != null && html.isNotEmpty) {
+      _htmlController.text = html;
+      _uploadedFileName = null;
+      _uploadedFileSize = null;
+
+      final isLoginPage = html.contains('FPT Education Learning Materials - Login') ||
+          html.contains('/gui/Account/Login') ||
+          (html.contains('pagetitle') && html.toLowerCase().contains('login'));
+
+      if (isLoginPage) {
+        setState(() {
+          _dataSourceNote = '⚠️ Cần Session Cookie (Bị chuyển hướng Login)';
+          _dataSourceColor = Colors.orange;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.deepOrange,
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              '⚠️ FLM yêu cầu đăng nhập! Hãy dán Session Cookie hoặc dùng Extension tải file HTML về máy.',
+            ),
+            duration: Duration(seconds: 6),
+          ),
+        );
+      }
+      await _loadCurriculum(rawHtml: html, forceRefresh: true);
+    } else {
+      setState(() {
+        _isLoading = false;
+        _dataSourceNote = 'Không kết nối được FLM. Nạp Offline Fallback.';
+        _dataSourceColor = Colors.red;
+      });
+      await _loadCurriculum(rawHtml: null);
+    }
+  }
+
+  Future<void> _syncToDatabase() async {
+    if (_curriculum == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final res = await AppState.instance.importCurriculumToDb(_curriculum!);
+    if (!mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        backgroundColor: const Color(0xFF1B5E20),
+        behavior: SnackBarBehavior.floating,
+        content: Text(
+          '🎉 Đã đồng bộ vào CSDL: ${res.insertedSubjects} môn mới, ${res.updatedSubjects} môn cập nhật, ${res.insertedEdges} liên kết!\n👉 Mở tab "Graph view" để xem bản đồ học tập.',
+        ),
+      ),
+    );
   }
 
   Future<void> _loadCurriculum({
@@ -115,59 +275,6 @@ class _CurriculumDemoViewState extends State<CurriculumDemoView> {
     }
   }
 
-  Future<void> _fetchFromUrl() async {
-    final url = _urlController.text.trim();
-    if (url.isEmpty) return;
-
-    setState(() {
-      _isLoading = true;
-      _dataSourceNote = 'Đang gửi HTTP GET tới FLM...';
-      _dataSourceColor = Colors.orange;
-    });
-
-    final service = CurriculumParserService.instance;
-    final html = await service.fetchHtmlFromFlm(
-      url: url,
-      sessionCookie: _cookieController.text.trim(),
-    );
-
-    if (!mounted) return;
-
-    if (html != null && html.isNotEmpty) {
-      _htmlController.text = html;
-      final isLoginPage = html.contains('FPT Education Learning Materials - Login') ||
-          html.contains('/gui/Account/Login') ||
-          (html.contains('pagetitle') && html.toLowerCase().contains('login'));
-
-      if (isLoginPage) {
-        if (!mounted) return;
-        setState(() {
-          _dataSourceNote = '⚠️ Cần Session Cookie (Bị chuyển hướng Login)';
-          _dataSourceColor = Colors.orange;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Colors.deepOrange,
-            behavior: SnackBarBehavior.floating,
-            content: Text(
-              '⚠️ FLM yêu cầu đăng nhập! Hãy dán Session Cookie hoặc bấm Ctrl+U ở tab FLM rồi copy toàn bộ HTML dán vào ô bên dưới.',
-            ),
-            duration: Duration(seconds: 6),
-          ),
-        );
-      }
-      await _loadCurriculum(rawHtml: html, forceRefresh: true);
-    } else {
-      setState(() {
-        _isLoading = false;
-        _dataSourceNote = 'Không kết nối được FLM. Nạp Offline Fallback.';
-        _dataSourceColor = Colors.red;
-      });
-      // Fallback ngay lập tức khi mạng lỗi
-      await _loadCurriculum(rawHtml: null);
-    }
-  }
-
   Future<void> _clearCache() async {
     await CurriculumCacheManager.clearCache();
     final cached = await CurriculumCacheManager.hasCache();
@@ -183,56 +290,69 @@ class _CurriculumDemoViewState extends State<CurriculumDemoView> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.obsidianWorkspace,
-      appBar: AppBar(
-        backgroundColor: AppColors.obsidianSidebar,
-        elevation: 0,
-        title: Row(
-          children: [
-            const Icon(Icons.school_outlined, color: AppColors.primary),
-            const SizedBox(width: 10),
-            const Text(
-              'FLM Curriculum Scraper & Normalizer (Desktop)',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const Spacer(),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: _dataSourceColor.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: _dataSourceColor.withValues(alpha: 0.5)),
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(44),
+        child: AppBar(
+          backgroundColor: AppColors.obsidianSidebar,
+          elevation: 0,
+          toolbarHeight: 44,
+          automaticallyImplyLeading: false,
+          titleSpacing: 14,
+          shape: Border(
+            bottom: BorderSide(color: AppColors.obsidianBorder),
+          ),
+          title: Row(
+            children: [
+              const Icon(Icons.school_outlined, color: AppColors.primary, size: 20),
+              const SizedBox(width: 8),
+              const Text(
+                'FLM Curriculum Scraper & Normalizer',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: _dataSourceColor,
-                      shape: BoxShape.circle,
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                constraints: const BoxConstraints(maxWidth: 360),
+                decoration: BoxDecoration(
+                  color: _dataSourceColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: _dataSourceColor.withValues(alpha: 0.4)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: _dataSourceColor,
+                        shape: BoxShape.circle,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _dataSourceNote,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: _dataSourceColor,
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        _dataSourceNote,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: _dataSourceColor,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
       body: Row(
         children: [
-          // PANEL TRÁI: Nhập liệu & Điều khiển Demo
+          // PANEL TRÁI: Nhập liệu (URL/Cookie, File Upload & Dán Text) + Điều khiển
           SizedBox(
-            width: 380,
+            width: 400,
             child: Container(
               decoration: BoxDecoration(
                 color: AppColors.obsidianSidebar,
@@ -240,211 +360,276 @@ class _CurriculumDemoViewState extends State<CurriculumDemoView> {
                   right: BorderSide(color: AppColors.obsidianBorder),
                 ),
               ),
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text(
-                    'CÔNG CỤ CÀO DỮ LIỆU FLM',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1.1,
-                      color: AppColors.primary,
-                    ),
+                  Row(
+                    children: [
+                      const SizedBox(
+                        width: 16,
+                        child: Center(
+                          child: Icon(Icons.tune_rounded, color: AppColors.primary, size: 15),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'CÔNG CỤ CÀO DỮ LIỆU FLM',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.8,
+                          color: AppColors.obsidianTextMuted,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
 
-                  // HTTP Fetch Section
+                  // HTTP Fetch Section: Link URL + Session Cookie + Nút Cào
                   TextField(
                     controller: _urlController,
                     style: const TextStyle(fontSize: 12),
                     decoration: InputDecoration(
                       labelText: 'FLM Curriculum URL',
-                      labelStyle: TextStyle(color: AppColors.obsidianTextMuted),
-                      prefixIcon: const Icon(Icons.link, size: 18),
+                      labelStyle: TextStyle(color: AppColors.obsidianTextMuted, fontSize: 12),
+                      prefixIcon: const Icon(Icons.link, size: 16),
                       isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      filled: true,
+                      fillColor: AppColors.obsidianWorkspace,
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(color: AppColors.obsidianBorder),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(color: AppColors.obsidianBorder),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   TextField(
                     controller: _cookieController,
                     style: const TextStyle(fontSize: 12),
                     decoration: InputDecoration(
                       labelText: 'Session Cookie (tuỳ chọn)',
-                      labelStyle: TextStyle(color: AppColors.obsidianTextMuted),
-                      prefixIcon: const Icon(Icons.cookie_outlined, size: 18),
+                      labelStyle: TextStyle(color: AppColors.obsidianTextMuted, fontSize: 12),
+                      prefixIcon: const Icon(Icons.cookie_outlined, size: 16),
                       hintText: 'ASP.NET_SessionId=...',
+                      hintStyle: TextStyle(color: AppColors.obsidianTextMuted, fontSize: 11),
                       isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      filled: true,
+                      fillColor: AppColors.obsidianWorkspace,
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(color: AppColors.obsidianBorder),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(color: AppColors.obsidianBorder),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(6),
                       ),
                     ),
-                    icon: const Icon(Icons.cloud_download_outlined, size: 18),
-                    label: const Text('Cào Live từ Web FLM'),
+                    icon: const Icon(Icons.cloud_download_outlined, size: 15),
+                    label: const Text(
+                      'Cào Live từ Web FLM',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
                     onPressed: _isLoading ? null : _fetchFromUrl,
                   ),
 
-                  const Divider(height: 24),
-
-                  // Raw HTML Paste Section
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Mã nguồn HTML (Ctrl+U):',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                  Padding(
+                    padding: const EdgeInsets.only(top: 16, bottom: 14),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Divider(
+                            color: AppColors.obsidianBorder,
+                            thickness: 1,
+                          ),
                         ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          child: Text(
+                            'HOẶC DÙNG EXTENSION / HTML',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.8,
+                              color: AppColors.obsidianTextMuted,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Divider(
+                            color: AppColors.obsidianBorder,
+                            thickness: 1,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Thanh chọn 2 chế độ: Upload File HTML vs Dán Mã HTML
+                  SegmentedButton<int>(
+                    style: SegmentedButton.styleFrom(
+                      selectedBackgroundColor: AppColors.primary.withValues(alpha: 0.2),
+                      selectedForegroundColor: Colors.white,
+                      foregroundColor: AppColors.obsidianTextMuted,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    ),
+                    segments: const [
+                      ButtonSegment<int>(
+                        value: 0,
+                        icon: Icon(Icons.file_upload_outlined, size: 15),
+                        label: Text('Upload file HTML', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
                       ),
-                      TextButton(
-                        onPressed: () => _htmlController.clear(),
-                        child: const Text('Xoá', style: TextStyle(fontSize: 11)),
+                      ButtonSegment<int>(
+                        value: 1,
+                        icon: Icon(Icons.code_outlined, size: 15),
+                        label: Text('Dán mã HTML', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
                       ),
                     ],
+                    selected: {_inputModeIndex},
+                    onSelectionChanged: (set) => setState(() => _inputModeIndex = set.first),
                   ),
-                  const SizedBox(height: 4),
-                  Expanded(
-                    child: TextField(
-                      controller: _htmlController,
-                      maxLines: null,
-                      expands: true,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontFamily: 'Consolas',
-                      ),
-                      decoration: InputDecoration(
-                        hintText:
-                            'Dán chuỗi HTML chứa bảng <table> môn học vào đây...',
-                        hintStyle:
-                            TextStyle(color: AppColors.obsidianTextMuted),
-                        filled: true,
-                        fillColor: AppColors.obsidianWorkspace,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide(color: AppColors.obsidianBorder),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
 
-                  // Nút Parse Isolate
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.teal,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    icon: const Icon(Icons.bolt, size: 18),
-                    label: const Text(
-                      'Bóc Tách DOM (Isolate compute)',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    onPressed: _isLoading || _htmlController.text.trim().isEmpty
-                        ? null
-                        : () => _loadCurriculum(
-                              rawHtml: _htmlController.text,
-                              forceRefresh: true,
-                            ),
+                  // Khung nội dung theo chế độ đã chọn (Upload File vs Paste Text)
+                  Expanded(
+                    child: _inputModeIndex == 0
+                        ? _buildFileUploadView()
+                        : _buildPasteTextView(),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  // NÚT CHÍNH: Bóc Tách DOM Isolate
+                  ListenableBuilder(
+                    listenable: _htmlController,
+                    builder: (context, _) {
+                      final hasHtml = _htmlController.text.trim().isNotEmpty;
+                      return ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.teal,
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor: Colors.teal.withValues(alpha: 0.25),
+                          disabledForegroundColor: Colors.white38,
+                          padding: const EdgeInsets.symmetric(vertical: 11),
+                          elevation: hasHtml ? 2 : 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                        icon: const Icon(Icons.bolt, size: 18),
+                        label: Text(
+                          _isLoading ? 'Đang bóc tách DOM...' : 'Bóc Tách DOM (Isolate compute)',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                        onPressed: _isLoading || !hasHtml
+                            ? null
+                            : () => _loadCurriculum(
+                                  rawHtml: _htmlController.text,
+                                  forceRefresh: true,
+                                ),
+                      );
+                    },
                   ),
 
                   const SizedBox(height: 8),
 
-                  // Test nút Offline Fallback
+                  // THANH ACTION TOOLBAR: Sắp xếp các nút phụ thành icon có tooltip
                   Row(
                     children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
+                      // Nút Lưu vào CSDL nổi bật khi đã có kết quả
+                      if (_curriculum != null && _curriculum!.semesters.isNotEmpty) ...[
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF1B5E20),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(6),
+                              ),
                             ),
+                            icon: const Icon(Icons.sync_alt, size: 15),
+                            label: const Text(
+                              'Lưu CSDL',
+                              style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold),
+                            ),
+                            onPressed: _isLoading ? null : _syncToDatabase,
                           ),
-                          icon: const Icon(Icons.wifi_off, size: 16),
-                          label: const Text('Thử Offline Fallback'),
-                          onPressed: _isLoading
-                              ? null
-                              : () => _loadCurriculum(rawHtml: null),
                         ),
+                        const SizedBox(width: 8),
+                      ],
+
+                      // Tooltip Icon: Mở thư mục Cache JSON
+                      IconButton.outlined(
+                        tooltip: 'Mở thư mục Cache JSON (Explorer)',
+                        style: IconButton.styleFrom(
+                          side: BorderSide(color: AppColors.obsidianBorder),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                          padding: const EdgeInsets.all(8),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        icon: const Icon(Icons.folder_open_outlined, size: 17),
+                        onPressed: () => CurriculumCacheManager.openCacheFolder(),
                       ),
-                      const SizedBox(width: 8),
-                      IconButton(
+                      const SizedBox(width: 6),
+
+                      // Tooltip Icon: Nạp dữ liệu mẫu (Offline Fallback)
+                      IconButton.outlined(
+                        tooltip: 'Thử Offline Fallback (Dữ liệu mẫu SE)',
+                        style: IconButton.styleFrom(
+                          side: BorderSide(color: AppColors.obsidianBorder),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                          padding: const EdgeInsets.all(8),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        icon: const Icon(Icons.science_outlined, size: 17),
+                        onPressed: _isLoading ? null : () => _loadCurriculum(rawHtml: null),
+                      ),
+                      const SizedBox(width: 6),
+
+                      // Tooltip Icon: Xoá Cache Cục Bộ
+                      IconButton.outlined(
                         tooltip: 'Xoá Cache Cục Bộ',
+                        style: IconButton.styleFrom(
+                          side: BorderSide(
+                            color: _hasCache ? Colors.redAccent.withValues(alpha: 0.4) : AppColors.obsidianBorder,
+                          ),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                          padding: const EdgeInsets.all(8),
+                          visualDensity: VisualDensity.compact,
+                        ),
                         icon: Icon(
-                          Icons.delete_sweep_outlined,
+                          Icons.delete_outline,
+                          size: 17,
                           color: _hasCache ? Colors.redAccent : Colors.grey,
                         ),
                         onPressed: _hasCache ? _clearCache : null,
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.primaryLight,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    icon: const Icon(Icons.folder_open_outlined, size: 16),
-                    label: const Text('Mở file Cache JSON (Explorer)'),
-                    onPressed: () => CurriculumCacheManager.openCacheFolder(),
-                  ),
-                  if (_curriculum != null && _curriculum!.semesters.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.tealAccent,
-                        side: BorderSide(
-                          color: Colors.tealAccent.withValues(alpha: 0.4),
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      icon: const Icon(Icons.sync_alt, size: 16),
-                      label: const Text('Đồng bộ dữ liệu này vào CSDL'),
-                      onPressed: _isLoading
-                          ? null
-                          : () async {
-                              final messenger = ScaffoldMessenger.of(context);
-                              final res = await AppState.instance
-                                  .importCurriculumToDb(_curriculum!);
-                              if (!mounted) return;
-                              messenger.showSnackBar(
-                                SnackBar(
-                                  backgroundColor: const Color(0xFF1B5E20),
-                                  behavior: SnackBarBehavior.floating,
-                                  content: Text(
-                                    '🎉 Đã đồng bộ vào CSDL: ${res.insertedSubjects} môn mới, ${res.updatedSubjects} môn cập nhật, ${res.insertedEdges} liên kết!',
-                                  ),
-                                ),
-                              );
-                            },
-                    ),
-                  ],
                 ],
               ),
             ),
           ),
+
 
           // PANEL PHẢI: Trực quan hóa Khung Chương Trình
           Expanded(
@@ -473,6 +658,183 @@ class _CurriculumDemoViewState extends State<CurriculumDemoView> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildFileUploadView() {
+    if (_uploadedFileName != null) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.obsidianWorkspace,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.teal.withValues(alpha: 0.5), width: 1.5),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.teal.withValues(alpha: 0.15),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.html_outlined, color: Colors.tealAccent, size: 36),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _uploadedFileName!,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${((_uploadedFileSize ?? 0) / 1024).toStringAsFixed(1)} KB • ${_htmlController.text.length} ký tự',
+              style: TextStyle(fontSize: 11, color: AppColors.obsidianTextMuted),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  icon: const Icon(Icons.refresh, size: 15),
+                  label: const Text('Đổi file khác', style: TextStyle(fontSize: 12)),
+                  onPressed: _pickHtmlFile,
+                ),
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.redAccent,
+                  ),
+                  icon: const Icon(Icons.delete_outline, size: 15),
+                  label: const Text('Gỡ', style: TextStyle(fontSize: 12)),
+                  onPressed: _clearUploadedFile,
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    return InkWell(
+      onTap: _pickHtmlFile,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: AppColors.obsidianWorkspace,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.obsidianBorder, style: BorderStyle.solid),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.cloud_upload_outlined, color: AppColors.primaryLight, size: 36),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Chọn file HTML từ máy tính',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'File .html do Extension của bạn tự động download về từ trang FLM',
+              style: TextStyle(fontSize: 11, color: AppColors.obsidianTextMuted),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              icon: const Icon(Icons.file_open_outlined, size: 16),
+              label: const Text('Chọn file HTML (.html)', style: TextStyle(fontSize: 12)),
+              onPressed: _pickHtmlFile,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPasteTextView() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'Mã nguồn HTML:',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            Row(
+              children: [
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  ),
+                  icon: const Icon(Icons.content_paste_go, size: 14),
+                  label: const Text('Dán Clipboard', style: TextStyle(fontSize: 11)),
+                  onPressed: _pasteFromClipboard,
+                ),
+                TextButton(
+                  onPressed: () => setState(() {
+                    _htmlController.clear();
+                    _uploadedFileName = null;
+                    _uploadedFileSize = null;
+                  }),
+                  child: const Text('Xoá', style: TextStyle(fontSize: 11)),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Expanded(
+          child: TextField(
+            controller: _htmlController,
+            maxLines: null,
+            expands: true,
+            onChanged: (val) {
+              if (mounted) setState(() {});
+            },
+            style: const TextStyle(
+              fontSize: 11,
+              fontFamily: 'Consolas',
+            ),
+            decoration: InputDecoration(
+              hintText: 'Dán chuỗi mã HTML (Ctrl+V) chứa bảng <table> môn học vào đây...',
+              hintStyle: TextStyle(color: AppColors.obsidianTextMuted),
+              filled: true,
+              fillColor: AppColors.obsidianWorkspace,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: AppColors.obsidianBorder),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 

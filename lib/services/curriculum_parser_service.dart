@@ -191,6 +191,32 @@ Curriculum parseCurriculumWorker(String htmlString) {
   );
 
   for (final table in tables) {
+    // 0. Bỏ qua nếu là bảng PLO (Program Learning Outcomes) hoặc PO (Program Objectives)
+    final tableTextLower = table.text.toLowerCase();
+    final thCells = table.querySelectorAll('th');
+    final thTexts = thCells.map((th) => cleanCurriculumText(th.text).toLowerCase()).toList();
+
+    final isPloOrPoTable = thTexts.any((t) =>
+            t.contains('plo') ||
+            t.contains('learning outcome') ||
+            t == 'po name' ||
+            t == 'po description' ||
+            t.contains('program objective')) ||
+        tableTextLower.contains('plo name') ||
+        tableTextLower.contains('plo description') ||
+        tableTextLower.contains('plo(s) found') ||
+        tableTextLower.contains('program learning outcome');
+
+    if (isPloOrPoTable) {
+      continue;
+    }
+
+    // Kiểm tra nhanh các ô đầu tiên: nếu là bảng PLO (chứa PLO1, PLO2...) thì bỏ qua
+    final sampleCells = table.querySelectorAll('td').take(20).map((e) => cleanCurriculumText(e.text).toUpperCase());
+    if (sampleCells.any((t) => RegExp(r'^PLO\d+$').hasMatch(t))) {
+      continue;
+    }
+
     int headerCodeCol = -1;
     int headerNameCol = -1;
     int headerTermCol = -1;
@@ -198,9 +224,8 @@ Curriculum parseCurriculumWorker(String htmlString) {
     int headerPrereqCol = -1;
 
     // 1. Quét tìm header từ <th> nếu có
-    final thCells = table.querySelectorAll('th');
     for (int i = 0; i < thCells.length; i++) {
-      final hText = cleanCurriculumText(thCells[i].text).toLowerCase();
+      final hText = thTexts[i];
       if (hText.contains('code') || hText.contains('mã môn')) {
         headerCodeCol = i;
       } else if (hText.contains('name') || hText.contains('tên môn') || hText.contains('subject')) {
@@ -248,7 +273,9 @@ Curriculum parseCurriculumWorker(String htmlString) {
         return txt == 'code' ||
             txt == 'mã môn' ||
             txt == 'subject code' ||
-            txt == 'course code';
+            txt == 'course code' ||
+            txt == 'plo name' ||
+            txt == 'plo description';
       })) {
         continue;
       }
@@ -300,26 +327,41 @@ Curriculum parseCurriculumWorker(String htmlString) {
               prereqIdx = 3;
             }
           } else if (cells.length == 3) {
-            codeIdx = 0;
-            nameIdx = 1;
-            creditIdx = 2;
+            if (isFirstColNumber) {
+              codeIdx = 1;
+              nameIdx = 2;
+            } else {
+              codeIdx = 0;
+              nameIdx = 1;
+              creditIdx = 2;
+            }
           }
         }
 
         if (codeIdx != -1 && codeIdx < cells.length) {
           final code = cleanCurriculumText(cells[codeIdx].text);
 
-          // Bỏ qua nếu là chuỗi rỗng hoặc rác
+          // Bỏ qua nếu là chuỗi rỗng, rác, số thứ tự thuần tuý, hoặc mã PLO / PO
           if (code.isEmpty ||
               code.toLowerCase() == 'code' ||
               code.toLowerCase() == 'field' ||
-              code.toLowerCase().contains('curriculum')) {
+              code.toLowerCase().contains('curriculum') ||
+              RegExp(r'^\d+$').hasMatch(code) || // STT (1, 2, 3...)
+              RegExp(r'^(?:PLO|PO)\d*$', caseSensitive: false).hasMatch(code) || // PLO1, PLO2...
+              code.toUpperCase().startsWith('PLO') ||
+              code.toUpperCase().startsWith('PO_')) {
             continue;
           }
 
           final name = (nameIdx != -1 && nameIdx < cells.length)
               ? cleanCurriculumText(cells[nameIdx].text)
               : '';
+
+          // Bỏ qua nếu tên mô tả là PLO
+          if (name.toLowerCase().contains('program learning outcome') ||
+              name.toLowerCase().startsWith('plo')) {
+            continue;
+          }
 
           // Lấy chính xác số tín chỉ
           final creditStr = (creditIdx != -1 && creditIdx < cells.length)

@@ -4,6 +4,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../../models/graph_data.dart';
 import '../../models/subject.dart';
+import '../../models/curriculum.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
@@ -50,71 +51,86 @@ class _GraphPageState extends State<GraphPage> {
       listenable: AppState.instance,
       builder: (context, _) {
         final state = AppState.instance;
+        final currentGraph = state.currentGraph;
+        final activeGroup = state.curriculumGroups.cast<CurriculumGroup?>().firstWhere(
+              (g) => g?.code == state.activeCurriculumCode,
+              orElse: () => null,
+            );
         final semesters =
-            state.graph.subjects.map((s) => s.semester).toSet().toList()
+            currentGraph.subjects.map((s) => s.semester).toSet().toList()
               ..sort();
 
         return Column(
           children: [
             PageHeader(
-              title: 'Bản đồ tri thức',
-              subtitle:
-                  '${state.stats['subjects'] ?? 0} môn học · '
-                  '${state.stats['edges'] ?? 0} liên kết tiên quyết',
+              title: activeGroup != null
+                  ? 'Bản đồ: ${activeGroup.code}'
+                  : 'Bản đồ tri thức',
+              subtitle: activeGroup != null
+                  ? '${currentGraph.subjects.length} môn · ${currentGraph.edges.length} liên kết'
+                  : '${state.stats['subjects'] ?? 0} môn học · ${state.stats['edges'] ?? 0} liên kết tiên quyết',
               actions: [
+                if (state.curriculumGroups.isNotEmpty) ...[
+                  _CurriculumFilter(
+                    groups: state.curriculumGroups,
+                    value: state.activeCurriculumCode,
+                    onChanged: (v) => state.setActiveCurriculum(v),
+                  ),
+                  const SizedBox(width: 14),
+                ],
                 _SemesterFilter(
                   semesters: semesters,
                   value: _semesterFilter,
                   onChanged: (v) => setState(() => _semesterFilter = v),
                 ),
-                const SizedBox(width: 16),
+                const SizedBox(width: 8),
                 IconButton(
                   tooltip: _showRelated
                       ? 'Đang hiện quan hệ tham khảo'
                       : 'Đang ẩn quan hệ tham khảo',
                   icon: Icon(
                     _showRelated ? Icons.visibility : Icons.visibility_off,
-                    size: 18,
+                    size: 16,
                   ),
                   color: AppColors.textSecondary,
-                  splashRadius: 16,
+                  splashRadius: 14,
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                   onPressed: () => setState(() => _showRelated = !_showRelated),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 IconButton(
                   tooltip: 'Về mức zoom mặc định',
-                  icon: const Icon(Icons.center_focus_strong_outlined, size: 18),
+                  icon: const Icon(Icons.center_focus_strong_outlined, size: 16),
                   color: AppColors.textSecondary,
-                  splashRadius: 16,
+                  splashRadius: 14,
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                   onPressed: _resetZoom,
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 IconButton(
                   tooltip: 'Tải lại từ SQLite',
-                  icon: const Icon(Icons.refresh, size: 18),
+                  icon: const Icon(Icons.refresh, size: 16),
                   color: AppColors.textSecondary,
-                  splashRadius: 16,
+                  splashRadius: 14,
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                   onPressed: state.refresh,
                 ),
-                const SizedBox(width: 16),
+                const SizedBox(width: 8),
                 SizedBox(
-                  height: 32,
+                  height: 28,
                   child: ElevatedButton.icon(
-                    icon: const Icon(Icons.add, size: 15),
+                    icon: const Icon(Icons.add, size: 14),
                     label: const Text(
                       'Thêm môn',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
                     ),
                     style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(6),
                       ),
                     ),
                     onPressed: () => SubjectFormDialog.show(context),
@@ -123,18 +139,19 @@ class _GraphPageState extends State<GraphPage> {
               ],
             ),
             Expanded(
-              child: state.loading && state.graph.isEmpty
+              child: state.loading && currentGraph.isEmpty
                   ? const Center(child: CircularProgressIndicator())
-                  : state.graph.isEmpty
+                  : currentGraph.isEmpty
                   ? _emptyGraph(context)
                   : _ObsidianGraphCanvas(
-                      data: state.graph,
+                      data: currentGraph,
                       showRelated: _showRelated,
                       semesterFilter: _semesterFilter,
+                      curriculumCode: state.activeCurriculumCode,
                       viewer: _viewer,
                     ),
             ),
-            const _Legend(),
+            _Legend(isDark: state.isDark),
           ],
         );
       },
@@ -184,12 +201,14 @@ class _ObsidianGraphCanvas extends StatefulWidget {
   final GraphData data;
   final bool showRelated;
   final int? semesterFilter;
+  final String? curriculumCode;
   final TransformationController viewer;
 
   const _ObsidianGraphCanvas({
     required this.data,
     required this.showRelated,
     required this.semesterFilter,
+    this.curriculumCode,
     required this.viewer,
   });
 
@@ -223,9 +242,10 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
     final filterChanged = widget.semesterFilter != oldWidget.semesterFilter;
     final relatedChanged = widget.showRelated != oldWidget.showRelated;
     final dataChanged = widget.data != oldWidget.data;
+    final curriculumChanged = widget.curriculumCode != oldWidget.curriculumCode;
 
-    if (filterChanged || relatedChanged || dataChanged) {
-      _syncGraph(resetPositions: filterChanged);
+    if (filterChanged || relatedChanged || dataChanged || curriculumChanged) {
+      _syncGraph(resetPositions: filterChanged || curriculumChanged);
     }
   }
 
@@ -697,12 +717,12 @@ class _SemesterFilter extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = AppColors.isDark;
     return Container(
-      height: 32,
-      width: 105,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      height: 28,
+      width: 98,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: AppColors.border),
       ),
       child: DropdownButtonHideUnderline(
@@ -752,32 +772,114 @@ class _SemesterFilter extends StatelessWidget {
   }
 }
 
+class _CurriculumFilter extends StatelessWidget {
+  final List<CurriculumGroup> groups;
+  final String? value;
+  final ValueChanged<String?> onChanged;
+
+  const _CurriculumFilter({
+    required this.groups,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = AppColors.isDark;
+    return Container(
+      height: 28,
+      constraints: const BoxConstraints(minWidth: 100, maxWidth: 145),
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: value != null ? AppColors.primary : AppColors.border,
+          width: value != null ? 1.5 : 1.0,
+        ),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String?>(
+          value: value,
+          isDense: true,
+          isExpanded: true,
+          icon: Icon(
+            Icons.arrow_drop_down,
+            size: 18,
+            color: AppColors.textSecondary,
+          ),
+          style: TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w600,
+            color: value != null ? AppColors.primary : AppColors.textPrimary,
+          ),
+          dropdownColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          items: [
+            DropdownMenuItem<String?>(
+              value: null,
+              child: Text(
+                'Tất cả khung',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+            for (final g in groups)
+              DropdownMenuItem<String?>(
+                value: g.code,
+                child: Text(
+                  g.isUnassigned ? 'Ngoài khung' : g.code,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+          ],
+          onChanged: onChanged,
+        ),
+      ),
+    );
+  }
+}
+
 class _Legend extends StatelessWidget {
-  const _Legend();
+  final bool isDark;
+  const _Legend({required this.isDark});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: isDark ? const Color(0xFF1E1E24) : Colors.white,
         border: Border(top: BorderSide(color: AppColors.divider)),
       ),
       child: Row(
         children: [
-          const _LegendLine(
+          _LegendLine(
             color: AppColors.edgePrerequisite,
             label: 'Tiên quyết bắt buộc',
+            isDark: isDark,
           ),
           const SizedBox(width: 20),
           _LegendLine(
             color: AppColors.edgeRelated,
             label: 'Liên quan / tham khảo',
+            isDark: isDark,
           ),
           const Spacer(),
           Text(
             'Cuộn để zoom · kéo để di chuyển · bấm node để xem chi tiết',
-            style: TextStyle(fontSize: 11.5, color: AppColors.textHint),
+            style: TextStyle(
+              fontSize: 11.5,
+              color: isDark ? const Color(0xFF8A8A93) : const Color(0xFF6B6B80),
+            ),
           ),
         ],
       ),
@@ -788,8 +890,13 @@ class _Legend extends StatelessWidget {
 class _LegendLine extends StatelessWidget {
   final Color color;
   final String label;
+  final bool isDark;
 
-  const _LegendLine({required this.color, required this.label});
+  const _LegendLine({
+    required this.color,
+    required this.label,
+    required this.isDark,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -799,7 +906,10 @@ class _LegendLine extends StatelessWidget {
         const SizedBox(width: 8),
         Text(
           label,
-          style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
+          style: TextStyle(
+            fontSize: 11.5,
+            color: isDark ? const Color(0xFFDCDDDE) : const Color(0xFF1A1A2E),
+          ),
         ),
       ],
     );

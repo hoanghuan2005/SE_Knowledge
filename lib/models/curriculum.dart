@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'subject.dart';
 
 /// Đại diện cho 1 môn học trong khung chương trình
 class Course {
@@ -131,3 +132,35 @@ class Curriculum {
   int get totalCourses =>
       semesters.fold(0, (sum, s) => sum + s.courses.length);
 }
+
+/// Nhóm phân cấp Khung chương trình đào tạo dùng cho Cây thư mục (Sidebar Tree View)
+class CurriculumGroup {
+  final int? curriculumId; // null = Môn học ngoài khung / Chưa phân loại
+  final String code;
+  final String name;
+  final String major;
+  final int totalCredits;
+  final Map<int, List<Subject>> semesters; // termNumber -> List<Subject>
+  final int totalSubjects;
+
+  const CurriculumGroup({
+    this.curriculumId,
+    required this.code,
+    required this.name,
+    required this.major,
+    this.totalCredits = 0,
+    required this.semesters,
+    required this.totalSubjects,
+  });
+
+  bool get isUnassigned => curriculumId == null;
+
+  Curriculum toCurriculum() => Curriculum(
+        code: code,
+        name: name,
+        major: major,
+        totalCredits: totalCredits,
+        semesters: const [],
+      );
+}
+

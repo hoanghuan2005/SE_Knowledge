@@ -14,6 +14,8 @@ import 'subjects/subjects_page.dart';
 import 'vault/vault_page.dart';
 import 'widgets/subject_detail_panel.dart';
 import 'curriculum/curriculum_demo_view.dart';
+import '../models/curriculum.dart';
+import 'curriculum/curriculum_form_dialog.dart';
 
 /// Intent để bắt phím tắt Ctrl+B toggle thanh bên.
 class _ToggleSidebarIntent extends Intent {
@@ -234,7 +236,6 @@ class _AppShellState extends State<AppShell> {
                                       subject: AppState.instance.activeNote!,
                                     )
                                   : IndexedStack(
-                                      key: ValueKey(AppState.instance.isDark),
                                       index: _index,
                                       children: const [
                                         GraphPage(),
@@ -296,19 +297,23 @@ class _ObsidianRibbon extends StatelessWidget {
       ),
       child: Column(
         children: [
-          const SizedBox(height: 10),
-
-          // Nút đóng/mở sidebar (Icon đầu tiên ở trên như Obsidian)
-          _RibbonIconButton(
-            icon: isSidebarOpen ? Icons.view_sidebar : Icons.view_sidebar_outlined,
-            tooltip: isSidebarOpen ? 'Thu gọn thanh bên (Ctrl+B)' : 'Mở thanh bên (Ctrl+B)',
-            isActive: isSidebarOpen,
-            onTap: onToggleSidebar,
+          // Header đồng bộ độ cao 40px và border bottom với Sidebar và Workspace Tab Bar
+          Container(
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: AppColors.shellBorder, width: 1),
+              ),
+            ),
+            child: _RibbonIconButton(
+              icon: isSidebarOpen ? Icons.view_sidebar : Icons.view_sidebar_outlined,
+              tooltip: isSidebarOpen ? 'Thu gọn thanh bên (Ctrl+B)' : 'Mở thanh bên (Ctrl+B)',
+              isActive: isSidebarOpen,
+              onTap: onToggleSidebar,
+            ),
           ),
-
-          const SizedBox(height: 10),
-          Divider(height: 1, color: AppColors.shellBorder),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
 
           // Các icon điều hướng chính
           _RibbonIconButton(
@@ -524,6 +529,7 @@ class _ObsidianSidebarPanel extends StatelessWidget {
       onOpenVault: onOpenVault,
       onCloseSidebar: onCloseSidebar,
       onNewSubject: onNewSubject,
+      onNavigateToTab: onNavigateToTab,
     );
   }
 }
@@ -566,7 +572,7 @@ class _AiChatSidebarContentState extends State<_AiChatSidebarContent> {
           children: [
             // Header: Tiêu đề + Nút thêm đoạn chat + Nút thu gọn
             Container(
-              height: 38,
+              height: 40,
               padding: const EdgeInsets.symmetric(horizontal: 10),
               decoration: BoxDecoration(
                 border: Border(
@@ -914,7 +920,7 @@ class _VaultSidebarContent extends StatelessWidget {
         return Column(
           children: [
             Container(
-              height: 38,
+              height: 40,
               padding: const EdgeInsets.symmetric(horizontal: 10),
               decoration: BoxDecoration(
                 border: Border(
@@ -1182,7 +1188,7 @@ class _SettingsSidebarContent extends StatelessWidget {
     return Column(
       children: [
         Container(
-          height: 38,
+          height: 40,
           padding: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(
             border: Border(
@@ -1301,7 +1307,7 @@ class _SettingsMenuItem extends StatelessWidget {
 // ============================================================================
 // 2D. SIDEBAR CHO TỆP & MÔN HỌC (FILE EXPLORER MẶC ĐỊNH)
 // ============================================================================
-class _FilesSidebarContent extends StatelessWidget {
+class _FilesSidebarContent extends StatefulWidget {
   final int activeTabIndex;
   final String searchQuery;
   final Set<int> collapsedSemesters;
@@ -1313,6 +1319,7 @@ class _FilesSidebarContent extends StatelessWidget {
   final VoidCallback onOpenVault;
   final VoidCallback onCloseSidebar;
   final VoidCallback onNewSubject;
+  final ValueChanged<int>? onNavigateToTab;
 
   const _FilesSidebarContent({
     required this.activeTabIndex,
@@ -1326,7 +1333,59 @@ class _FilesSidebarContent extends StatelessWidget {
     required this.onOpenVault,
     required this.onCloseSidebar,
     required this.onNewSubject,
+    this.onNavigateToTab,
   });
+
+  @override
+  State<_FilesSidebarContent> createState() => _FilesSidebarContentState();
+}
+
+class _FilesSidebarContentState extends State<_FilesSidebarContent> {
+  final Set<String> _collapsedCurriculums = {};
+  final Set<String> _collapsedSemesters = {};
+
+  void _toggleCurriculum(String code) {
+    setState(() {
+      if (_collapsedCurriculums.contains(code)) {
+        _collapsedCurriculums.remove(code);
+      } else {
+        _collapsedCurriculums.add(code);
+      }
+    });
+  }
+
+  void _toggleSemester(String key) {
+    setState(() {
+      if (_collapsedSemesters.contains(key)) {
+        _collapsedSemesters.remove(key);
+      } else {
+        _collapsedSemesters.add(key);
+      }
+    });
+  }
+
+  bool _isAllCollapsed(List<CurriculumGroup> groups) {
+    if (groups.isEmpty) return false;
+    final allCodes = groups.map((g) => g.code).toSet();
+    return _collapsedCurriculums.containsAll(allCodes);
+  }
+
+  void _toggleCollapseAll(List<CurriculumGroup> groups) {
+    setState(() {
+      final allCodes = groups.map((g) => g.code).toSet();
+      if (_collapsedCurriculums.containsAll(allCodes)) {
+        _collapsedCurriculums.clear();
+        _collapsedSemesters.clear();
+      } else {
+        _collapsedCurriculums.addAll(allCodes);
+        for (final g in groups) {
+          for (final sem in g.semesters.keys) {
+            _collapsedSemesters.add('${g.code}_sem_$sem');
+          }
+        }
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1334,23 +1393,14 @@ class _FilesSidebarContent extends StatelessWidget {
       listenable: AppState.instance,
       builder: (context, _) {
         final state = AppState.instance;
-        final subjects = state.graph.subjects;
-        final semesters = subjects.map((s) => s.semester).toSet().toList()..sort();
-
-        // Lọc theo từ khóa tìm kiếm
-        final filtered = searchQuery.trim().isEmpty
-            ? subjects
-            : subjects.where((s) {
-                final q = searchQuery.trim().toLowerCase();
-                return s.code.toLowerCase().contains(q) ||
-                    s.name.toLowerCase().contains(q);
-              }).toList();
+        final groups = state.curriculumGroups;
+        final q = widget.searchQuery.trim().toLowerCase();
 
         return Column(
           children: [
             // Top Tab Icons bar (Files, Search, Bookmarks) + Collapse button
             Container(
-              height: 38,
+              height: 40,
               padding: const EdgeInsets.symmetric(horizontal: 8),
               decoration: BoxDecoration(
                 border: Border(
@@ -1362,22 +1412,22 @@ class _FilesSidebarContent extends StatelessWidget {
                   _PanelTabIcon(
                     icon: Icons.folder_outlined,
                     tooltip: 'Tệp môn học (Files)',
-                    isSelected: activeTabIndex == 0,
-                    onTap: () => onTabChanged(0),
+                    isSelected: widget.activeTabIndex == 0,
+                    onTap: () => widget.onTabChanged(0),
                   ),
                   const SizedBox(width: 4),
                   _PanelTabIcon(
                     icon: Icons.search,
                     tooltip: 'Tìm kiếm nhanh (Search)',
-                    isSelected: activeTabIndex == 1,
-                    onTap: () => onTabChanged(1),
+                    isSelected: widget.activeTabIndex == 1,
+                    onTap: () => widget.onTabChanged(1),
                   ),
                   const SizedBox(width: 4),
                   _PanelTabIcon(
                     icon: Icons.bookmark_border,
                     tooltip: 'Dấu trang (Bookmarks)',
-                    isSelected: activeTabIndex == 2,
-                    onTap: () => onTabChanged(2),
+                    isSelected: widget.activeTabIndex == 2,
+                    onTap: () => widget.onTabChanged(2),
                   ),
                   const Spacer(),
                   IconButton(
@@ -1385,32 +1435,72 @@ class _FilesSidebarContent extends StatelessWidget {
                     color: AppColors.obsidianTextMuted,
                     tooltip: 'Thu gọn thanh bên',
                     splashRadius: 14,
-                    onPressed: onCloseSidebar,
+                    onPressed: widget.onCloseSidebar,
                   ),
                 ],
               ),
             ),
 
-            // Toolbar phụ kiểu Obsidian: Tiêu đề + Các nút New Note, Sort, Collapse All
+            // Toolbar phụ: Tiêu đề + Thêm CTĐT + Thêm môn + Dọn PLO + Sync + Collapse All
             Container(
               height: 32,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
               child: Row(
                 children: [
-                  Text(
-                    'TỆP & MÔN HỌC',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.obsidianTextMuted,
-                      letterSpacing: 0.8,
+                  Expanded(
+                    child: Text(
+                      'CTĐT & MÔN HỌC',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.obsidianTextMuted,
+                        letterSpacing: 0.5,
+                      ),
                     ),
                   ),
-                  const Spacer(),
+                  _MiniActionIcon(
+                    icon: Icons.create_new_folder_outlined,
+                    tooltip: 'Tạo Khung CTĐT mới',
+                    onTap: () async {
+                      final result = await CurriculumFormDialog.show(context);
+                      if (result != null) {
+                        await state.addCurriculum(
+                          code: result['code'] as String,
+                          name: result['name'] as String,
+                          major: result['major'] as String,
+                          totalCredits: result['total_credits'] as int,
+                          decisionNo: result['decision_no'] as String? ?? '',
+                          description: result['description'] as String? ?? '',
+                        );
+                      }
+                    },
+                  ),
                   _MiniActionIcon(
                     icon: Icons.note_add_outlined,
                     tooltip: 'Tạo môn học mới',
-                    onTap: onNewSubject,
+                    onTap: widget.onNewSubject,
+                  ),
+                  _MiniActionIcon(
+                    icon: Icons.cleaning_services_outlined,
+                    tooltip: 'Dọn dẹp PLO / môn rác',
+                    onTap: () async {
+                      final count = await state.cleanLegacyPloSubjects();
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              count > 0
+                                  ? 'Đã xoá sạch $count mục PLO / dữ liệu rác khỏi hệ thống'
+                                  : 'Hệ thống sạch sẽ, không có mục PLO rác nào',
+                            ),
+                            backgroundColor: AppColors.card,
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                      }
+                    },
                   ),
                   _MiniActionIcon(
                     icon: Icons.sync,
@@ -1418,18 +1508,18 @@ class _FilesSidebarContent extends StatelessWidget {
                     onTap: () => state.refresh(),
                   ),
                   _MiniActionIcon(
-                    icon: collapsedSemesters.length == semesters.length
+                    icon: _isAllCollapsed(groups)
                         ? Icons.unfold_more
                         : Icons.unfold_less,
                     tooltip: 'Thu gọn/Mở rộng tất cả',
-                    onTap: () => onCollapseAllSemesters(semesters),
+                    onTap: () => _toggleCollapseAll(groups),
                   ),
                 ],
               ),
             ),
 
             // Ô tìm kiếm nhanh (nếu chọn tab search hoặc muốn lọc nhanh)
-            if (activeTabIndex == 1 || searchQuery.isNotEmpty)
+            if (widget.activeTabIndex == 1 || widget.searchQuery.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(10, 2, 10, 8),
                 child: Container(
@@ -1446,10 +1536,10 @@ class _FilesSidebarContent extends StatelessWidget {
                       const SizedBox(width: 6),
                       Expanded(
                         child: TextField(
-                          onChanged: onSearchChanged,
+                          onChanged: widget.onSearchChanged,
                           style: TextStyle(fontSize: 12, color: AppColors.obsidianText),
                           decoration: InputDecoration(
-                            hintText: 'Tìm kiếm...',
+                            hintText: 'Tìm kiếm môn học...',
                             hintStyle: TextStyle(fontSize: 12, color: AppColors.obsidianTextMuted),
                             border: InputBorder.none,
                             isDense: true,
@@ -1457,9 +1547,9 @@ class _FilesSidebarContent extends StatelessWidget {
                           ),
                         ),
                       ),
-                      if (searchQuery.isNotEmpty)
+                      if (widget.searchQuery.isNotEmpty)
                         GestureDetector(
-                          onTap: () => onSearchChanged(''),
+                          onTap: () => widget.onSearchChanged(''),
                           child: Icon(Icons.close, size: 14, color: AppColors.obsidianTextMuted),
                         ),
                     ],
@@ -1467,26 +1557,49 @@ class _FilesSidebarContent extends StatelessWidget {
                 ),
               ),
 
-            // Danh sách môn học dạng cây thư mục Obsidian
+            // Danh sách Khung CTĐT -> Học kỳ -> Môn học dạng cây Obsidian
             Expanded(
-              child: filtered.isEmpty
+              child: groups.isEmpty
                   ? Center(
-                      child: Text(
-                        'Không có môn nào',
-                        style: TextStyle(fontSize: 12, color: AppColors.obsidianTextMuted),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.folder_open, size: 36, color: AppColors.obsidianTextMuted),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Chưa có Khung CTĐT nào',
+                            style: TextStyle(fontSize: 12, color: AppColors.obsidianTextMuted),
+                          ),
+                          const SizedBox(height: 8),
+                          TextButton.icon(
+                            onPressed: () async {
+                              final result = await CurriculumFormDialog.show(context);
+                              if (result != null) {
+                                await state.addCurriculum(
+                                  code: result['code'] as String,
+                                  name: result['name'] as String,
+                                  major: result['major'] as String,
+                                  totalCredits: result['total_credits'] as int,
+                                  decisionNo: result['decision_no'] as String? ?? '',
+                                  description: result['description'] as String? ?? '',
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.add, size: 14),
+                            label: const Text('Tạo Khung CTĐT', style: TextStyle(fontSize: 12)),
+                          ),
+                        ],
                       ),
                     )
                   : ListView(
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       children: [
-                        for (final sem in semesters)
-                          _buildSemesterGroup(
-                            semester: sem,
-                            subjects: filtered.where((s) => s.semester == sem).toList(),
-                            isCollapsed: collapsedSemesters.contains(sem),
-                            onToggle: () => onToggleSemester(sem),
-                            onSelectSubject: onSelectSubject,
-                            selectedId: state.selectedSubjectId,
+                        for (final group in groups)
+                          _buildCurriculumFolder(
+                            context: context,
+                            group: group,
+                            query: q,
+                            state: state,
                           ),
                       ],
                     ),
@@ -1494,7 +1607,7 @@ class _FilesSidebarContent extends StatelessWidget {
 
             // Vault Switcher ở chân Sidebar (y hệt Obsidian trong ảnh)
             InkWell(
-              onTap: onOpenVault,
+              onTap: widget.onOpenVault,
               child: Container(
                 height: 42,
                 padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1550,58 +1663,350 @@ class _FilesSidebarContent extends StatelessWidget {
     );
   }
 
-  Widget _buildSemesterGroup({
+  Widget _buildCurriculumFolder({
+    required BuildContext context,
+    required CurriculumGroup group,
+    required String query,
+    required AppState state,
+  }) {
+    // Lọc theo search query
+    final matchingSemesters = <int, List<Subject>>{};
+    for (final entry in group.semesters.entries) {
+      if (query.isEmpty) {
+        matchingSemesters[entry.key] = entry.value;
+      } else {
+        final matched = entry.value.where((s) {
+          return s.code.toLowerCase().contains(query) ||
+              s.name.toLowerCase().contains(query);
+        }).toList();
+        if (matched.isNotEmpty) {
+          matchingSemesters[entry.key] = matched;
+        }
+      }
+    }
+
+    // Nếu đang search mà trong CTĐT này không có môn nào match -> ẩn cả folder CTĐT
+    if (query.isNotEmpty && matchingSemesters.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final isCurriculumCollapsed =
+        query.isEmpty && _collapsedCurriculums.contains(group.code);
+    final isCurriculumActive = state.activeCurriculumCode == group.code;
+    final sortedTerms = matchingSemesters.keys.toList()..sort();
+    final totalSubjectsInGroup =
+        matchingSemesters.values.fold(0, (sum, l) => sum + l.length);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header Folder Khung CTĐT
+        InkWell(
+          onTap: () {
+            if (_collapsedCurriculums.contains(group.code)) {
+              setState(() {
+                _collapsedCurriculums.remove(group.code);
+              });
+            } else if (state.activeCurriculumCode == group.code) {
+              setState(() {
+                _collapsedCurriculums.add(group.code);
+              });
+            }
+            state.setActiveCurriculum(group.code);
+            state.setActiveNote(null);
+            widget.onNavigateToTab?.call(0);
+          },
+          borderRadius: BorderRadius.circular(4),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: isCurriculumActive
+                  ? AppColors.primary.withValues(alpha: 0.12)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(4),
+              border: isCurriculumActive
+                  ? Border.all(
+                      color: AppColors.primary.withValues(alpha: 0.35),
+                      width: 1,
+                    )
+                  : null,
+            ),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () => _toggleCurriculum(group.code),
+                  child: Icon(
+                    isCurriculumCollapsed ? Icons.arrow_right : Icons.arrow_drop_down,
+                    size: 16,
+                    color: isCurriculumActive
+                        ? AppColors.primary
+                        : AppColors.obsidianTextMuted,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  group.isUnassigned
+                      ? Icons.folder_outlined
+                      : (isCurriculumCollapsed ? Icons.folder : Icons.folder_open),
+                  size: 16,
+                  color: group.isUnassigned
+                      ? AppColors.obsidianTextMuted
+                      : AppColors.primary,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Tooltip(
+                    message: group.isUnassigned
+                        ? 'Các môn học tự do hoặc chưa gán vào Khung CTĐT'
+                        : '${group.code} - ${group.name.isNotEmpty ? group.name : group.major}\n${group.totalCredits > 0 ? '${group.totalCredits} tín chỉ • ' : ''}$totalSubjectsInGroup môn\n(Bấm để xem đồ thị CTĐT này)',
+                    waitDuration: const Duration(milliseconds: 400),
+                    child: Row(
+                      children: [
+                        if (!group.isUnassigned) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0.5),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withValues(
+                                  alpha: isCurriculumActive ? 0.28 : 0.18),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: Text(
+                              group.code,
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                        ],
+                        Expanded(
+                          child: Text(
+                            group.isUnassigned
+                                ? 'Môn ngoài khung'
+                                : (group.name.isNotEmpty ? group.name : group.major),
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: isCurriculumActive
+                                  ? FontWeight.w700
+                                  : FontWeight.w600,
+                              color: isCurriculumActive
+                                  ? AppColors.primary
+                                  : (group.isUnassigned
+                                      ? AppColors.obsidianTextMuted
+                                      : AppColors.obsidianText),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (isCurriculumActive) ...[
+                  Tooltip(
+                    message: 'Đang xem đồ thị khung này',
+                    child: Icon(
+                      Icons.hub,
+                      size: 12,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                // Badge tổng số môn trong CTĐT
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: isCurriculumActive
+                        ? AppColors.primary.withValues(alpha: 0.2)
+                        : AppColors.obsidianActive,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '$totalSubjectsInGroup',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: isCurriculumActive ? FontWeight.w700 : FontWeight.normal,
+                      color: isCurriculumActive
+                          ? AppColors.primary
+                          : AppColors.obsidianTextMuted,
+                    ),
+                  ),
+                ),
+                // Menu Sửa / Xoá cho CTĐT (nếu không phải unassigned)
+                if (!group.isUnassigned) ...[
+                  const SizedBox(width: 2),
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: PopupMenuButton<String>(
+                      icon: Icon(
+                        Icons.more_horiz,
+                        size: 14,
+                        color: AppColors.obsidianTextMuted,
+                      ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      splashRadius: 10,
+                      color: AppColors.card,
+                      tooltip: 'Tuỳ chọn Khung CTĐT',
+                      onSelected: (action) async {
+                        if (action == 'edit') {
+                          final result = await CurriculumFormDialog.show(
+                            context,
+                            initialData: {
+                              'id': group.curriculumId,
+                              'code': group.code,
+                              'name': group.name,
+                              'major': group.major,
+                              'total_credits': group.totalCredits,
+                            },
+                          );
+                          if (result != null && group.curriculumId != null) {
+                            await state.updateCurriculum(
+                              group.curriculumId!,
+                              code: result['code'] as String,
+                              name: result['name'] as String,
+                              major: result['major'] as String,
+                              totalCredits: result['total_credits'] as int,
+                              decisionNo: result['decision_no'] as String? ?? '',
+                              description: result['description'] as String? ?? '',
+                            );
+                          }
+                        } else if (action == 'delete' && group.curriculumId != null) {
+                          final confirmed = await CurriculumDeleteDialog.show(
+                            context,
+                            curriculumCode: group.code,
+                            curriculumName: group.name.isNotEmpty ? group.name : group.major,
+                            totalCourses: totalSubjectsInGroup,
+                          );
+                          if (confirmed == true) {
+                            await state.deleteCurriculum(group.curriculumId!);
+                          }
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        PopupMenuItem(
+                          value: 'edit',
+                          height: 32,
+                          child: Row(
+                            children: [
+                              Icon(Icons.edit_outlined, size: 14, color: AppColors.obsidianText),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Sửa thông tin',
+                                style: TextStyle(fontSize: 12, color: AppColors.obsidianText),
+                              ),
+                            ],
+                          ),
+                        ),
+                        PopupMenuItem(
+                          value: 'delete',
+                          height: 32,
+                          child: Row(
+                            children: [
+                              const Icon(Icons.delete_outline, size: 14, color: Colors.redAccent),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'Xoá Khung CTĐT',
+                                style: TextStyle(fontSize: 12, color: Colors.redAccent),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+
+
+        // Các Học kỳ bên trong Khung CTĐT
+        if (!isCurriculumCollapsed)
+          Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final term in sortedTerms)
+                  _buildSemesterFolder(
+                    groupCode: group.code,
+                    semester: term,
+                    subjects: matchingSemesters[term] ?? const [],
+                    query: query,
+                    onSelectSubject: (s) {
+                      state.setActiveCurriculum(group.code);
+                      widget.onSelectSubject(s);
+                    },
+                    selectedId: state.selectedSubjectId,
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildSemesterFolder({
+    required String groupCode,
     required int semester,
     required List<Subject> subjects,
-    required bool isCollapsed,
-    required VoidCallback onToggle,
+    required String query,
     required ValueChanged<Subject> onSelectSubject,
     required int? selectedId,
   }) {
     if (subjects.isEmpty) return const SizedBox.shrink();
 
+    final semKey = '${groupCode}_sem_$semester';
+    final isSemCollapsed = query.isEmpty && _collapsedSemesters.contains(semKey);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Tiêu đề Folder Kỳ học
+        // Tiêu đề Folder Học kỳ
         InkWell(
-          onTap: onToggle,
+          onTap: () => _toggleSemester(semKey),
           borderRadius: BorderRadius.circular(4),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             child: Row(
               children: [
                 Icon(
-                  isCollapsed ? Icons.arrow_right : Icons.arrow_drop_down,
-                  size: 16,
+                  isSemCollapsed ? Icons.arrow_right : Icons.arrow_drop_down,
+                  size: 15,
                   color: AppColors.obsidianTextMuted,
                 ),
-                const SizedBox(width: 4),
+                const SizedBox(width: 3),
                 Icon(
-                  isCollapsed ? Icons.folder : Icons.folder_open,
-                  size: 15,
+                  isSemCollapsed ? Icons.folder : Icons.folder_open,
+                  size: 14,
                   color: AppColors.forSemester(semester),
                 ),
                 const SizedBox(width: 6),
                 Text(
                   'Học kỳ $semester',
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 11.5,
                     fontWeight: FontWeight.w600,
                     color: AppColors.obsidianText,
                   ),
                 ),
                 const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0.5),
                   decoration: BoxDecoration(
                     color: AppColors.obsidianActive,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
                     '${subjects.length}',
                     style: TextStyle(
-                      fontSize: 10,
+                      fontSize: 9.5,
                       color: AppColors.obsidianTextMuted,
                     ),
                   ),
@@ -1611,10 +2016,10 @@ class _FilesSidebarContent extends StatelessWidget {
           ),
         ),
 
-        // Danh sách các file môn học bên trong
-        if (!isCollapsed)
+        // Danh sách các file môn học bên trong Học kỳ
+        if (!isSemCollapsed)
           Padding(
-            padding: const EdgeInsets.only(left: 18),
+            padding: const EdgeInsets.only(left: 14),
             child: Column(
               children: [
                 for (final s in subjects)
@@ -1630,6 +2035,7 @@ class _FilesSidebarContent extends StatelessWidget {
     );
   }
 }
+
 
 class _FileItemTile extends StatefulWidget {
   final Subject subject;

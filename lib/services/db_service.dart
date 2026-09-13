@@ -603,6 +603,200 @@ class DbService {
     return db.query('curriculums', orderBy: 'code ASC');
   }
 
+  /// Lấy danh sách khung CTĐT kèm số môn và số học kỳ
+  Future<List<Map<String, dynamic>>> getCurriculumsWithStats() async {
+    final db = await database;
+    return db.rawQuery('''
+      SELECT c.*,
+             COUNT(DISTINCT cc.subject_id) AS course_count,
+             COUNT(DISTINCT cc.term) AS semester_count
+      FROM curriculums c
+      LEFT JOIN curriculum_courses cc ON cc.curriculum_id = c.id
+      GROUP BY c.id
+      ORDER BY c.code ASC
+    ''');
+  }
+
+  /// Thêm khung chương trình mới thủ công
+  Future<int> insertCurriculum({
+    required String code,
+    required String name,
+    required String major,
+    int totalCredits = 145,
+    String decisionNo = '',
+    String description = '',
+  }) async {
+    final db = await database;
+    final now = DateTime.now().toIso8601String();
+    return db.insert('curriculums', {
+      'code': code.trim().toUpperCase(),
+      'name': name.trim(),
+      'major': major.trim().isNotEmpty ? major.trim() : name.trim(),
+      'total_credits': totalCredits,
+      'decision_no': decisionNo.trim(),
+      'description': description.trim(),
+      'created_at': now,
+      'updated_at': now,
+    });
+  }
+
+  /// Cập nhật thông tin khung chương trình
+  Future<int> updateCurriculum(int id, {
+    String? code,
+    String? name,
+    String? major,
+    int? totalCredits,
+    String? decisionNo,
+    String? description,
+  }) async {
+    final db = await database;
+    final now = DateTime.now().toIso8601String();
+    final data = <String, dynamic>{
+      'updated_at': now,
+    };
+    if (code != null) data['code'] = code.trim().toUpperCase();
+    if (name != null) data['name'] = name.trim();
+    if (major != null) data['major'] = major.trim();
+    if (totalCredits != null) data['total_credits'] = totalCredits;
+    if (decisionNo != null) data['decision_no'] = decisionNo.trim();
+    if (description != null) data['description'] = description.trim();
+
+    return db.update(
+      'curriculums',
+      data,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Xoá khung chương trình:
+  /// - [deleteSubjects] = true: Xoá luôn các môn chỉ thuộc khung này và các liên kết tiên quyết của chúng.
+  /// - [deleteSubjects] = false: Chỉ gỡ liên kết khung (giữ lại master subjects trong CSDL).
+  Future<void> deleteCurriculum(int id, {bool deleteSubjects = false}) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      if (deleteSubjects) {
+        // Tìm các subject_id chỉ thuộc về curriculum này
+        final rows = await txn.rawQuery('''
+          SELECT cc1.subject_id
+          FROM curriculum_courses cc1
+          WHERE cc1.curriculum_id = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM curriculum_courses cc2
+              WHERE cc2.subject_id = cc1.subject_id AND cc2.curriculum_id <> ?
+            )
+        ''', [id, id]);
+
+        final subjectIdsToDelete = rows.map((r) => r['subject_id'] as int).toList();
+
+        // Xóa curriculum (cascade tự động xóa trong curriculum_courses)
+        await txn.delete('curriculums', where: 'id = ?', whereArgs: [id]);
+
+        // Xóa các subjects và prerequisites tương ứng
+        for (final sId in subjectIdsToDelete) {
+          await txn.delete('prerequisites', where: 'subject_id = ? OR prerequisite_id = ?', whereArgs: [sId, sId]);
+          await txn.delete('subjects', where: 'id = ?', whereArgs: [sId]);
+        }
+      } else {
+        await txn.delete('curriculums', where: 'id = ?', whereArgs: [id]);
+      }
+    });
+  }
+
+  /// Dọn dẹp các môn học rác PLO do các lần bóc tách cũ trước đây lỡ lưu vào CSDL
+  Future<int> cleanInvalidPloSubjects() async {
+    final db = await database;
+    return await db.transaction((txn) async {
+      final invalidRows = await txn.rawQuery('''
+        SELECT id FROM subjects
+        WHERE UPPER(code) LIKE 'PLO%'
+           OR code GLOB '[0-9]*'
+           OR UPPER(name) LIKE '%PROGRAM LEARNING OUTCOME%'
+      ''');
+
+      final ids = invalidRows.map((r) => r['id'] as int).toList();
+      for (final id in ids) {
+        await txn.delete('prerequisites', where: 'subject_id = ? OR prerequisite_id = ?', whereArgs: [id, id]);
+        await txn.delete('curriculum_courses', where: 'subject_id = ?', whereArgs: [id]);
+        await txn.delete('subjects', where: 'id = ?', whereArgs: [id]);
+      }
+      return ids.length;
+    });
+  }
+
+  /// Lấy cấu trúc cây thư mục phân cấp theo Khung CTĐT:
+  /// Khung CTĐT -> Học kỳ (Term) -> Danh sách môn học
+  Future<List<CurriculumGroup>> getCurriculumTreeData() async {
+    final db = await database;
+    final currs = await getCurriculums();
+    final allSubjects = await getSubjects();
+    final subjectMap = {for (final s in allSubjects) s.id!: s};
+
+    final treeList = <CurriculumGroup>[];
+    final assignedSubjectIds = <int>{};
+
+    for (final curr in currs) {
+      final currId = curr['id'] as int;
+      final rows = await db.rawQuery('''
+        SELECT subject_id, term, credits
+        FROM curriculum_courses
+        WHERE curriculum_id = ?
+        ORDER BY term ASC, subject_id ASC
+      ''', [currId]);
+
+      final semMap = <int, List<Subject>>{};
+      int subCount = 0;
+
+      for (final r in rows) {
+        final sId = r['subject_id'] as int;
+        final term = (r['term'] as int?) ?? 1;
+        final subject = subjectMap[sId];
+        if (subject != null) {
+          assignedSubjectIds.add(sId);
+          subCount++;
+          semMap.putIfAbsent(term, () => []).add(subject.copyWith(semester: term));
+        }
+      }
+
+      // Sắp xếp các môn trong kỳ theo mã môn
+      for (final semCourses in semMap.values) {
+        semCourses.sort((a, b) => a.code.compareTo(b.code));
+      }
+
+      treeList.add(CurriculumGroup(
+        curriculumId: currId,
+        code: curr['code'] as String? ?? 'CURR',
+        name: curr['name'] as String? ?? '',
+        major: curr['major'] as String? ?? '',
+        totalCredits: (curr['total_credits'] as int?) ?? 0,
+        semesters: semMap,
+        totalSubjects: subCount,
+      ));
+    }
+
+    // Các môn học tự do hoặc chưa phân vào khung nào
+    final unassigned = allSubjects.where((s) => !assignedSubjectIds.contains(s.id)).toList();
+    if (unassigned.isNotEmpty) {
+      final unassignedSemMap = <int, List<Subject>>{};
+      for (final s in unassigned) {
+        unassignedSemMap.putIfAbsent(s.semester, () => []).add(s);
+      }
+      for (final semCourses in unassignedSemMap.values) {
+        semCourses.sort((a, b) => a.code.compareTo(b.code));
+      }
+      treeList.add(CurriculumGroup(
+        curriculumId: null,
+        code: 'OTHER',
+        name: 'Môn ngoài khung / Chưa phân loại',
+        major: 'Chưa gắn Khung CTĐT',
+        semesters: unassignedSemMap,
+        totalSubjects: unassigned.length,
+      ));
+    }
+
+    return treeList;
+  }
+
   /// Lấy danh sách môn học kèm học kỳ của 1 khung chương trình cụ thể
   Future<List<Map<String, dynamic>>> getCoursesOfCurriculum(int curriculumId) async {
     final db = await database;

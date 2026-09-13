@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:desktop_webview_window/desktop_webview_window.dart';
 
 import 'services/chat_session_service.dart';
 import 'services/db_service.dart';
@@ -13,8 +14,13 @@ import 'views/app_shell.dart';
 /// SE Knowledge là một Standalone Desktop App: không có backend, không có
 /// server database. Toàn bộ dữ liệu nằm trong một file SQLite trên máy người
 /// dùng, ghi chú nằm trong Obsidian Vault dạng file `.md`. Chạy offline 100%.
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Khởi tạo cửa sổ tiêu đề cho In-App WebView nếu được gọi làm sub-process
+  if (runWebViewTitleBarWidget(args)) {
+    return;
+  }
 
   // Đăng ký SQLite FFI cho nền tảng desktop (Windows / macOS / Linux).
   DbService.registerFfi();

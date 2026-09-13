@@ -1,4 +1,4 @@
-﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:se_knowledge/models/curriculum.dart';
 import 'package:se_knowledge/models/prerequisite.dart';
@@ -230,6 +230,45 @@ void main() {
       ''');
       expect(prereqRows.length, 1);
       expect(prereqRows.first['prereq_code'], 'PRO192');
+    });
+
+    test('Clean PLO and invalid subjects removes PLO codes', () async {
+      final now = DateTime.now().toIso8601String();
+      await db.insert('subjects', {
+        'code': '1 PLO1',
+        'name': 'Program Learning Outcome 1',
+        'semester': 1,
+        'credits': 0,
+        'created_at': now,
+        'updated_at': now,
+      });
+      await db.insert('subjects', {
+        'code': 'PLO2',
+        'name': 'Apply fundamental knowledge',
+        'semester': 1,
+        'credits': 0,
+        'created_at': now,
+        'updated_at': now,
+      });
+      await db.insert('subjects', {
+        'code': 'PRM393',
+        'name': 'Mobile Programming',
+        'semester': 8,
+        'credits': 3,
+        'created_at': now,
+        'updated_at': now,
+      });
+
+      // Execute PLO cleaning query
+      final deleted = await db.delete(
+        'subjects',
+        where: "code LIKE 'PLO%' OR code LIKE '% PLO%' OR code GLOB '[0-9]*' OR name LIKE '%PROGRAM LEARNING OUTCOME%'",
+      );
+      expect(deleted, 2);
+
+      final remaining = await db.query('subjects');
+      expect(remaining.length, 1);
+      expect(remaining.first['code'], 'PRM393');
     });
   });
 }

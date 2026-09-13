@@ -227,6 +227,92 @@ void main() {
       expect(graEle.prerequisites, isEmpty);
     });
 
+    test('Ignores PLO table completely and only parses subject table', () {
+      const htmlWithPlo = '''
+<!DOCTYPE html>
+<html>
+<body>
+  <h1>Bachelor of Software Engineering</h1>
+  <!-- Bảng PLO giống hệt trang FLM thực tế -->
+  <div>13 PLO(s) found</div>
+  <table class="table table-bordered">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>PLO Name</th>
+        <th>PLO Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>PLO1</td>
+        <td>Understand basic knowledge of social sciences, political law...</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>PLO2</td>
+        <td>Apply solid scientific foundation knowledge in software engineering...</td>
+      </tr>
+      <tr>
+        <td>13</td>
+        <td>PLO13</td>
+        <td>Be able to plan, coordinate, and manage resources...</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Bảng Môn Học (Subject Table) -->
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Subject Code</th>
+        <th>Subject Name</th>
+        <th>Term</th>
+        <th>Credits</th>
+        <th>Prerequisites</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>PRM393</td>
+        <td>Mobile Programming</td>
+        <td>8</td>
+        <td>3</td>
+        <td>PRO192</td>
+      </tr>
+      <tr>
+        <td>EXE201</td>
+        <td>Experiential Entrepreneurship 2</td>
+        <td>8</td>
+        <td>3</td>
+        <td>EXE101</td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>
+''';
+
+      final curriculum = parseCurriculumWorker(htmlWithPlo);
+
+      // Không chứa bất kỳ PLO nào
+      for (final sem in curriculum.semesters) {
+        for (final course in sem.courses) {
+          expect(course.code.startsWith('PLO'), isFalse);
+          expect(course.code, isNot('1'));
+          expect(course.code, isNot('2'));
+          expect(course.code, isNot('13'));
+        }
+      }
+
+      // Chỉ có kỳ 8 với 2 môn học thực sự
+      expect(curriculum.semesters.length, 1);
+      final sem8 = curriculum.semesters.firstWhere((s) => s.termNumber == 8);
+      expect(sem8.courses.length, 2);
+      expect(sem8.courses.map((c) => c.code), containsAll(['PRM393', 'EXE201']));
+    });
+
     test('Returns empty curriculum gracefully when no tables found', () {
       const invalidHtml = '<html><body><div>No data available</div></body></html>';
       final result = parseCurriculumWorker(invalidHtml);
@@ -234,3 +320,4 @@ void main() {
     });
   });
 }
+
