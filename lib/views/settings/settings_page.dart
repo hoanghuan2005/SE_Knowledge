@@ -40,8 +40,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _load() async {
     final provider = await _settings.getAiProvider();
-    final key = await _settings.getApiKey();
-    final model = await _settings.getModel();
+    final key = await _settings.getApiKey(provider);
+    final model = await _settings.getModel(provider);
     final size = await DbService.instance.databaseSizeInBytes();
     if (!mounted) return;
     setState(() {
@@ -53,10 +53,23 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
+  /// Mỗi provider có API key và model riêng, nên đổi tab phải tải lại đúng
+  /// giá trị đã lưu cho provider đó thay vì giữ nguyên ô đang gõ.
+  Future<void> _switchProvider(String provider) async {
+    final key = await _settings.getApiKey(provider);
+    final model = await _settings.getModel(provider);
+    if (!mounted) return;
+    setState(() {
+      _provider = provider;
+      _apiKey.text = key ?? '';
+      _model.text = model;
+    });
+  }
+
   Future<void> _saveAi() async {
     await _settings.setAiProvider(_provider);
-    await _settings.setApiKey(_apiKey.text);
-    await _settings.setModel(_model.text);
+    await _settings.setApiKey(_apiKey.text, _provider);
+    await _settings.setModel(_model.text, _provider);
     if (mounted) Ui.success(context, 'Đã lưu cấu hình AI trên máy này.');
   }
 
@@ -170,14 +183,7 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ],
             selected: {_provider},
-            onSelectionChanged: (s) {
-              setState(() {
-                _provider = s.first;
-                _model.text = _provider == AppConstants.providerOpenAi
-                    ? AppConstants.defaultOpenAiModel
-                    : AppConstants.defaultGeminiModel;
-              });
-            },
+            onSelectionChanged: (s) => _switchProvider(s.first),
           ),
           const SizedBox(height: 16),
           TextField(

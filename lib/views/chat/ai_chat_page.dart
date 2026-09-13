@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../models/chat_message.dart';
+import '../../models/graph_rag_context.dart';
 import '../../services/ai_service.dart';
 import '../../services/chat_session_service.dart';
 import '../../state/app_state.dart';
@@ -72,7 +73,9 @@ class _AiChatPageState extends State<AiChatPage> {
         includeKnowledgeContext: _useContext,
       );
       if (!mounted) return;
-      ChatSessionService.instance.addMessage(ChatMessage.assistant(answer));
+      ChatSessionService.instance.addMessage(
+        ChatMessage.assistant(answer.text, ragSummary: answer.ragSummary),
+      );
     } on AiException catch (e) {
       if (!mounted) return;
       ChatSessionService.instance.addMessage(
@@ -371,9 +374,19 @@ class _Bubble extends StatelessWidget {
                             : AppColors.border,
                       ),
               ),
-              child: SelectableText(
-                message.content,
-                style: TextStyle(fontSize: 13.5, height: 1.6, color: fg),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (message.ragSummary != null) ...[
+                    _RagContextPanel(summary: message.ragSummary!),
+                    const SizedBox(height: 10),
+                  ],
+                  SelectableText(
+                    message.content,
+                    style: TextStyle(fontSize: 13.5, height: 1.6, color: fg),
+                  ),
+                ],
               ),
             ),
           ),
@@ -412,6 +425,119 @@ class _TypingBubble extends StatelessWidget {
             'Đang suy nghĩ…',
             style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Hiển thị lại subgraph mà Graph RAG đã trích từ SQLite để gửi kèm câu hỏi:
+/// những môn nào được xem là liên quan, và vài con số để người dùng tin
+/// tưởng rằng AI không bị "đọc" toàn bộ CSDL một cách lãng phí.
+class _RagContextPanel extends StatefulWidget {
+  final GraphRagSummary summary;
+
+  const _RagContextPanel({required this.summary});
+
+  @override
+  State<_RagContextPanel> createState() => _RagContextPanelState();
+}
+
+class _RagContextPanelState extends State<_RagContextPanel> {
+  bool _expanded = true;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = AppColors.isDark;
+    final summary = widget.summary;
+    final tint = isDark ? const Color(0xFF20263A) : const Color(0xFFEFF3FF);
+    final border = isDark ? const Color(0xFF33406B) : const Color(0xFFD4E0FB);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: tint,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Row(
+              children: [
+                Icon(Icons.hub_outlined, size: 15, color: AppColors.primary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Graph RAG — ngữ cảnh đã trích từ đồ thị',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ),
+                Text(
+                  _expanded ? 'thu gọn' : 'mở rộng',
+                  style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                ),
+                Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 16,
+                  color: AppColors.textSecondary,
+                ),
+              ],
+            ),
+          ),
+          if (_expanded) ...[
+            const SizedBox(height: 8),
+            if (summary.matchedCodes.isNotEmpty)
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final code in summary.matchedCodes)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF2C2442) : Colors.white,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: border),
+                      ),
+                      child: Text(
+                        code,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ),
+                ],
+              )
+            else
+              Text(
+                'Không khớp môn cụ thể nào trong câu hỏi — dùng toàn bộ đồ thị.',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            const SizedBox(height: 6),
+            Text(
+              '${summary.nodeCount} node · ${summary.edgeCount} cạnh · '
+              '~${summary.approxTokens} token · truy vấn SQLite '
+              '${summary.elapsedMs}ms',
+              style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+            ),
+          ],
         ],
       ),
     );

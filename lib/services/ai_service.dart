@@ -3,8 +3,9 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/chat_message.dart';
+import '../models/graph_rag_context.dart';
 import '../utils/app_constants.dart';
-import 'db_service.dart';
+import 'graph_rag_service.dart';
 import 'settings_service.dart';
 
 /// Gọi thẳng REST API của Gemini hoặc OpenAI bằng package `http`.
@@ -16,7 +17,7 @@ class AiService {
   static final AiService instance = AiService._();
 
   final SettingsService _settings = SettingsService.instance;
-  final DbService _db = DbService.instance;
+  final GraphRagService _graphRag = GraphRagService.instance;
 
   static const Duration timeout = Duration(seconds: 45);
 
@@ -25,68 +26,48 @@ class AiService {
     return key != null && key.trim().isNotEmpty;
   }
 
-  /// Dựng context từ SQLite để AI trả lời dựa trên đúng đồ thị của người dùng
-  /// (một dạng RAG tối giản, dữ liệu lấy từ CSDL cục bộ).
-  Future<String> buildKnowledgeContext() async {
-    final graph = await _db.loadGraph();
-    if (graph.isEmpty) return 'Người dùng chưa có môn học nào trong hệ thống.';
-
-    final byId = graph.byId;
-    final sb = StringBuffer('Danh sách môn học và quan hệ tiên quyết:\n');
-
-    for (final s in graph.subjects) {
-      final prereqCodes = graph.edges
-          .where((e) => e.subjectId == s.id)
-          .map((e) => byId[e.prerequisiteId]?.code)
-          .whereType<String>()
-          .toList();
-      sb.write('- ${s.code} (${s.name}), kỳ ${s.semester}, ${s.credits} tín chỉ');
-      sb.write(prereqCodes.isEmpty
-          ? ', không có môn tiên quyết'
-          : ', tiên quyết: ${prereqCodes.join(", ")}');
-      sb.writeln('.');
-    }
-    return sb.toString();
-  }
-
   /// Gửi một lượt hội thoại. [history] là các tin nhắn trước đó (cũ -> mới).
-  Future<String> ask({
+  ///
+  /// Khi [includeKnowledgeContext] bật, câu hỏi được đối chiếu với đồ thị
+  /// tiên quyết trong SQLite (Graph RAG) để chỉ gửi kèm subgraph liên quan
+  /// trực tiếp, thay vì toàn bộ CSDL.
+  Future<AiAnswer> ask({
     required String question,
     List<ChatMessage> history = const [],
     bool includeKnowledgeContext = true,
   }) async {
-    final apiKey = (await _settings.getApiKey())?.trim() ?? '';
+    final provider = await _settings.getAiProvider();
+    final apiKey = (await _settings.getApiKey(provider))?.trim() ?? '';
     if (apiKey.isEmpty) {
       throw AiException(
         'Chưa có API key. Vào màn hình Cài đặt để nhập key trước khi chat.',
       );
     }
 
-    final provider = await _settings.getAiProvider();
-    final model = await _settings.getModel();
+    final model = await _settings.getModel(provider);
 
-    final context = includeKnowledgeContext
-        ? await buildKnowledgeContext()
-        : '';
-    final systemPrompt = _systemPrompt(context);
+    final ragContext = includeKnowledgeContext
+        ? await _graphRag.buildContext(question)
+        : null;
+    final systemPrompt = _systemPrompt(ragContext?.promptText ?? '');
 
     try {
-      if (provider == AppConstants.providerOpenAi) {
-        return await _askOpenAi(
-          apiKey: apiKey,
-          model: model,
-          systemPrompt: systemPrompt,
-          history: history,
-          question: question,
-        );
-      }
-      return await _askGemini(
-        apiKey: apiKey,
-        model: model,
-        systemPrompt: systemPrompt,
-        history: history,
-        question: question,
-      );
+      final text = provider == AppConstants.providerOpenAi
+          ? await _askOpenAi(
+              apiKey: apiKey,
+              model: model,
+              systemPrompt: systemPrompt,
+              history: history,
+              question: question,
+            )
+          : await _askGemini(
+              apiKey: apiKey,
+              model: model,
+              systemPrompt: systemPrompt,
+              history: history,
+              question: question,
+            );
+      return AiAnswer(text: text, ragSummary: ragContext?.summary);
     } on AiException {
       rethrow;
     } on http.ClientException catch (e) {
@@ -276,4 +257,12 @@ class AiException implements Exception {
   AiException(this.message);
   @override
   String toString() => message;
+}
+
+/// Câu trả lời từ AI kèm tóm tắt ngữ cảnh Graph RAG đã gửi kèm (nếu có), để
+/// UI hiển thị lại subgraph nào được dùng cho câu trả lời này.
+class AiAnswer {
+  final String text;
+  final GraphRagSummary? ragSummary;
+  const AiAnswer({required this.text, this.ragSummary});
 }
