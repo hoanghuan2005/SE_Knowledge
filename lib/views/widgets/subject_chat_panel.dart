@@ -5,6 +5,7 @@ import '../../models/chat_message.dart';
 import '../../models/subject.dart';
 import '../../services/obsidian_service.dart';
 import '../../services/subject_chat_service.dart';
+import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 
 /// Khung chat AI thu gọn, gắn theo TỪNG môn học — hiện trong sidebar bên phải
@@ -28,7 +29,9 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
 
-  String? _context;
+  /// Nội dung file `.md` đọc được (nếu môn đã xuất ra Vault). Chỉ mỗi phần
+  /// này cần đọc bất đồng bộ nên mới phải giữ lại.
+  String? _noteContent;
   bool _loadingContext = true;
 
   @override
@@ -58,31 +61,112 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
     setState(() => _loadingContext = true);
     final subject = widget.subject;
 
-    String context =
-        '${subject.code} — ${subject.name}\n'
-        'Học kỳ ${subject.semester} · ${subject.credits} tín chỉ\n'
-        '${subject.description}';
-
+    String? note;
     final path = subject.notePath;
     if (path != null && path.isNotEmpty) {
       try {
         final raw = await ObsidianService.instance.readNote(path);
-        if (raw.trim().isNotEmpty) context = raw;
+        if (raw.trim().isNotEmpty) note = raw;
       } catch (_) {
-        // Không đọc được file (đã bị xoá/đổi tên ngoài app...) — vẫn còn
-        // context mặc định ghép từ CSDL ở trên, không chặn người dùng hỏi.
+        // Không đọc được file (đã bị xoá/đổi tên ngoài app...) — vẫn hỏi được
+        // bằng dữ kiện lấy thẳng từ CSDL.
       }
     }
 
     if (!mounted) return;
     setState(() {
-      _context = context;
+      _noteContent = note;
       _loadingContext = false;
     });
 
     if (subject.id != null) {
-      SubjectChatService.instance.ensureSuggestions(subject.id!, context);
+      SubjectChatService.instance.ensureSuggestions(
+        subject.id!,
+        _buildContext(),
+      );
     }
+  }
+
+  /// Dựng ngữ cảnh gửi cho AI cho đúng môn đang xem.
+  ///
+  /// Dựng MỚI mỗi lần hỏi chứ không cache một lần lúc mở panel. Trước đây ngữ
+  /// cảnh chỉ gồm mã, tên, kỳ, tín chỉ và mô tả — không có một chữ nào về quan
+  /// hệ tiên quyết, nên hỏi "môn này cần học trước gì" thì AI trả lời đúng
+  /// theo system prompt là "chưa có thông tin", dù CSDL có đủ cạnh. Dựng lại
+  /// mỗi lần còn để người dùng vừa sửa tiên quyết ở tab "Chi tiết" xong hỏi
+  /// ngay là thấy số liệu mới.
+  String _buildContext() {
+    final s = widget.subject;
+    final id = s.id;
+    final prereqs = id == null ? const <Subject>[] : _edgesTo(id, hard: true);
+    final related = id == null ? const <Subject>[] : _edgesTo(id, hard: false);
+    final unlocks = id == null
+        ? const <Subject>[]
+        : AppState.instance.unlockedBy(id);
+
+    final sb = StringBuffer()
+      ..writeln('Môn học: ${s.code} — ${s.name}')
+      ..writeln('Học kỳ: ${s.semester}')
+      ..writeln('Số tín chỉ: ${s.credits}');
+    if (s.description.trim().isNotEmpty) {
+      sb.writeln('Mô tả: ${s.description.trim()}');
+    }
+
+    sb
+      ..writeln()
+      ..writeln('Môn tiên quyết bắt buộc (phải học xong trước ${s.code}):');
+    if (prereqs.isEmpty) {
+      sb.writeln(
+        '- Không có môn nào. ${s.code} là môn nền tảng, học được ngay.',
+      );
+    } else {
+      for (final p in prereqs) {
+        sb.writeln('- ${p.code} — ${p.name} (kỳ ${p.semester})');
+      }
+    }
+
+    if (related.isNotEmpty) {
+      sb
+        ..writeln()
+        ..writeln('Môn liên quan / nên tham khảo (không bắt buộc học trước):');
+      for (final r in related) {
+        sb.writeln('- ${r.code} — ${r.name} (kỳ ${r.semester})');
+      }
+    }
+
+    sb
+      ..writeln()
+      ..writeln('Môn mở ra sau khi học xong ${s.code}:');
+    if (unlocks.isEmpty) {
+      sb.writeln('- Chưa có môn nào phụ thuộc vào ${s.code}.');
+    } else {
+      for (final u in unlocks) {
+        sb.writeln('- ${u.code} — ${u.name} (kỳ ${u.semester})');
+      }
+    }
+
+    final note = _noteContent;
+    if (note != null) {
+      sb
+        ..writeln()
+        ..writeln('Ghi chú Obsidian (.md) của môn này:')
+        ..writeln(note);
+    }
+    return sb.toString();
+  }
+
+  /// Các môn trỏ tới [subjectId], tách theo loại quan hệ.
+  ///
+  /// `AppState.prerequisitesOf` gộp cả PREREQUISITE lẫn RELATED làm một, mà
+  /// khi hỏi về tiên quyết thì hai loại đó không thể trộn chung.
+  List<Subject> _edgesTo(int subjectId, {required bool hard}) {
+    final graph = AppState.instance.graph;
+    return graph.edges
+        .where((e) => e.subjectId == subjectId && e.isHardPrerequisite == hard)
+        .map((e) => graph.byId[e.prerequisiteId])
+        .whereType<Subject>()
+        .toList()
+      ..sort((a, b) => a.code.compareTo(b.code));
   }
 
   void _scrollToBottom() {
@@ -98,8 +182,8 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
 
   Future<void> _send([String? preset]) async {
     final subjectId = widget.subject.id;
-    final context = _context;
-    if (subjectId == null || context == null) return;
+    if (subjectId == null || _loadingContext) return;
+    final context = _buildContext();
 
     final text = (preset ?? _input.text).trim();
     if (text.isEmpty || SubjectChatService.instance.isSending(subjectId)) {
@@ -195,12 +279,8 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
                   icon: const Icon(Icons.refresh, size: 15),
                   visualDensity: VisualDensity.compact,
                   color: AppColors.textSecondary,
-                  onPressed: () {
-                    final ctx = _context;
-                    if (ctx != null) {
-                      service.regenerateSuggestions(subjectId, ctx);
-                    }
-                  },
+                  onPressed: () =>
+                      service.regenerateSuggestions(subjectId, _buildContext()),
                 ),
             ],
           ),

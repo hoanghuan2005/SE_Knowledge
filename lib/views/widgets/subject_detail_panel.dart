@@ -66,52 +66,7 @@ class _SubjectDetailPanelState extends State<SubjectDetailPanel> {
                               key: ValueKey('chat-${subject.id}'),
                               subject: subject,
                             )
-                          : Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: SegmentedButton<bool>(
-                          showSelectedIcon: false,
-                          style: const ButtonStyle(
-                            visualDensity: VisualDensity.compact,
-                          ),
-                          segments: const [
-                            ButtonSegment(
-                              value: true,
-                              icon: Icon(Icons.auto_awesome, size: 15),
-                              label: Text(
-                                'Hỏi AI',
-                                style: TextStyle(fontSize: 12),
-                              ),
-                            ),
-                            ButtonSegment(
-                              value: false,
-                              icon: Icon(Icons.info_outline, size: 15),
-                              label: Text(
-                                'Chi tiết',
-                                style: TextStyle(fontSize: 12),
-                              ),
-                            ),
-                          ],
-                          selected: {_showChat},
-                          onSelectionChanged: (selection) =>
-                              setState(() => _showChat = selection.first),
-                        ),
-                      ),
-                    ),
-                    const Divider(height: 1),
-                    Expanded(
-                      child: _showChat
-                          ? SubjectChatPanel(
-                              key: ValueKey('chat-${subject.id}'),
-                              subject: subject,
-                            )
                           : _Detail(subject: subject),
-                    ),
-                  ],
-                ),
                     ),
                   ],
                 ),
