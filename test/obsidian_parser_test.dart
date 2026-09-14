@@ -225,6 +225,28 @@ void main() {
       expect(body.substring(link.start, link.end), '[[MAD101|Toán rời rạc]]');
       expect(link.raw, '[[MAD101|Toán rời rạc]]');
     });
+
+    test('heading trong khối code không tính là section thật', () {
+      const body = '## Ghi chú\n'
+          '\n'
+          '```md\n'
+          '## Môn tiên quyết\n'
+          '- [[KHONG_TINH]]\n'
+          '```\n'
+          '\n'
+          '- [[PRF192]]\n';
+
+      final links = MarkdownParser.parseLinks(body);
+
+      // Link trong khối code vẫn bị loại như cũ.
+      expect(links.map((l) => l.target), ['PRF192']);
+
+      // Và link phía sau vẫn thuộc "Ghi chú", không bị heading giả kéo sang
+      // "Môn tiên quyết" — nếu lệch thì lúc nhập Vault sẽ sinh cạnh tiên
+      // quyết không có thật.
+      expect(links.single.section, 'Ghi chú');
+      expect(links.single.isPrerequisite, isFalse);
+    });
   });
 
   // ==================================================================
