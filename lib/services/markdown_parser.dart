@@ -366,7 +366,11 @@ class MarkdownParser {
   static List<WikiLink> parseLinks(String body) {
     final normalized = body.replaceAll('\r\n', '\n');
     final masked = maskCode(normalized);
-    final spans = sectionSpans(normalized);
+    // Chia section trên bản đã che code: một dòng `## Môn tiên quyết` nằm
+    // trong ví dụ code không được tính là heading thật, nếu không mọi link
+    // phía sau bị gán nhầm section và lúc nhập Vault sẽ sinh cạnh tiên quyết
+    // không có thật. Che giữ nguyên độ dài nên chỉ số vẫn khớp chuỗi gốc.
+    final spans = sectionSpans(masked);
     final result = <WikiLink>[];
 
     for (final m in wikiLinkPattern.allMatches(masked)) {

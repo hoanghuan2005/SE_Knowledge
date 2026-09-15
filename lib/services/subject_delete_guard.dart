@@ -251,10 +251,15 @@ class SubjectDeleteGuard {
       throw DeleteGuardException('Môn học chưa được lưu vào cơ sở dữ liệu.');
     }
 
-    final warnings = <String>[...impact.rewireBlocked];
     final rewired = strategy == DeleteStrategy.rewire
         ? impact.rewireSuggestions
         : const <RewireSuggestion>[];
+
+    // Cạnh bị bỏ vì gây chu trình chỉ đáng nhắc khi người dùng thật sự chọn
+    // nối tắt. Chọn xoá thẳng mà vẫn báo thì chỉ là nhiễu.
+    final warnings = <String>[
+      if (strategy == DeleteStrategy.rewire) ...impact.rewireBlocked,
+    ];
 
     await _db.deleteSubjectWithRewire(
       id: id,
@@ -264,8 +269,13 @@ class SubjectDeleteGuard {
     var noteDeleted = false;
     if (deleteNoteFile && impact.hasNoteFile) {
       try {
-        await _vault.deleteNote(impact.notePath!);
-        noteDeleted = true;
+        noteDeleted = await _vault.deleteNote(impact.notePath!);
+        if (!noteDeleted) {
+          warnings.add(
+            'Không thấy file ${impact.notePath} trong Vault — có thể đã bị '
+            'xoá hoặc đổi tên từ trước.',
+          );
+        }
       } catch (e) {
         warnings.add('Không xoá được file ${impact.notePath}: $e');
       }

@@ -119,7 +119,10 @@ class _SubjectDeleteDialogState extends State<SubjectDeleteDialog> {
                 const SizedBox(height: 4),
                 _strategyPicker(),
               ],
-              if (_impact.rewireBlocked.isNotEmpty) ...[
+              // Chỉ nêu cạnh bị bỏ khi đang chọn nối tắt — chọn xoá thẳng thì
+              // chuyện chu trình không liên quan gì tới điều sắp xảy ra.
+              if (_strategy == DeleteStrategy.rewire &&
+                  _impact.rewireBlocked.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 for (final line in _impact.rewireBlocked)
                   _NoteLine(icon: Icons.block, text: line),
