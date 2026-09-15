@@ -80,7 +80,7 @@ class MdIntakeService {
   Future<void> start() async {
     if (_server != null) return;
     try {
-      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port, shared: true);
       _server = server;
       lastError = null;
       // Không await: listener chạy nền suốt vòng đời app.
@@ -211,6 +211,8 @@ class MdIntakeService {
     await file.writeAsString(markdown, flush: true);
     return file.path;
   }
+
+  Future<Directory> getTargetDirectory() => _targetDirectory();
 
   Future<Directory> _targetDirectory() async {
     final vault = AppState.instance.vaultPath;

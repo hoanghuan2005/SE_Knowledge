@@ -26,35 +26,43 @@ class FapImportDialog extends StatefulWidget {
     IncomingNote note,
     FapParseResult result,
   ) {
-    final data = result.curriculum;
-    if (data == null) {
+    final curriculum = result.curriculum;
+    if (curriculum != null) {
       return showDialog<void>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          icon: const Icon(Icons.info_outline, size: 32),
-          title: const Text('Đã nhận trang từ Chrome'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(result.message),
-              const SizedBox(height: 12),
-              _PathLine(label: 'Đã lưu file', value: note.savedPath),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Đóng'),
-            ),
-          ],
-        ),
+        builder: (ctx) => FapImportDialog(note: note, data: curriculum),
+      );
+    }
+
+    final syllabus = result.syllabus;
+    if (syllabus != null) {
+      return showDialog<void>(
+        context: context,
+        builder: (ctx) => FapSyllabusImportDialog(note: note, data: syllabus),
       );
     }
 
     return showDialog<void>(
       context: context,
-      builder: (ctx) => FapImportDialog(note: note, data: data),
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.info_outline, size: 32),
+        title: const Text('Đã nhận trang từ Chrome'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(result.message),
+            const SizedBox(height: 12),
+            _PathLine(label: 'Đã lưu file', value: note.savedPath),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Đóng'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -355,6 +363,346 @@ class _PathLine extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Hộp thoại xem trước dữ liệu Syllabus vừa nhận từ Chrome.
+class FapSyllabusImportDialog extends StatefulWidget {
+  final IncomingNote note;
+  final FapSyllabusImport data;
+
+  const FapSyllabusImportDialog({
+    super.key,
+    required this.note,
+    required this.data,
+  });
+
+  @override
+  State<FapSyllabusImportDialog> createState() => _FapSyllabusImportDialogState();
+}
+
+class _FapSyllabusImportDialogState extends State<FapSyllabusImportDialog> {
+  bool _saving = false;
+
+  Future<void> _import() async {
+    setState(() => _saving = true);
+    try {
+      final result = await DbService.instance.importFapSyllabus(widget.data);
+      await AppState.instance.refresh();
+      if (!mounted) return;
+      Navigator.pop(context);
+      Ui.success(
+        context,
+        'Đã lưu Syllabus môn ${result.subjectCode}: '
+        '${result.materialsCount} tài liệu, ${result.closCount} CLO, '
+        '${result.sessionsCount} buổi học, ${result.assessmentsCount} đầu điểm.',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      Ui.error(context, e);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final data = widget.data;
+
+    return AlertDialog(
+      title: Row(
+        children: [
+          const Icon(Icons.auto_stories_outlined, size: 22),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              data.subjectCode.isEmpty ? 'Syllabus chi tiết' : 'Syllabus: ${data.subjectCode}',
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 880,
+        height: 540,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (data.displayName.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  data.displayName,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                _Chip(
+                  icon: Icons.code,
+                  label: data.subjectCode,
+                ),
+                if (data.degreeLevel.isNotEmpty)
+                  _Chip(
+                    icon: Icons.school_outlined,
+                    label: data.degreeLevel,
+                  ),
+                if (data.scoringScale != null)
+                  _Chip(
+                    icon: Icons.military_tech_outlined,
+                    label: 'Thang điểm ${data.scoringScale}',
+                  ),
+                if (data.decisionNo.isNotEmpty)
+                  _Chip(
+                    icon: Icons.description_outlined,
+                    label: data.decisionNo,
+                  ),
+                _Chip(
+                  icon: data.isApproved ? Icons.verified_outlined : Icons.pending_outlined,
+                  label: data.isApproved ? 'Đã duyệt' : 'Chưa duyệt',
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: DefaultTabController(
+                length: 4,
+                child: Column(
+                  children: [
+                    TabBar(
+                      isScrollable: true,
+                      tabAlignment: TabAlignment.start,
+                      labelColor: AppColors.primary,
+                      unselectedLabelColor: AppColors.textSecondary,
+                      indicatorColor: AppColors.primary,
+                      tabs: [
+                        Tab(text: 'Giáo trình (${data.materials.length})'),
+                        Tab(text: 'Chuẩn đầu ra CLO (${data.clos.length})'),
+                        Tab(text: 'Lịch trình (${data.sessions.length} buổi)'),
+                        Tab(text: 'Đánh giá (${data.assessments.length})'),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: TabBarView(
+                        children: [
+                          _buildMaterialsTab(data),
+                          _buildClosTab(data),
+                          _buildSessionsTab(data),
+                          _buildAssessmentsTab(data),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            _PathLine(label: 'Đã lưu file', value: widget.note.savedPath),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          child: const Text('Đóng'),
+        ),
+        FilledButton.icon(
+          onPressed: _saving ? null : _import,
+          icon: _saving
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : const Icon(Icons.check, size: 16),
+          label: Text(_saving ? 'Đang ghi...' : 'Ghi vào CSDL'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMaterialsTab(FapSyllabusImport data) {
+    if (data.materials.isEmpty) {
+      return const Center(child: Text('Không có tài liệu nào trong đề cương.'));
+    }
+    return ListView.separated(
+      itemCount: data.materials.length,
+      separatorBuilder: (_, _) => const Divider(height: 1),
+      itemBuilder: (ctx, idx) {
+        final m = data.materials[idx];
+        return ListTile(
+          dense: true,
+          leading: CircleAvatar(
+            radius: 12,
+            backgroundColor: AppColors.primary.withValues(alpha: 0.15),
+            child: Text('${m.seqNo}', style: TextStyle(fontSize: 11, color: AppColors.primary)),
+          ),
+          title: Text(m.description, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500)),
+          subtitle: Text(
+            [
+              if (m.author.isNotEmpty) 'Tác giả: ${m.author}',
+              if (m.publisher.isNotEmpty) 'NXB: ${m.publisher}',
+              if (m.publishedDate.isNotEmpty) 'Năm: ${m.publishedDate}',
+              if (m.edition.isNotEmpty) 'Tái bản: ${m.edition}',
+              if (m.isbn.isNotEmpty) 'ISBN: ${m.isbn}',
+              if (m.note.isNotEmpty) m.note,
+            ].join(' • '),
+            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+          ),
+          trailing: Wrap(
+            spacing: 4,
+            children: [
+              if (m.isMain)
+                const Chip(
+                  label: Text('Chính', style: TextStyle(fontSize: 10)),
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                ),
+              if (m.isOnline)
+                const Chip(
+                  label: Text('Online', style: TextStyle(fontSize: 10)),
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildClosTab(FapSyllabusImport data) {
+    if (data.clos.isEmpty) {
+      return const Center(child: Text('Không có chuẩn đầu ra nào trong đề cương.'));
+    }
+    return ListView.separated(
+      itemCount: data.clos.length,
+      separatorBuilder: (_, _) => const Divider(height: 1),
+      itemBuilder: (ctx, idx) {
+        final clo = data.clos[idx];
+        return ListTile(
+          dense: true,
+          leading: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.success.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              clo.code,
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.bold,
+                color: AppColors.success,
+              ),
+            ),
+          ),
+          title: Text(
+            clo.detail,
+            style: const TextStyle(fontSize: 12),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSessionsTab(FapSyllabusImport data) {
+    if (data.sessions.isEmpty) {
+      return const Center(child: Text('Không có lịch trình buổi học trong đề cương.'));
+    }
+    return ListView.separated(
+      itemCount: data.sessions.length,
+      separatorBuilder: (_, _) => const Divider(height: 1),
+      itemBuilder: (ctx, idx) {
+        final s = data.sessions[idx];
+        return ListTile(
+          dense: true,
+          leading: Container(
+            width: 44,
+            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              'B${s.sessionNo}',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
+            ),
+          ),
+          title: Text(s.topic, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500)),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (s.rawLo.isNotEmpty)
+                Text('Chuẩn đầu ra: ${s.rawLo}', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+              if (s.studentTasks.isNotEmpty)
+                Text('Nhiệm vụ: ${s.studentTasks}', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+            ],
+          ),
+          trailing: s.teachingType.isNotEmpty
+              ? Chip(
+                  label: Text(s.teachingType, style: const TextStyle(fontSize: 10)),
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                )
+              : null,
+        );
+      },
+    );
+  }
+
+  Widget _buildAssessmentsTab(FapSyllabusImport data) {
+    if (data.assessments.isEmpty) {
+      return const Center(child: Text('Không có cấu trúc đánh giá trong đề cương.'));
+    }
+    return ListView.separated(
+      itemCount: data.assessments.length,
+      separatorBuilder: (_, _) => const Divider(height: 1),
+      itemBuilder: (ctx, idx) {
+        final a = data.assessments[idx];
+        return ListTile(
+          dense: true,
+          leading: Container(
+            width: 55,
+            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.warning.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              '${a.weightPercent.toStringAsFixed(a.weightPercent.truncateToDouble() == a.weightPercent ? 0 : 1)}%',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: AppColors.warning,
+              ),
+            ),
+          ),
+          title: Text(
+            a.category,
+            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+          ),
+          subtitle: Text(
+            [
+              if (a.type.isNotEmpty) 'Hình thức: ${a.type}',
+              if (a.duration.isNotEmpty) 'Thời gian: ${a.duration}',
+              if (a.rawClo.isNotEmpty) 'Đo lường: ${a.rawClo}',
+              if (a.completionCriteria.isNotEmpty) 'Đạt: ${a.completionCriteria}',
+              if (a.note.isNotEmpty) a.note,
+            ].join(' • '),
+            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+          ),
+        );
+      },
     );
   }
 }

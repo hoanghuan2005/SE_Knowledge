@@ -5,6 +5,7 @@ import 'package:flutter/scheduler.dart';
 import '../../models/graph_data.dart';
 import '../../models/subject.dart';
 import '../../models/curriculum.dart';
+import '../../services/db_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
@@ -23,6 +24,49 @@ class _GraphPageState extends State<GraphPage> {
 
   bool _showRelated = true;
   int? _semesterFilter;
+
+  Future<void> _batchImportInbox(BuildContext context) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                ),
+                SizedBox(width: 16),
+                Text('Đang quét và tự động nạp fap_inbox...', style: TextStyle(fontSize: 14)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      final res = await DbService.instance.batchImportFromInbox();
+      await AppState.instance.refresh();
+      if (!context.mounted) return;
+      Navigator.pop(context);
+      Ui.success(
+        context,
+        'Đã nạp ${res['totalFiles']} files '
+        '(${res['curricula']} khung CTĐT, ${res['syllabi']} syllabus, '
+        '${res['edges']} cạnh tiên quyết).',
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      Navigator.pop(context);
+      Ui.error(context, e);
+    }
+  }
 
   @override
   void initState() {
@@ -121,6 +165,24 @@ class _GraphPageState extends State<GraphPage> {
                 const SizedBox(width: 8),
                 SizedBox(
                   height: 28,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.cloud_download_outlined, size: 14),
+                    label: const Text(
+                      'Nhập từ fap_inbox',
+                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                    onPressed: () => _batchImportInbox(context),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  height: 28,
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.add, size: 14),
                     label: const Text(
@@ -163,15 +225,26 @@ class _GraphPageState extends State<GraphPage> {
       icon: Icons.hub_outlined,
       title: 'Đồ thị đang trống',
       message:
-          'Thêm môn học đầu tiên, hoặc vào tab Vault để nạp sẵn các ghi chú '
-          '.md có cú pháp [[...]] từ Obsidian.',
-      action: ElevatedButton.icon(
-        icon: const Icon(Icons.add, size: 18),
-        label: const Text('Thêm môn học'),
-        onPressed: () => SubjectFormDialog.show(context),
+          'Thêm môn học đầu tiên, hoặc bấm "Nhập từ fap_inbox" để tự động '
+          'nạp toàn bộ file Markdown đã tải từ FAP/FLM vào đồ thị.',
+      action: Wrap(
+        spacing: 12,
+        children: [
+          OutlinedButton.icon(
+            icon: const Icon(Icons.cloud_download_outlined, size: 18),
+            label: const Text('Nhập từ fap_inbox'),
+            onPressed: () => _batchImportInbox(context),
+          ),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Thêm môn học'),
+            onPressed: () => SubjectFormDialog.show(context),
+          ),
+        ],
       ),
     );
   }
+
 }
 
 // ============================================================================

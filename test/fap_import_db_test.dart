@@ -274,4 +274,336 @@ void main() {
     // Môn học là node toàn cục, không bị xoá theo chương trình.
     expect(await db.query('subjects'), hasLength(1));
   });
+
+  group('DbService — importFapSyllabus', () {
+    test('nhập syllabus tạo môn mới, bản ghi syllabi và đủ 4 bảng chi tiết', () async {
+      final res = await DbService.instance.importFapSyllabus(_sampleSyllabus());
+
+      expect(res.subjectCode, 'CSD201');
+      expect(res.materialsCount, 2);
+      expect(res.closCount, 2);
+      expect(res.sessionsCount, 2);
+      expect(res.assessmentsCount, 2);
+
+      final db = await DbService.instance.database;
+
+      // Môn học được tự động tạo trong subjects
+      final sub = (await db.query('subjects', where: 'code = ?', whereArgs: ['CSD201'])).single;
+      expect(sub['name'], contains('Data Structures'));
+
+      // Bản ghi syllabi
+      final syl = (await db.query('syllabi', where: 'fap_syllabus_id = ?', whereArgs: [10368])).single;
+      expect(syl['subject_id'], sub['id']);
+      expect(syl['decision_no'], '1028/QĐ-ĐHFPT');
+      expect(syl['scoring_scale'], 10);
+      expect(syl['is_approved'], 1);
+
+      // Materials
+      final materials = await db.query('materials', where: 'syllabus_id = ?', whereArgs: [res.syllabusId]);
+      expect(materials, hasLength(2));
+      expect(materials.first['description'], 'Data Structures Book');
+      expect(materials.first['is_main'], 1);
+      expect(materials.first['is_online'], 1);
+
+      // Learning outcomes
+      final clos = await db.query('learning_outcomes', where: 'syllabus_id = ?', whereArgs: [res.syllabusId]);
+      expect(clos, hasLength(2));
+      expect(clos.map((c) => c['code']).toSet(), {'CLO1', 'CLO2'});
+
+      // Sessions & session_learning_outcomes
+      final sessions = await db.query('sessions', where: 'syllabus_id = ?', whereArgs: [res.syllabusId]);
+      expect(sessions, hasLength(2));
+      final sessLinks = await db.query('session_learning_outcomes');
+      // Buổi 1 có 1 CLO, Buổi 2 có 2 CLO => 3 links
+      expect(sessLinks, hasLength(3));
+
+      // Assessments & assessment_learning_outcomes
+      final assessments = await db.query('assessments', where: 'syllabus_id = ?', whereArgs: [res.syllabusId]);
+      expect(assessments, hasLength(2));
+      final astLinks = await db.query('assessment_learning_outcomes');
+      // Ast 1 có 1 CLO, Ast 2 có 2 CLO => 3 links
+      expect(astLinks, hasLength(3));
+    });
+
+    test('nhập lại cùng syllabus là upsert, không nhân bản', () async {
+      final data = _sampleSyllabus();
+      final res1 = await DbService.instance.importFapSyllabus(data);
+      final res2 = await DbService.instance.importFapSyllabus(data);
+
+      expect(res2.syllabusId, res1.syllabusId);
+
+      final db = await DbService.instance.database;
+      expect(await db.query('subjects'), hasLength(1));
+      expect(await db.query('syllabi'), hasLength(1));
+      expect(await db.query('materials'), hasLength(2));
+      expect(await db.query('learning_outcomes'), hasLength(2));
+      expect(await db.query('sessions'), hasLength(2));
+      expect(await db.query('assessments'), hasLength(2));
+    });
+
+    test('môn đã có từ trước thì syllabus gắn vào môn đó', () async {
+      final db = await DbService.instance.database;
+      await db.insert('subjects', {
+        'code': 'CSD201',
+        'name': 'Môn CSD201 từ trước',
+        'semester': 3,
+        'credits': 3,
+        'created_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+
+      final res = await DbService.instance.importFapSyllabus(_sampleSyllabus());
+      final syl = (await db.query('syllabi', where: 'id = ?', whereArgs: [res.syllabusId])).single;
+      final sub = (await db.query('subjects', where: 'code = ?', whereArgs: ['CSD201'])).single;
+
+      expect(syl['subject_id'], sub['id']);
+      expect(await db.query('subjects'), hasLength(1));
+    });
+
+    test('importFapCurriculum tự động tạo cạnh tiên quyết và đồng bộ sang curriculums', () async {
+      await DbService.instance.importFapCurriculum(
+        _curriculum(
+          curid: 3005,
+          code: 'BIT_SE_K20B',
+          subjects: [
+            _row('PRO192', semester: 2, credits: 3),
+            _row('CSD201', semester: 3, credits: 3, prereq: 'PRO192'),
+          ],
+        ),
+      );
+
+      final db = await DbService.instance.database;
+      // 1. Kiểm tra đồng bộ sang curriculums & curriculum_courses
+      final legacyCurrs = await db.query('curriculums', where: 'code = ?', whereArgs: ['BIT_SE_K20B']);
+      expect(legacyCurrs, hasLength(1));
+      final legacyCourses = await db.query('curriculum_courses');
+      expect(legacyCourses, hasLength(2));
+
+      // 2. Kiểm tra cạnh tiên quyết (PRO192 -> CSD201)
+      final edges = await db.query('prerequisites');
+      expect(edges, hasLength(1));
+      final proSub = (await db.query('subjects', where: 'code = ?', whereArgs: ['PRO192'])).single;
+      final csdSub = (await db.query('subjects', where: 'code = ?', whereArgs: ['CSD201'])).single;
+      expect(edges.first['subject_id'], csdSub['id']);
+      expect(edges.first['prerequisite_id'], proSub['id']);
+    });
+
+    test('importFapSyllabus tự động tạo cạnh tiên quyết nếu môn tiên quyết đã có', () async {
+      final db = await DbService.instance.database;
+      // Tạo trước môn PRO192
+      await db.insert('subjects', {
+        'code': 'PRO192',
+        'name': 'Object-Oriented Programming',
+        'semester': 2,
+        'credits': 3,
+        'created_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+
+      // Nhập Syllabus CSD201 có rawPrerequisiteText = 'PRO192'
+      await DbService.instance.importFapSyllabus(_sampleSyllabus(code: 'CSD201'));
+
+      final edges = await db.query('prerequisites');
+      expect(edges, hasLength(1));
+    });
+
+    test('batchImportFromInbox tự động đọc và nạp toàn bộ file .md trong thư mục', () async {
+      // Tạo thư mục tạm giả lập fap_inbox
+      final mockInbox = await Directory.systemTemp.createTemp('mock_inbox');
+      try {
+        final curFile = File('${mockInbox.path}/curriculum.md');
+        await curFile.writeAsString('''
+Source: https://flm.fpt.edu.vn/gui/role/student/CurriculumDetails?curid=9999
+CurriculumCode:
+BIT_TEST_K20
+Name:
+Test Curriculum
+Total 2 subjects, 6 credits
+Subject Code
+Subject Name
+Semester
+NoCredit
+PreRequisite
+PR101
+[Prog 1](/gui/role/student/Syllabuses?subCode=PR101&curriculumID=9999)
+1
+3
+PR102
+[Prog 2](/gui/role/student/Syllabuses?subCode=PR102&curriculumID=9999)
+2
+3
+PR101
+''');
+
+        final res = await DbService.instance.batchImportFromInbox(inboxDir: mockInbox);
+        expect(res['totalFiles'], 1);
+        expect(res['curricula'], 1);
+        expect(res['failed'], 0);
+
+        final db = await DbService.instance.database;
+        expect(await db.query('curricula'), isNotEmpty);
+        expect(await db.query('prerequisites'), hasLength(1));
+      } finally {
+        await mockInbox.delete(recursive: true);
+      }
+    });
+    group('Curriculum deletion', () {
+      test('deleteCurriculum with deleteSubjects=false preserves subjects but removes curriculum records', () async {
+        await DbService.instance.importFapCurriculum(_curriculum(
+          curid: 991,
+          code: 'TEST_DEL_1',
+          subjects: [
+            _row('SUB_DEL_1', nameEn: 'Subject 1'),
+            _row('SUB_DEL_2', nameEn: 'Subject 2'),
+          ],
+        ));
+
+        final currs = await DbService.instance.getCurriculums();
+        final curr = currs.firstWhere((c) => c['code'] == 'TEST_DEL_1');
+        final currId = curr['id'] as int;
+
+        await DbService.instance.deleteCurriculum(currId, deleteSubjects: false);
+
+        final currsAfter = await DbService.instance.getCurriculums();
+        expect(currsAfter.any((c) => c['code'] == 'TEST_DEL_1'), isFalse);
+
+        // Curricula FAP table is also cleared
+        final db = await DbService.instance.database;
+        final fapCurrs = await db.query('curricula', where: 'code = ?', whereArgs: ['TEST_DEL_1']);
+        expect(fapCurrs, isEmpty);
+
+        // Subjects still exist
+        final sub1 = await db.query('subjects', where: 'code = ?', whereArgs: ['SUB_DEL_1']);
+        expect(sub1, isNotEmpty);
+      });
+
+      test('deleteCurriculum with deleteSubjects=true deletes orphan subjects', () async {
+        await DbService.instance.importFapCurriculum(_curriculum(
+          curid: 992,
+          code: 'TEST_DEL_2',
+          subjects: [
+            _row('SUB_ORPHAN_1', nameEn: 'Orphan 1'),
+            _row('SUB_SHARED_1', nameEn: 'Shared 1'),
+          ],
+        ));
+
+        await DbService.instance.importFapCurriculum(_curriculum(
+          curid: 993,
+          code: 'TEST_DEL_3',
+          subjects: [
+            _row('SUB_SHARED_1', nameEn: 'Shared 1'),
+          ],
+        ));
+
+        final currs = await DbService.instance.getCurriculums();
+        final curr2 = currs.firstWhere((c) => c['code'] == 'TEST_DEL_2');
+        final curr2Id = curr2['id'] as int;
+
+        await DbService.instance.deleteCurriculum(curr2Id, deleteSubjects: true);
+
+        final db = await DbService.instance.database;
+        // Orphan subject should be deleted
+        final orphan = await db.query('subjects', where: 'code = ?', whereArgs: ['SUB_ORPHAN_1']);
+        expect(orphan, isEmpty);
+
+        // Shared subject should still exist
+        final shared = await db.query('subjects', where: 'code = ?', whereArgs: ['SUB_SHARED_1']);
+        expect(shared, isNotEmpty);
+      });
+    });
+
+    group('Syllabus retrieval', () {
+      test('getSyllabusDetail and getAvailableSyllabi return complete data', () async {
+        await DbService.instance.importFapSyllabus(_sampleSyllabus(sylId: 7777, code: 'SWD392'));
+
+        final available = await DbService.instance.getAvailableSyllabi();
+        expect(available.any((s) => s['code'] == 'SWD392'), isTrue);
+
+        final detail = await DbService.instance.getSyllabusDetail(subjectCode: 'SWD392');
+        expect(detail, isNotNull);
+        expect(detail!.subjectCode, 'SWD392');
+        expect(detail.materials, hasLength(2));
+        expect(detail.clos, hasLength(2));
+        expect(detail.sessions, hasLength(2));
+        expect(detail.assessments, hasLength(2));
+      });
+    });
+  });
+}
+
+FapSyllabusImport _sampleSyllabus({
+  int? sylId = 10368,
+  String code = 'CSD201',
+}) {
+  return FapSyllabusImport(
+    fapSyllabusId: sylId,
+    subjectCode: code,
+    nameEn: 'Data Structures and Algorithm',
+    nameNative: 'Cấu trúc dữ liệu và giải thuật',
+    degreeLevel: 'Bachelor',
+    learningTeachingMethod: 'In-class',
+    timeAllocation: '45h contact hours',
+    description: 'Mô tả môn học $code',
+    studentTasks: 'Làm bài tập',
+    tools: 'NetBeans, JDK',
+    scoringScale: 10,
+    decisionNo: '1028/QĐ-ĐHFPT',
+    decisionDate: '08/21/2026',
+    isApproved: true,
+    isScored: true,
+    minAvgMarkToPass: 5.0,
+    isActive: true,
+    approvedDate: '8/21/2026',
+    rawPrerequisiteText: 'PRO192',
+    sourceUrl: 'https://flm.fpt.edu.vn/gui/role/student/SyllabusDetails?sylID=$sylId',
+    materials: const [
+      FapMaterialRow(
+        seqNo: 1,
+        description: 'Data Structures Book',
+        author: 'Michael Goodrich',
+        publisher: 'Wiley',
+        isMain: true,
+        isOnline: true,
+      ),
+      FapMaterialRow(seqNo: 2, description: 'FU slides'),
+    ],
+    clos: const [
+      FapCloRow(code: 'CLO1', detail: 'Chi tiết CLO 1'),
+      FapCloRow(code: 'CLO2', detail: 'Chi tiết CLO 2'),
+    ],
+    sessions: const [
+      FapSessionRow(
+        sessionNo: 1,
+        topic: 'Buổi 1: Giới thiệu',
+        teachingType: 'Offline',
+        cloCodes: ['CLO1'],
+      ),
+      FapSessionRow(
+        sessionNo: 2,
+        topic: 'Buổi 2: Danh sách liên kết',
+        teachingType: 'Offline',
+        cloCodes: ['CLO1', 'CLO2'],
+      ),
+    ],
+    assessments: const [
+      FapAssessmentRow(
+        seqNo: 1,
+        category: 'Progress test 1',
+        type: 'quiz',
+        part: 1,
+        weightPercent: 20.0,
+        completionCriteria: '>0',
+        cloCodes: ['CLO1'],
+      ),
+      FapAssessmentRow(
+        seqNo: 2,
+        category: 'Final Exam',
+        type: 'exam',
+        part: 1,
+        weightPercent: 30.0,
+        completionCriteria: '>0',
+        cloCodes: ['CLO1', 'CLO2'],
+      ),
+    ],
+  );
 }

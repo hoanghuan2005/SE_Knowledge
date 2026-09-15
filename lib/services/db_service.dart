@@ -9,6 +9,7 @@ import '../models/graph_data.dart';
 import '../models/prerequisite.dart';
 import '../models/subject.dart';
 import 'fap_markdown_parser.dart';
+import 'settings_service.dart';
 
 /// Tầng truy cập dữ liệu duy nhất của ứng dụng.
 ///
@@ -718,8 +719,14 @@ class DbService {
 
   /// Nếu thêm edge `prerequisiteId -> subjectId` thì có sinh chu trình không?
   /// Chu trình xuất hiện khi `subjectId` đã là tổ tiên của `prerequisiteId`.
-  Future<bool> _wouldCreateCycle(int subjectId, int prerequisiteId) async {
-    final edges = await getEdges();
+  Future<bool> _wouldCreateCycle(
+    int subjectId,
+    int prerequisiteId, {
+    DatabaseExecutor? txn,
+  }) async {
+    final executor = txn ?? await database;
+    final rows = await executor.query('prerequisites');
+    final edges = rows.map(Prerequisite.fromMap).toList();
     final parents = <int, List<int>>{};
     for (final e in edges) {
       parents.putIfAbsent(e.subjectId, () => []).add(e.prerequisiteId);
@@ -886,6 +893,44 @@ class DbService {
   Future<void> deleteCurriculum(int id, {bool deleteSubjects = false}) async {
     final db = await database;
     await db.transaction((txn) async {
+      // 1. Tìm thông tin curriculum để biết mã code và legacy ID
+      var currRows = await txn.query(
+        'curriculums',
+        columns: ['id', 'code'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+
+      String? currCode;
+      int legacyId = id;
+
+      if (currRows.isNotEmpty) {
+        currCode = (currRows.first['code'] as String).trim().toUpperCase();
+      } else {
+        // Có thể id truyền vào là id của bảng FAP curricula
+        final fapRows = await txn.query(
+          'curricula',
+          columns: ['id', 'code'],
+          where: 'id = ?',
+          whereArgs: [id],
+          limit: 1,
+        );
+        if (fapRows.isNotEmpty) {
+          currCode = (fapRows.first['code'] as String).trim().toUpperCase();
+          final legRows = await txn.query(
+            'curriculums',
+            columns: ['id'],
+            where: 'UPPER(code) = ?',
+            whereArgs: [currCode],
+            limit: 1,
+          );
+          if (legRows.isNotEmpty) {
+            legacyId = legRows.first['id'] as int;
+          }
+        }
+      }
+
       if (deleteSubjects) {
         // Tìm các subject_id chỉ thuộc về curriculum này
         final rows = await txn.rawQuery('''
@@ -896,20 +941,55 @@ class DbService {
               SELECT 1 FROM curriculum_courses cc2
               WHERE cc2.subject_id = cc1.subject_id AND cc2.curriculum_id <> ?
             )
-        ''', [id, id]);
+        ''', [legacyId, legacyId]);
 
         final subjectIdsToDelete = rows.map((r) => r['subject_id'] as int).toList();
 
-        // Xóa curriculum (cascade tự động xóa trong curriculum_courses)
-        await txn.delete('curriculums', where: 'id = ?', whereArgs: [id]);
+        // Xóa curriculum courses và curriculum
+        await txn.delete('curriculum_courses', where: 'curriculum_id = ?', whereArgs: [legacyId]);
+        await txn.delete('curriculums', where: 'id = ?', whereArgs: [legacyId]);
+
+        // Xoá bên bảng FAP curricula nếu có
+        if (currCode != null && currCode.isNotEmpty) {
+          final fapCurrs = await txn.query(
+            'curricula',
+            columns: ['id'],
+            where: 'UPPER(code) = ?',
+            whereArgs: [currCode],
+          );
+          for (final fc in fapCurrs) {
+            final fcId = fc['id'] as int;
+            await txn.delete('curriculum_subjects', where: 'curriculum_id = ?', whereArgs: [fcId]);
+            await txn.delete('program_learning_outcomes', where: 'curriculum_id = ?', whereArgs: [fcId]);
+            await txn.delete('curricula', where: 'id = ?', whereArgs: [fcId]);
+          }
+        }
 
         // Xóa các subjects và prerequisites tương ứng
         for (final sId in subjectIdsToDelete) {
           await txn.delete('prerequisites', where: 'subject_id = ? OR prerequisite_id = ?', whereArgs: [sId, sId]);
+          await txn.delete('curriculum_courses', where: 'subject_id = ?', whereArgs: [sId]);
+          await txn.delete('curriculum_subjects', where: 'subject_id = ?', whereArgs: [sId]);
           await txn.delete('subjects', where: 'id = ?', whereArgs: [sId]);
         }
       } else {
-        await txn.delete('curriculums', where: 'id = ?', whereArgs: [id]);
+        await txn.delete('curriculum_courses', where: 'curriculum_id = ?', whereArgs: [legacyId]);
+        await txn.delete('curriculums', where: 'id = ?', whereArgs: [legacyId]);
+
+        if (currCode != null && currCode.isNotEmpty) {
+          final fapCurrs = await txn.query(
+            'curricula',
+            columns: ['id'],
+            where: 'UPPER(code) = ?',
+            whereArgs: [currCode],
+          );
+          for (final fc in fapCurrs) {
+            final fcId = fc['id'] as int;
+            await txn.delete('curriculum_subjects', where: 'curriculum_id = ?', whereArgs: [fcId]);
+            await txn.delete('program_learning_outcomes', where: 'curriculum_id = ?', whereArgs: [fcId]);
+            await txn.delete('curricula', where: 'id = ?', whereArgs: [fcId]);
+          }
+        }
       }
     });
   }
@@ -939,6 +1019,39 @@ class DbService {
   /// Khung CTĐT -> Học kỳ (Term) -> Danh sách môn học
   Future<List<CurriculumGroup>> getCurriculumTreeData() async {
     final db = await database;
+
+    // Tự động đồng bộ các bản ghi từ bảng FAP curricula sang curriculums nếu chưa có
+    final fapCurrs = await db.query('curricula');
+    for (final fc in fapCurrs) {
+      final code = (fc['code'] as String? ?? '').trim().toUpperCase();
+      if (code.isEmpty) continue;
+      final existing = await db.query('curriculums', where: 'UPPER(code) = ?', whereArgs: [code], limit: 1);
+      if (existing.isEmpty) {
+        final now = DateTime.now().toIso8601String();
+        final name = (fc['name_en'] as String?) ?? (fc['name_vn'] as String?) ?? code;
+        final newId = await db.insert('curriculums', {
+          'code': code,
+          'name': name,
+          'major': name,
+          'total_credits': (fc['total_credits'] as int?) ?? 145,
+          'decision_no': (fc['decision_no'] as String?) ?? '',
+          'description': (fc['description'] as String?) ?? '',
+          'created_at': now,
+          'updated_at': now,
+        });
+        final fcId = fc['id'] as int;
+        final curSubs = await db.query('curriculum_subjects', where: 'curriculum_id = ?', whereArgs: [fcId]);
+        for (final cs in curSubs) {
+          await db.insert('curriculum_courses', {
+            'curriculum_id': newId,
+            'subject_id': cs['subject_id'],
+            'term': cs['semester'] ?? 1,
+            'credits': cs['credits'] ?? 3,
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        }
+      }
+    }
+
     final currs = await getCurriculums();
     final allSubjects = await getSubjects();
     final subjectMap = {for (final s in allSubjects) s.id!: s};
@@ -1473,6 +1586,42 @@ class DbService {
           (row['code'] as String).trim().toUpperCase(),
       };
 
+      // Đồng bộ sang bảng curriculums/curriculum_courses để Graph View & Demo View nhận diện được khung
+      final currCode = data.code.trim().toUpperCase();
+      final existingLegacy = await txn.query(
+        'curriculums',
+        where: 'code = ?',
+        whereArgs: [currCode],
+      );
+      int legacyCurrId;
+      final now = DateTime.now().toIso8601String();
+      if (existingLegacy.isNotEmpty) {
+        legacyCurrId = existingLegacy.first['id'] as int;
+        await txn.update(
+          'curriculums',
+          {
+            'name': data.name.isNotEmpty ? data.name : currCode,
+            'total_credits': data.totalCredits,
+            'decision_no': data.decisionNo,
+            'updated_at': now,
+          },
+          where: 'id = ?',
+          whereArgs: [legacyCurrId],
+        );
+      } else {
+        legacyCurrId = await txn.insert('curriculums', {
+          'code': currCode,
+          'name': data.name.isNotEmpty ? data.name : currCode,
+          'major': data.name.isNotEmpty ? data.name : currCode,
+          'total_credits': data.totalCredits,
+          'decision_no': data.decisionNo,
+          'description': 'Được nhập tự động từ FAP/FLM Markdown',
+          'created_at': now,
+          'updated_at': now,
+        });
+      }
+
+      final subjectIdMap = <String, int>{};
       for (final row in data.subjects) {
         final code = row.code.trim().toUpperCase();
         if (code.isEmpty) continue;
@@ -1485,6 +1634,7 @@ class DbService {
           credits: row.credits,
           txn: txn,
         );
+        subjectIdMap[code] = subjectId;
 
         if (isNew) {
           existingCodes.add(code);
@@ -1503,6 +1653,46 @@ class DbService {
           txn: txn,
         );
         links++;
+
+        await txn.insert(
+          'curriculum_courses',
+          {
+            'curriculum_id': legacyCurrId,
+            'subject_id': subjectId,
+            'term': row.semester,
+            'credits': row.credits,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      // Xây dựng cạnh tiên quyết (prerequisite edges) từ rawPrerequisite
+      for (final row in data.subjects) {
+        if (row.rawPrerequisite.trim().isEmpty) continue;
+        final sId = subjectIdMap[row.code.trim().toUpperCase()];
+        if (sId == null) continue;
+
+        final prereqCodes = FapMarkdownParser.extractPrerequisiteCodes(row.rawPrerequisite);
+        for (final pCode in prereqCodes) {
+          final pRows = await txn.query('subjects', columns: ['id'], where: 'code = ?', whereArgs: [pCode], limit: 1);
+          if (pRows.isNotEmpty) {
+            final pId = pRows.first['id'] as int;
+            if (pId != sId) {
+              final cycle = await _wouldCreateCycle(sId, pId, txn: txn);
+              if (!cycle) {
+                await txn.insert(
+                  'prerequisites',
+                  {
+                    'subject_id': sId,
+                    'prerequisite_id': pId,
+                    'relation_type': 'PREREQUISITE',
+                  },
+                  conflictAlgorithm: ConflictAlgorithm.ignore,
+                );
+              }
+            }
+          }
+        }
       }
     });
 
@@ -1516,6 +1706,617 @@ class DbService {
     );
   }
 
+  /// Ghi một trang Syllabus Details đã bóc tách xuống CSDL.
+  Future<FapSyllabusImportResult> importFapSyllabus(FapSyllabusImport data) async {
+    final db = await database;
+    var syllabusId = 0;
+
+    await db.transaction((txn) async {
+      final code = data.subjectCode.trim().toUpperCase();
+      if (code.isEmpty) {
+        throw DbConflictException('Không tìm thấy mã môn học trong Syllabus.');
+      }
+
+      // 1. Đảm bảo môn học tồn tại trong bảng `subjects`
+      final existingSub = await txn.query(
+        'subjects',
+        columns: ['id', 'name'],
+        where: 'code = ?',
+        whereArgs: [code],
+        limit: 1,
+      );
+
+      int subjectId;
+      final now = DateTime.now().toIso8601String();
+      if (existingSub.isNotEmpty) {
+        subjectId = existingSub.first['id'] as int;
+        final currentName = existingSub.first['name'] as String? ?? '';
+        if (currentName.isEmpty || currentName == code) {
+          await txn.update(
+            'subjects',
+            {'name': data.fullName, 'updated_at': now},
+            where: 'id = ?',
+            whereArgs: [subjectId],
+          );
+        }
+      } else {
+        subjectId = await txn.insert('subjects', {
+          'code': code,
+          'name': data.fullName.isNotEmpty ? data.fullName : code,
+          'semester': 1,
+          'credits': 3,
+          'description': data.description,
+          'created_at': now,
+          'updated_at': now,
+        });
+      }
+
+      // 2. Upsert bảng `syllabi`
+      final sylValues = <String, Object?>{
+        'subject_id': subjectId,
+        'fap_syllabus_id': data.fapSyllabusId,
+        'name_en': data.nameEn.isNotEmpty ? data.nameEn : null,
+        'name_native': data.nameNative.isNotEmpty ? data.nameNative : null,
+        'degree_level': data.degreeLevel.isNotEmpty ? data.degreeLevel : null,
+        'learning_teaching_method': data.learningTeachingMethod.isNotEmpty ? data.learningTeachingMethod : null,
+        'time_allocation': data.timeAllocation.isNotEmpty ? data.timeAllocation : null,
+        'description': data.description.isNotEmpty ? data.description : null,
+        'student_tasks': data.studentTasks.isNotEmpty ? data.studentTasks : null,
+        'tools': data.tools.isNotEmpty ? data.tools : null,
+        'scoring_scale': data.scoringScale,
+        'decision_no': data.decisionNo.isNotEmpty ? data.decisionNo : null,
+        'decision_date': data.decisionDate.isNotEmpty ? data.decisionDate : null,
+        'is_approved': data.isApproved ? 1 : 0,
+        'is_scored': data.isScored ? 1 : 0,
+        'min_avg_mark_to_pass': data.minAvgMarkToPass,
+        'is_active': data.isActive ? 1 : 0,
+        'approved_date': data.approvedDate.isNotEmpty ? data.approvedDate : null,
+        'raw_prerequisite_text': data.rawPrerequisiteText.isNotEmpty ? data.rawPrerequisiteText : null,
+        'source_url': data.sourceUrl.isNotEmpty ? data.sourceUrl : null,
+        'synced_at': now,
+      };
+
+      final existingSyl = data.fapSyllabusId != null
+          ? await txn.query(
+              'syllabi',
+              columns: ['id'],
+              where: 'fap_syllabus_id = ?',
+              whereArgs: [data.fapSyllabusId],
+              limit: 1,
+            )
+          : await txn.query(
+              'syllabi',
+              columns: ['id'],
+              where: 'subject_id = ?',
+              whereArgs: [subjectId],
+              limit: 1,
+            );
+
+      if (existingSyl.isNotEmpty) {
+        syllabusId = existingSyl.first['id'] as int;
+        await txn.update('syllabi', sylValues, where: 'id = ?', whereArgs: [syllabusId]);
+      } else {
+        syllabusId = await txn.insert('syllabi', sylValues);
+      }
+
+      // 3. Xoá & nạp lại `materials`
+      await txn.delete('materials', where: 'syllabus_id = ?', whereArgs: [syllabusId]);
+      for (final m in data.materials) {
+        await txn.insert('materials', {
+          'syllabus_id': syllabusId,
+          'seq_no': m.seqNo,
+          'description': m.description,
+          'author': m.author.isNotEmpty ? m.author : null,
+          'publisher': m.publisher.isNotEmpty ? m.publisher : null,
+          'published_date': m.publishedDate.isNotEmpty ? m.publishedDate : null,
+          'edition': m.edition.isNotEmpty ? m.edition : null,
+          'isbn': m.isbn.isNotEmpty ? m.isbn : null,
+          'is_main': m.isMain ? 1 : 0,
+          'is_hard_copy': m.isHardCopy ? 1 : 0,
+          'is_online': m.isOnline ? 1 : 0,
+          'note': m.note.isNotEmpty ? m.note : null,
+        });
+      }
+
+      // 4. Xoá & nạp lại `learning_outcomes`
+      await txn.delete('learning_outcomes', where: 'syllabus_id = ?', whereArgs: [syllabusId]);
+      final cloCodeToId = <String, int>{};
+      for (final clo in data.clos) {
+        final cloId = await txn.insert('learning_outcomes', {
+          'syllabus_id': syllabusId,
+          'code': clo.code,
+          'detail': clo.detail,
+        });
+        cloCodeToId[clo.code.toUpperCase()] = cloId;
+        if (clo.code.toUpperCase().startsWith('CLO')) {
+          cloCodeToId[clo.code.toUpperCase().replaceFirst('CLO', 'LO')] = cloId;
+        }
+      }
+
+      // 5. Xoá & nạp lại `sessions` & `session_learning_outcomes`
+      final existingSessions = await txn.query(
+        'sessions',
+        columns: ['id'],
+        where: 'syllabus_id = ?',
+        whereArgs: [syllabusId],
+      );
+      for (final sRow in existingSessions) {
+        await txn.delete('session_learning_outcomes', where: 'session_id = ?', whereArgs: [sRow['id']]);
+      }
+      await txn.delete('sessions', where: 'syllabus_id = ?', whereArgs: [syllabusId]);
+
+      for (final sess in data.sessions) {
+        final sessionId = await txn.insert('sessions', {
+          'syllabus_id': syllabusId,
+          'session_no': sess.sessionNo,
+          'topic': sess.topic,
+          'teaching_type': sess.teachingType.isNotEmpty ? sess.teachingType : null,
+          'itu': sess.itu.isNotEmpty ? sess.itu : null,
+          'student_materials': sess.studentMaterials.isNotEmpty ? sess.studentMaterials : null,
+          'download_url': sess.downloadUrl.isNotEmpty ? sess.downloadUrl : null,
+          'student_tasks': sess.studentTasks.isNotEmpty ? sess.studentTasks : null,
+          'urls': sess.urls.isNotEmpty ? sess.urls : null,
+        });
+
+        for (final code in sess.cloCodes) {
+          final cloId = cloCodeToId[code.toUpperCase()];
+          if (cloId != null) {
+            await txn.insert('session_learning_outcomes', {
+              'session_id': sessionId,
+              'clo_id': cloId,
+            }, conflictAlgorithm: ConflictAlgorithm.ignore);
+          }
+        }
+      }
+
+      // 6. Xoá & nạp lại `assessments` & `assessment_learning_outcomes`
+      final existingAst = await txn.query(
+        'assessments',
+        columns: ['id'],
+        where: 'syllabus_id = ?',
+        whereArgs: [syllabusId],
+      );
+      for (final aRow in existingAst) {
+        await txn.delete('assessment_learning_outcomes', where: 'assessment_id = ?', whereArgs: [aRow['id']]);
+      }
+      await txn.delete('assessments', where: 'syllabus_id = ?', whereArgs: [syllabusId]);
+
+      for (final ast in data.assessments) {
+        final astId = await txn.insert('assessments', {
+          'syllabus_id': syllabusId,
+          'seq_no': ast.seqNo,
+          'category': ast.category,
+          'type': ast.type.isNotEmpty ? ast.type : null,
+          'part': ast.part,
+          'weight_percent': ast.weightPercent,
+          'completion_criteria': ast.completionCriteria.isNotEmpty ? ast.completionCriteria : null,
+          'duration': ast.duration.isNotEmpty ? ast.duration : null,
+          'question_type': ast.questionType.isNotEmpty ? ast.questionType : null,
+          'no_question': ast.noQuestion,
+          'knowledge_skill': ast.knowledgeSkill.isNotEmpty ? ast.knowledgeSkill : null,
+          'grading_guide': ast.gradingGuide.isNotEmpty ? ast.gradingGuide : null,
+          'note': ast.note.isNotEmpty ? ast.note : null,
+        });
+
+        for (final code in ast.cloCodes) {
+          final cloId = cloCodeToId[code.toUpperCase()];
+          if (cloId != null) {
+            await txn.insert('assessment_learning_outcomes', {
+              'assessment_id': astId,
+              'clo_id': cloId,
+            }, conflictAlgorithm: ConflictAlgorithm.ignore);
+          }
+        }
+      }
+
+      // 6. Bóc tách & tạo liên kết tiên quyết cho môn này nếu có rawPrerequisiteText
+      if (data.rawPrerequisiteText.trim().isNotEmpty) {
+        final pCodes = FapMarkdownParser.extractPrerequisiteCodes(data.rawPrerequisiteText);
+        for (final pCode in pCodes) {
+          final pSub = await txn.query('subjects', columns: ['id'], where: 'code = ?', whereArgs: [pCode], limit: 1);
+          if (pSub.isNotEmpty) {
+            final prereqId = pSub.first['id'] as int;
+            if (prereqId != subjectId) {
+              final cycle = await _wouldCreateCycle(subjectId, prereqId, txn: txn);
+              if (!cycle) {
+                await txn.insert(
+                  'prerequisites',
+                  {
+                    'subject_id': subjectId,
+                    'prerequisite_id': prereqId,
+                    'relation_type': 'PREREQUISITE',
+                  },
+                  conflictAlgorithm: ConflictAlgorithm.ignore,
+                );
+              }
+            }
+          }
+        }
+      }
+    });
+
+    return FapSyllabusImportResult(
+      syllabusId: syllabusId,
+      subjectCode: data.subjectCode,
+      materialsCount: data.materials.length,
+      closCount: data.clos.length,
+      sessionsCount: data.sessions.length,
+      assessmentsCount: data.assessments.length,
+    );
+  }
+
+  /// Quét toàn bộ thông tin tiên quyết từ bảng `curriculum_subjects` và `syllabi`,
+  /// bóc tách các mã môn và tạo cạnh trong bảng `prerequisites`.
+  /// Trả về số lượng cạnh tiên quyết được tạo mới.
+  Future<int> syncPrerequisitesFromFap({DatabaseExecutor? txn}) async {
+    final db = txn ?? await database;
+    var newEdges = 0;
+
+    // 1. Quét từ curriculum_subjects
+    final curSubRows = await db.rawQuery('''
+      SELECT cs.subject_id, cs.raw_prerequisite_text, s.code AS subject_code
+      FROM curriculum_subjects cs
+      JOIN subjects s ON s.id = cs.subject_id
+      WHERE cs.raw_prerequisite_text IS NOT NULL AND TRIM(cs.raw_prerequisite_text) != ''
+    ''');
+
+    // 2. Quét từ syllabi
+    final sylRows = await db.rawQuery('''
+      SELECT sy.subject_id, sy.raw_prerequisite_text, s.code AS subject_code
+      FROM syllabi sy
+      JOIN subjects s ON s.id = sy.subject_id
+      WHERE sy.raw_prerequisite_text IS NOT NULL AND TRIM(sy.raw_prerequisite_text) != ''
+    ''');
+
+    final candidates = <int, Set<String>>{};
+    for (final r in [...curSubRows, ...sylRows]) {
+      final sId = r['subject_id'] as int;
+      final raw = (r['raw_prerequisite_text'] as String?) ?? '';
+      final codes = FapMarkdownParser.extractPrerequisiteCodes(raw);
+      if (codes.isNotEmpty) {
+        candidates.putIfAbsent(sId, () => <String>{}).addAll(codes);
+      }
+    }
+
+    final allSubs = await db.query('subjects', columns: ['id', 'code']);
+    final codeToId = {
+      for (final s in allSubs) (s['code'] as String).trim().toUpperCase(): s['id'] as int,
+    };
+
+    for (final entry in candidates.entries) {
+      final subjectId = entry.key;
+      for (final pCode in entry.value) {
+        final prereqId = codeToId[pCode.trim().toUpperCase()];
+        if (prereqId != null && prereqId != subjectId) {
+          final cycle = await _wouldCreateCycle(subjectId, prereqId, txn: db);
+          if (!cycle) {
+            final res = await db.insert(
+              'prerequisites',
+              {
+                'subject_id': subjectId,
+                'prerequisite_id': prereqId,
+                'relation_type': 'PREREQUISITE',
+              },
+              conflictAlgorithm: ConflictAlgorithm.ignore,
+            );
+            if (res > 0) newEdges++;
+          }
+        }
+      }
+    }
+
+    return newEdges;
+  }
+
+  /// Lấy danh sách tóm tắt tất cả các môn đã có Syllabus trong CSDL
+  Future<List<Map<String, dynamic>>> getAvailableSyllabi() async {
+    final db = await database;
+    return db.rawQuery('''
+      SELECT s.id AS subject_id,
+             s.code,
+             s.name,
+             sb.id AS syllabus_id,
+             sb.fap_syllabus_id,
+             sb.name_en,
+             sb.time_allocation,
+             sb.degree_level,
+             (SELECT COUNT(*) FROM sessions WHERE syllabus_id = sb.id) AS session_count,
+             (SELECT COUNT(*) FROM learning_outcomes WHERE syllabus_id = sb.id) AS clo_count
+      FROM syllabi sb
+      JOIN subjects s ON s.id = sb.subject_id
+      ORDER BY s.code ASC
+    ''');
+  }
+
+  /// Kiểm tra xem môn học đã có Syllabus trong CSDL chưa
+  Future<bool> hasSyllabus(int subjectId) async {
+    final db = await database;
+    final rows = await db.query(
+      'syllabi',
+      columns: ['id'],
+      where: 'subject_id = ?',
+      whereArgs: [subjectId],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
+  }
+
+  /// Kiểm tra xem mã môn học đã có Syllabus trong CSDL chưa
+  Future<bool> hasSyllabusByCode(String code) async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT sb.id FROM syllabi sb
+      JOIN subjects s ON s.id = sb.subject_id
+      WHERE UPPER(s.code) = ?
+      LIMIT 1
+    ''', [code.trim().toUpperCase()]);
+    return rows.isNotEmpty;
+  }
+
+  /// Lấy chi tiết toàn bộ Syllabus theo subjectId hoặc subjectCode
+  Future<FapSyllabusImport?> getSyllabusDetail({int? subjectId, String? subjectCode}) async {
+    final db = await database;
+
+    List<Map<String, dynamic>> sylRows;
+    if (subjectId != null) {
+      sylRows = await db.rawQuery('''
+        SELECT sb.*, s.code AS subject_code, s.name AS subject_name
+        FROM syllabi sb
+        JOIN subjects s ON s.id = sb.subject_id
+        WHERE sb.subject_id = ?
+        LIMIT 1
+      ''', [subjectId]);
+    } else if (subjectCode != null && subjectCode.isNotEmpty) {
+      sylRows = await db.rawQuery('''
+        SELECT sb.*, s.code AS subject_code, s.name AS subject_name
+        FROM syllabi sb
+        JOIN subjects s ON s.id = sb.subject_id
+        WHERE UPPER(s.code) = ?
+        LIMIT 1
+      ''', [subjectCode.trim().toUpperCase()]);
+    } else {
+      return null;
+    }
+
+    if (sylRows.isEmpty) return null;
+    final syl = sylRows.first;
+    final syllabusId = syl['id'] as int;
+    final code = syl['subject_code'] as String? ?? '';
+
+    // 1. Materials
+    final matRows = await db.query(
+      'materials',
+      where: 'syllabus_id = ?',
+      whereArgs: [syllabusId],
+      orderBy: 'seq_no ASC, id ASC',
+    );
+    final materials = matRows.map((m) {
+      return FapMaterialRow(
+        seqNo: (m['seq_no'] as int?) ?? 1,
+        description: (m['description'] as String?) ?? '',
+        author: (m['author'] as String?) ?? '',
+        publisher: (m['publisher'] as String?) ?? '',
+        publishedDate: (m['published_date'] as String?) ?? '',
+        edition: (m['edition'] as String?) ?? '',
+        isbn: (m['isbn'] as String?) ?? '',
+        isMain: (m['is_main'] as int? ?? 0) == 1,
+        isHardCopy: (m['is_hard_copy'] as int? ?? 0) == 1,
+        isOnline: (m['is_online'] as int? ?? 0) == 1,
+        note: (m['note'] as String?) ?? '',
+      );
+    }).toList();
+
+    // 2. CLOs
+    final cloRows = await db.query(
+      'learning_outcomes',
+      where: 'syllabus_id = ?',
+      whereArgs: [syllabusId],
+      orderBy: 'id ASC',
+    );
+    final clos = cloRows.map((c) {
+      return FapCloRow(
+        code: (c['code'] as String?) ?? '',
+        detail: (c['detail'] as String?) ?? '',
+      );
+    }).toList();
+
+    // 3. Sessions & session CLOs
+    final sessRows = await db.query(
+      'sessions',
+      where: 'syllabus_id = ?',
+      whereArgs: [syllabusId],
+      orderBy: 'session_no ASC, id ASC',
+    );
+
+    final sessionCloMap = <int, List<String>>{};
+    final sessionCloRows = await db.rawQuery('''
+      SELECT slo.session_id, lo.code
+      FROM session_learning_outcomes slo
+      JOIN learning_outcomes lo ON lo.id = slo.clo_id
+      WHERE lo.syllabus_id = ?
+    ''', [syllabusId]);
+
+    for (final r in sessionCloRows) {
+      final sId = r['session_id'] as int;
+      final cloCode = r['code'] as String;
+      sessionCloMap.putIfAbsent(sId, () => []).add(cloCode);
+    }
+
+    final sessions = sessRows.map((s) {
+      final sId = s['id'] as int;
+      return FapSessionRow(
+        sessionNo: (s['session_no'] as int?) ?? 1,
+        topic: (s['topic'] as String?) ?? '',
+        teachingType: (s['teaching_type'] as String?) ?? '',
+        itu: (s['itu'] as String?) ?? '',
+        studentMaterials: (s['student_materials'] as String?) ?? '',
+        downloadUrl: (s['download_url'] as String?) ?? '',
+        studentTasks: (s['student_tasks'] as String?) ?? '',
+        urls: (s['urls'] as String?) ?? '',
+        cloCodes: sessionCloMap[sId] ?? const [],
+      );
+    }).toList();
+
+    // 4. Assessments & assessment CLOs
+    final astRows = await db.query(
+      'assessments',
+      where: 'syllabus_id = ?',
+      whereArgs: [syllabusId],
+      orderBy: 'seq_no ASC, id ASC',
+    );
+
+    final astCloMap = <int, List<String>>{};
+    final astCloRows = await db.rawQuery('''
+      SELECT alo.assessment_id, lo.code
+      FROM assessment_learning_outcomes alo
+      JOIN learning_outcomes lo ON lo.id = alo.clo_id
+      WHERE lo.syllabus_id = ?
+    ''', [syllabusId]);
+
+    for (final r in astCloRows) {
+      final aId = r['assessment_id'] as int;
+      final cloCode = r['code'] as String;
+      astCloMap.putIfAbsent(aId, () => []).add(cloCode);
+    }
+
+    final assessments = astRows.map((a) {
+      final aId = a['id'] as int;
+      return FapAssessmentRow(
+        seqNo: (a['seq_no'] as int?) ?? 1,
+        category: (a['category'] as String?) ?? '',
+        type: (a['type'] as String?) ?? '',
+        part: (a['part'] as int?) ?? 1,
+        weightPercent: (a['weight_percent'] as num?)?.toDouble() ?? 0.0,
+        completionCriteria: (a['completion_criteria'] as String?) ?? '',
+        duration: (a['duration'] as String?) ?? '',
+        questionType: (a['question_type'] as String?) ?? '',
+        noQuestion: a['no_question'] as int?,
+        knowledgeSkill: (a['knowledge_skill'] as String?) ?? '',
+        gradingGuide: (a['grading_guide'] as String?) ?? '',
+        note: (a['note'] as String?) ?? '',
+        cloCodes: astCloMap[aId] ?? const [],
+      );
+    }).toList();
+
+    return FapSyllabusImport(
+      fapSyllabusId: syl['fap_syllabus_id'] as int?,
+      subjectCode: code,
+      nameEn: (syl['name_en'] as String?) ?? '',
+      nameNative: (syl['name_native'] as String?) ?? '',
+      degreeLevel: (syl['degree_level'] as String?) ?? '',
+      learningTeachingMethod: (syl['learning_teaching_method'] as String?) ?? '',
+      timeAllocation: (syl['time_allocation'] as String?) ?? '',
+      description: (syl['description'] as String?) ?? '',
+      studentTasks: (syl['student_tasks'] as String?) ?? '',
+      tools: (syl['tools'] as String?) ?? '',
+      scoringScale: syl['scoring_scale'] as int?,
+      decisionNo: (syl['decision_no'] as String?) ?? '',
+      decisionDate: (syl['decision_date'] as String?) ?? '',
+      isApproved: (syl['is_approved'] as int? ?? 0) == 1,
+      isScored: (syl['is_scored'] as int? ?? 0) == 1,
+      minAvgMarkToPass: (syl['min_avg_mark_to_pass'] as num?)?.toDouble(),
+      isActive: (syl['is_active'] as int? ?? 0) == 1,
+      approvedDate: (syl['approved_date'] as String?) ?? '',
+      rawPrerequisiteText: (syl['raw_prerequisite_text'] as String?) ?? '',
+      sourceUrl: (syl['source_url'] as String?) ?? '',
+      materials: materials,
+      clos: clos,
+      sessions: sessions,
+      assessments: assessments,
+    );
+  }
+
+  /// Quét và tự động nạp toàn bộ các file .md trong thư mục `fap_inbox/` vào CSDL.
+  /// Ưu tiên nạp file Curriculum trước (để có khung và mã môn), sau đó nạp các file Syllabus,
+  /// cuối cùng đồng bộ cạnh tiên quyết (prerequisites).
+  Future<Map<String, dynamic>> batchImportFromInbox({Directory? inboxDir}) async {
+    final directoriesToCheck = <Directory>[];
+    if (inboxDir != null) {
+      directoriesToCheck.add(inboxDir);
+    } else {
+      final appSupport = await getApplicationSupportDirectory();
+      directoriesToCheck.add(Directory(p.join(appSupport.path, 'fap_inbox')));
+      final vault = await SettingsService.instance.getVaultPath();
+      if (vault != null && vault.isNotEmpty) {
+        directoriesToCheck.add(Directory(p.join(vault, 'FAP')));
+      }
+    }
+
+    final mdFilesMap = <String, File>{};
+    for (final dir in directoriesToCheck) {
+      if (!await dir.exists()) continue;
+      final entities = await dir.list().toList();
+      for (final e in entities) {
+        if (e is File && e.path.toLowerCase().endsWith('.md')) {
+          mdFilesMap[p.canonicalize(e.path)] = e;
+        }
+      }
+    }
+
+    final mdFiles = mdFilesMap.values.toList();
+    if (mdFiles.isEmpty) {
+      return {
+        'totalFiles': 0,
+        'curricula': 0,
+        'syllabi': 0,
+        'failed': 0,
+        'edges': 0,
+      };
+    }
+
+    var curCount = 0;
+    var sylCount = 0;
+    var failCount = 0;
+
+    final curFiles = <(File, FapParseResult)>[];
+    final sylFiles = <(File, FapParseResult)>[];
+
+    for (final file in mdFiles) {
+      try {
+        final content = await file.readAsString();
+        final parsed = FapMarkdownParser.parse(content);
+        if (parsed.curriculum != null) {
+          curFiles.add((file, parsed));
+        } else if (parsed.syllabus != null) {
+          sylFiles.add((file, parsed));
+        }
+      } catch (_) {
+        failCount++;
+      }
+    }
+
+    // 1. Nhập curricula trước
+    for (final item in curFiles) {
+      try {
+        await importFapCurriculum(item.$2.curriculum!);
+        curCount++;
+      } catch (_) {
+        failCount++;
+      }
+    }
+
+    // 2. Nhập syllabi
+    for (final item in sylFiles) {
+      try {
+        await importFapSyllabus(item.$2.syllabus!);
+        sylCount++;
+      } catch (_) {
+        failCount++;
+      }
+    }
+
+    // 3. Đồng bộ toàn bộ cạnh tiên quyết
+    final edgesCreated = await syncPrerequisitesFromFap();
+
+    return {
+      'totalFiles': mdFiles.length,
+      'curricula': curCount,
+      'syllabi': sylCount,
+      'failed': failCount,
+      'edges': edgesCreated,
+    };
+  }
+
   /// Kích thước file .db theo byte (hiển thị trong Cài đặt).
   Future<int> databaseSizeInBytes() async {
     final path = _dbPath;
@@ -1523,6 +2324,30 @@ class DbService {
     final file = File(path);
     return await file.exists() ? file.length() : 0;
   }
+}
+
+/// Kết quả sau khi ghi một trang Syllabus Details xuống CSDL.
+class FapSyllabusImportResult {
+  final int syllabusId;
+  final String subjectCode;
+  final int materialsCount;
+  final int closCount;
+  final int sessionsCount;
+  final int assessmentsCount;
+
+  const FapSyllabusImportResult({
+    required this.syllabusId,
+    required this.subjectCode,
+    required this.materialsCount,
+    required this.closCount,
+    required this.sessionsCount,
+    required this.assessmentsCount,
+  });
+
+  @override
+  String toString() =>
+      'FapSyllabusImportResult($subjectCode: $materialsCount tai lieu, $closCount CLO, '
+      '$sessionsCount buoi hoc, $assessmentsCount dau diem)';
 }
 
 /// Kết quả sau khi nạp Curriculum vào CSDL SQLite.

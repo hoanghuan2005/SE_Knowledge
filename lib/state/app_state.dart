@@ -210,8 +210,34 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> deleteCurriculum(int id, {bool deleteSubjects = false}) async {
+    final group = _curriculumGroups.firstWhere(
+      (g) => g.curriculumId == id,
+      orElse: () => CurriculumGroup(
+        curriculumId: id,
+        code: '',
+        name: '',
+        major: '',
+        totalCredits: 0,
+        semesters: {},
+        totalSubjects: 0,
+      ),
+    );
+    final deletedCode = group.code;
+
     await _db.deleteCurriculum(id, deleteSubjects: deleteSubjects);
+
+    if (deletedCode.isNotEmpty && _activeCurriculumCode == deletedCode) {
+      _activeCurriculumCode = null;
+    }
     await refresh();
+
+    if (deleteSubjects) {
+      _openNoteTabs.removeWhere((tab) => !_graph.byId.containsKey(tab.id));
+      if (_activeNote != null && !_graph.byId.containsKey(_activeNote!.id)) {
+        _activeNote = _openNoteTabs.isNotEmpty ? _openNoteTabs.last : null;
+      }
+      notifyListeners();
+    }
   }
 
   /// Dọn dẹp thủ công các node PLO rác

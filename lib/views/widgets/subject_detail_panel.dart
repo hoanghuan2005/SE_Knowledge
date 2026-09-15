@@ -3,12 +3,14 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../models/subject.dart';
+import '../../services/db_service.dart';
 import '../../services/obsidian_launcher.dart';
 import '../../services/obsidian_service.dart';
 import '../../services/subject_delete_guard.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
+import '../curriculum/syllabus_detail_dialog.dart';
 import '../subjects/subject_form_dialog.dart';
 import 'subject_chat_panel.dart';
 import 'subject_delete_dialog.dart';
@@ -193,6 +195,7 @@ class _Detail extends StatelessWidget {
           'Kỳ ${subject.semester}  ·  ${subject.credits} tín chỉ',
           style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
         ),
+        _buildSyllabusButton(context, subject),
         if (subject.description.isNotEmpty) ...[
           const SizedBox(height: 14),
           Text(
@@ -282,6 +285,49 @@ class _Detail extends StatelessWidget {
         const SizedBox(height: 12),
         _NoteSection(subject: subject),
       ],
+    );
+  }
+
+  Widget _buildSyllabusButton(BuildContext context, Subject subject) {
+    return FutureBuilder<bool>(
+      future: DbService.instance.hasSyllabus(subject.id!),
+      builder: (context, snapshot) {
+        final hasSyllabus = snapshot.data == true;
+        return Container(
+          margin: const EdgeInsets.only(top: 10, bottom: 2),
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            icon: Icon(
+              hasSyllabus ? Icons.auto_stories : Icons.auto_stories_outlined,
+              size: 16,
+              color: hasSyllabus ? Colors.white : AppColors.obsidianTextMuted,
+            ),
+            label: Text(
+              hasSyllabus ? 'Xem Syllabus FLM' : 'Chưa có Syllabus',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: hasSyllabus ? Colors.white : AppColors.obsidianTextMuted,
+              ),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: hasSyllabus ? AppColors.primary : AppColors.obsidianWorkspace,
+              foregroundColor: Colors.white,
+              elevation: hasSyllabus ? 1 : 0,
+              side: BorderSide(
+                color: hasSyllabus ? AppColors.primary : AppColors.obsidianBorder,
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+            ),
+            onPressed: () => SyllabusDetailDialog.show(
+              context,
+              subjectCode: subject.code,
+              subjectId: subject.id,
+            ),
+          ),
+        );
+      },
     );
   }
 

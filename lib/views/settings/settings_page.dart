@@ -37,6 +37,8 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _obscureKey = true;
   bool _loaded = false;
   int _dbSize = 0;
+  bool _autoSaveFap = true;
+  bool _batchImporting = false;
 
   /// Khoá hai nút Xuất/Nhập Vault trong lúc đang chạy, tránh bấm chồng nhau
   /// làm hai lượt ghi cùng đụng vào một thư mục.
@@ -65,14 +67,46 @@ class _SettingsPageState extends State<SettingsPage> {
     final key = await _settings.getApiKey();
     final model = await _settings.getModel();
     final size = await DbService.instance.databaseSizeInBytes();
+    final autoSave = await _settings.getAutoSaveFapNotes();
     if (!mounted) return;
     setState(() {
       _provider = provider;
       _apiKey.text = key ?? '';
       _model.text = model;
       _dbSize = size;
+      _autoSaveFap = autoSave;
       _loaded = true;
     });
+  }
+
+  Future<void> _batchImportInbox() async {
+    setState(() => _batchImporting = true);
+    try {
+      final res = await DbService.instance.batchImportFromInbox();
+      await AppState.instance.refresh();
+      final size = await DbService.instance.databaseSizeInBytes();
+      if (!mounted) return;
+      setState(() => _dbSize = size);
+      Ui.success(
+        context,
+        'Đã nạp ${res['totalFiles']} files '
+        '(${res['curricula']} khung CTĐT, ${res['syllabi']} syllabus, '
+        '${res['edges']} cạnh tiên quyết).',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Ui.error(context, e);
+    } finally {
+      if (mounted) setState(() => _batchImporting = false);
+    }
+  }
+
+  Future<void> _openInboxFolder() async {
+    final dir = await MdIntakeService.instance.getTargetDirectory();
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    await ObsidianLauncher.openInExplorer(dir.path);
   }
 
   Future<void> _saveAi() async {
@@ -554,6 +588,46 @@ class _SettingsPageState extends State<SettingsPage> {
                   )
                 : 'fap_inbox trong thư mục dữ liệu ứng dụng '
                     '(chưa chọn Obsidian Vault)',
+          ),
+          const SizedBox(height: 12),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text(
+              'Tự động lưu vào CSDL khi nhận từ extension',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            subtitle: const Text(
+              'Ghi trực tiếp vào SQLite và thông báo nhẹ, không bật modal xác nhận từng môn (tiện lợi khi cào 48 môn).',
+              style: TextStyle(fontSize: 12),
+            ),
+            value: _autoSaveFap,
+            onChanged: (val) async {
+              await _settings.setAutoSaveFapNotes(val);
+              setState(() => _autoSaveFap = val);
+            },
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              OutlinedButton.icon(
+                icon: _batchImporting
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.cloud_download_outlined, size: 18),
+                label: const Text('Quét & Nhập toàn bộ fap_inbox'),
+                onPressed: _batchImporting ? null : _batchImportInbox,
+              ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.folder_open, size: 18),
+                label: const Text('Mở thư mục fap_inbox'),
+                onPressed: _openInboxFolder,
+              ),
+            ],
           ),
         ],
       ),

@@ -6,6 +6,7 @@ import '../../services/curriculum_cache_manager.dart';
 import '../../services/curriculum_parser_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
+import 'syllabus_detail_dialog.dart';
 
 /// Màn hình Demo bóc tách và chuẩn hóa khung chương trình FLM (Desktop)
 class CurriculumDemoView extends StatefulWidget {
@@ -1052,6 +1053,19 @@ class _CurriculumDemoViewState extends State<CurriculumDemoView> {
                                 color: AppColors.obsidianTextMuted,
                               ),
                             ),
+                    ),
+                    trailing: Tooltip(
+                      message: 'Xem đề cương chi tiết môn học',
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          side: BorderSide(color: AppColors.obsidianBorder),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                        ),
+                        icon: const Icon(Icons.auto_stories, size: 14, color: AppColors.primaryLight),
+                        label: const Text('Syllabus', style: TextStyle(fontSize: 11)),
+                        onPressed: () => SyllabusDetailDialog.show(context, subjectCode: course.code),
+                      ),
                     ),
                   ),
                 );

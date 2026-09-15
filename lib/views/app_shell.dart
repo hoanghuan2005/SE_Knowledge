@@ -21,6 +21,9 @@ import 'curriculum/curriculum_demo_view.dart';
 import '../models/curriculum.dart';
 import 'curriculum/curriculum_form_dialog.dart';
 import 'fap/fap_import_dialog.dart';
+import '../services/db_service.dart';
+import '../services/settings_service.dart';
+import '../utils/ui_helpers.dart';
 
 /// Intent để bắt phím tắt Ctrl+B toggle thanh bên.
 class _ToggleSidebarIntent extends Intent {
@@ -68,10 +71,40 @@ class _AppShellState extends State<AppShell> {
     super.dispose();
   }
 
-  /// Bóc tách ngay khi nhận được, rồi mở hộp thoại xem trước. Chưa ghi gì vào
-  /// CSDL — người dùng phải xác nhận trên hộp thoại.
+  /// Bóc tách ngay khi nhận được: Nếu bật tự động lưu (mặc định), tự động ghi CSDL
+  /// và báo nhẹ qua SnackBar để không chặn màn hình khi kéo hàng loạt 48 môn.
   Future<void> _onIncomingNote(IncomingNote note) async {
     final result = FapMarkdownParser.parse(note.markdown);
+    if (!mounted) return;
+
+    final autoSave = await SettingsService.instance.getAutoSaveFapNotes();
+    if (autoSave) {
+      try {
+        if (result.syllabus != null) {
+          final res = await DbService.instance.importFapSyllabus(result.syllabus!);
+          await AppState.instance.refresh();
+          if (!mounted) return;
+          Ui.success(
+            context,
+            'Đã tự động lưu Syllabus: ${res.subjectCode} (${res.materialsCount} tài liệu, ${res.closCount} CLO, ${res.assessmentsCount} đầu điểm)',
+          );
+          return;
+        } else if (result.curriculum != null) {
+          final res = await DbService.instance.importFapCurriculum(result.curriculum!);
+          await AppState.instance.refresh();
+          if (!mounted) return;
+          Ui.success(
+            context,
+            'Đã tự động lưu Khung CTĐT: ${res.curriculumCode} (${res.insertedSubjects + res.updatedSubjects} môn, ${res.plos} PLO)',
+          );
+          return;
+        }
+      } catch (e) {
+        if (!mounted) return;
+        Ui.error(context, 'Lỗi tự động lưu: $e');
+      }
+    }
+
     if (!mounted) return;
     await FapImportDialog.show(context, note, result);
   }
@@ -2006,8 +2039,20 @@ class _FilesSidebarContentState extends State<_FilesSidebarContent> {
                             curriculumName: group.name.isNotEmpty ? group.name : group.major,
                             totalCourses: totalSubjectsInGroup,
                           );
-                          if (confirmed == true) {
-                            await state.deleteCurriculum(group.curriculumId!);
+                          if (confirmed != null) {
+                            try {
+                              await state.deleteCurriculum(
+                                group.curriculumId!,
+                                deleteSubjects: confirmed,
+                              );
+                              if (context.mounted) {
+                                Ui.success(context, 'Đã xoá Khung chương trình "${group.code}".');
+                              }
+                            } catch (e) {
+                              if (context.mounted) {
+                                Ui.error(context, 'Lỗi khi xoá: $e');
+                              }
+                            }
                           }
                         }
                       },

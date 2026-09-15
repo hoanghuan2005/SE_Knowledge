@@ -15,6 +15,19 @@ class Ui {
       );
   }
 
+  static void info(BuildContext context, String message) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: AppColors.primary,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+  }
+
   static void success(BuildContext context, String message) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context)
