@@ -231,7 +231,6 @@ class _AppShellState extends State<AppShell> {
                                       subject: AppState.instance.activeNote!,
                                     )
                                   : IndexedStack(
-                                      key: ValueKey(AppState.instance.isDark),
                                       index: _index,
                                       children: const [
                                         GraphPage(),
@@ -1892,54 +1891,6 @@ class _ObsidianWorkspaceTabBar extends StatelessWidget {
             ),
           ),
 
-          const SizedBox(width: 8),
-
-          // Nút đổi theme nhanh
-          IconButton(
-            icon: Icon(
-              isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-              size: 16,
-            ),
-            color: isDark ? const Color(0xFFFFC107) : AppColors.shellText,
-            splashRadius: 14,
-            tooltip: isDark
-                ? 'Giao diện Tối (Bấm để chuyển Sáng)'
-                : 'Giao diện Sáng (Bấm để chuyển Tối)',
-            onPressed: () => AppState.instance.toggleTheme(),
-          ),
-          const SizedBox(width: 4),
-
-          // Shortcut gợi ý
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: AppColors.shellHover,
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: AppColors.shellBorder),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.keyboard, size: 12, color: AppColors.shellTextMuted),
-                const SizedBox(width: 4),
-                Text(
-                  'Ctrl + B để đóng/mở sidebar',
-                  style: TextStyle(fontSize: 10.5, color: AppColors.shellTextMuted),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-
-          IconButton(
-            icon: Icon(
-              isSidebarOpen ? Icons.view_sidebar : Icons.view_sidebar_outlined,
-              size: 16,
-            ),
-            color: AppColors.shellTextMuted,
-            splashRadius: 14,
-            tooltip: isSidebarOpen ? 'Thu gọn sidebar' : 'Mở sidebar',
-            onPressed: onToggleSidebar,
-          ),
         ],
       ),
     );
