@@ -1,6 +1,10 @@
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
 import '../../services/db_service.dart';
+import '../../services/md_intake_service.dart';
+import '../../services/obsidian_launcher.dart';
 import '../../services/settings_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
@@ -33,6 +37,8 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _obscureKey = true;
   bool _loaded = false;
   int _dbSize = 0;
+  bool _autoSaveFap = true;
+  bool _batchImporting = false;
 
   /// Khoá hai nút Xuất/Nhập Vault trong lúc đang chạy, tránh bấm chồng nhau
   /// làm hai lượt ghi cùng đụng vào một thư mục.
@@ -61,14 +67,46 @@ class _SettingsPageState extends State<SettingsPage> {
     final key = await _settings.getApiKey();
     final model = await _settings.getModel();
     final size = await DbService.instance.databaseSizeInBytes();
+    final autoSave = await _settings.getAutoSaveFapNotes();
     if (!mounted) return;
     setState(() {
       _provider = provider;
       _apiKey.text = key ?? '';
       _model.text = model;
       _dbSize = size;
+      _autoSaveFap = autoSave;
       _loaded = true;
     });
+  }
+
+  Future<void> _batchImportInbox() async {
+    setState(() => _batchImporting = true);
+    try {
+      final res = await DbService.instance.batchImportFromInbox();
+      await AppState.instance.refresh();
+      final size = await DbService.instance.databaseSizeInBytes();
+      if (!mounted) return;
+      setState(() => _dbSize = size);
+      Ui.success(
+        context,
+        'Đã nạp ${res['totalFiles']} files '
+        '(${res['curricula']} khung CTĐT, ${res['syllabi']} syllabus, '
+        '${res['edges']} cạnh tiên quyết).',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Ui.error(context, e);
+    } finally {
+      if (mounted) setState(() => _batchImporting = false);
+    }
+  }
+
+  Future<void> _openInboxFolder() async {
+    final dir = await MdIntakeService.instance.getTargetDirectory();
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    await ObsidianLauncher.openInExplorer(dir.path);
   }
 
   Future<void> _saveAi() async {
@@ -215,6 +253,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   _aiCard(),
                   const SizedBox(height: 16),
                   _fapCard(),
+                  const SizedBox(height: 16),
+                  _intakeCard(),
                   const SizedBox(height: 16),
                   _storageCard(),
                   const SizedBox(height: 16),
@@ -390,12 +430,38 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// Khối Obsidian Vault.
   ///
-  /// "Xuất ra Vault" và "Nhập từ Vault" đã chạy thật, dùng chung backend với
-  /// tab Vault. Hai nút còn lại vẫn là mock (Giai đoạn 2,
-  /// Prompts_GiaiDoan_2345.md): "Browse..." cần `file_selector`
-  /// (`getDirectoryPath`, xem `_pickVault()` trong `vault_page.dart`), "Mở
-  /// bằng Obsidian" cần thêm package `url_launcher` để mở
-  /// `obsidian://open?path=...`.
+  /// Trỏ tới thư mục Vault và mở nó bằng app Obsidian ngoài.
+  ///
+  /// Dùng chung `getDirectoryPath` của `file_selector` như `_pickVault()`
+  /// trong `vault_page.dart`, và [ObsidianLauncher] cho URI `obsidian://`.
+  Future<void> _browseVault() async {
+    final path = await getDirectoryPath(confirmButtonText: 'Chọn Vault');
+    if (path == null) return;
+    await AppState.instance.setVaultPath(path);
+    if (!mounted) return;
+    Ui.success(context, 'Đã trỏ Vault tới $path');
+  }
+
+  /// Mở cả Vault bằng Obsidian; thất bại thì lùi về File Explorer.
+  Future<void> _openVaultInObsidian() async {
+    final path = AppState.instance.vaultPath;
+    if (path == null) return;
+
+    final ok = await ObsidianLauncher.openVault(path);
+    if (ok || !mounted) return;
+
+    Ui.error(
+      context,
+      'Không mở được bằng Obsidian. Thường do một trong hai: máy chưa cài '
+      'Obsidian, hoặc thư mục này chưa từng được mở như một Vault trong '
+      'Obsidian (Obsidian không tự thêm vault lạ qua URI). Đang mở bằng '
+      'File Explorer thay thế.',
+    );
+    await ObsidianLauncher.openInExplorer(path);
+  }
+
+  /// "Xuất ra Vault" và "Nhập từ Vault" dùng chung backend với tab Vault;
+  /// "Browse..." và "Mở bằng Obsidian" nay cũng đã chạy thật.
   Widget _vaultCard() {
     return ListenableBuilder(
       listenable: AppState.instance,
@@ -406,8 +472,9 @@ class _SettingsPageState extends State<SettingsPage> {
           title: 'Obsidian Vault',
           description:
               'Trỏ tới đúng thư mục Vault trên máy, mở thẳng bằng app '
-              'Obsidian, hoặc đồng bộ hai chiều với CSDL. Xuất/Nhập đã chạy '
-              'thật; Browse và Mở bằng Obsidian còn là bản mock.',
+              'Obsidian, hoặc đồng bộ hai chiều với CSDL. Muốn mở bằng '
+              'Obsidian thì thư mục này phải từng được mở như một Vault '
+              'trong Obsidian ít nhất một lần.',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -423,12 +490,12 @@ class _SettingsPageState extends State<SettingsPage> {
                   OutlinedButton.icon(
                     icon: const Icon(Icons.folder_open, size: 18),
                     label: const Text('Browse...'),
-                    onPressed: () => _mockAction('Browse thư mục Vault'),
+                    onPressed: _browseVault,
                   ),
                   OutlinedButton.icon(
                     icon: const Icon(Icons.launch, size: 18),
                     label: const Text('Mở bằng Obsidian'),
-                    onPressed: () => _mockAction('Mở Vault bằng app Obsidian'),
+                    onPressed: vaultPath == null ? null : _openVaultInObsidian,
                   ),
                   OutlinedButton.icon(
                     icon: const Icon(Icons.upload_file, size: 18),
@@ -473,6 +540,100 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  /// Trạng thái cổng nhận markdown từ extension Chrome (Giai đoạn 5.2').
+  ///
+  /// Không có nút bật/tắt: server lên cùng app và chỉ nghe ở loopback, nên
+  /// không có gì để người dùng phải quyết định.
+  Widget _intakeCard() {
+    final intake = MdIntakeService.instance;
+    final running = intake.isRunning;
+    return _Section(
+      icon: Icons.download_for_offline_outlined,
+      title: 'Nhận dữ liệu từ Chrome',
+      description:
+          'Mở trang FAP trong Chrome (đã đăng nhập sẵn) rồi bấm nút của '
+          'extension "Page to Markdown Note" — trang sẽ được gửi thẳng vào đây '
+          'để xem trước trước khi ghi vào CSDL.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                running ? Icons.check_circle : Icons.error_outline,
+                size: 16,
+                color: running ? AppColors.success : AppColors.error,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SelectableText(
+                  intake.statusText,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: running
+                        ? AppColors.textPrimary
+                        : AppColors.error,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _KeyValue(
+            label: 'Thư mục nhận file',
+            value: AppState.instance.hasVault
+                ? p.join(
+                    AppState.instance.vaultPath!,
+                    MdIntakeService.vaultSubfolder,
+                  )
+                : 'fap_inbox trong thư mục dữ liệu ứng dụng '
+                    '(chưa chọn Obsidian Vault)',
+          ),
+          const SizedBox(height: 12),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text(
+              'Tự động lưu vào CSDL khi nhận từ extension',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            subtitle: const Text(
+              'Ghi trực tiếp vào SQLite và thông báo nhẹ, không bật modal xác nhận từng môn (tiện lợi khi cào 48 môn).',
+              style: TextStyle(fontSize: 12),
+            ),
+            value: _autoSaveFap,
+            onChanged: (val) async {
+              await _settings.setAutoSaveFapNotes(val);
+              setState(() => _autoSaveFap = val);
+            },
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              OutlinedButton.icon(
+                icon: _batchImporting
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.cloud_download_outlined, size: 18),
+                label: const Text('Quét & Nhập toàn bộ fap_inbox'),
+                onPressed: _batchImporting ? null : _batchImportInbox,
+              ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.folder_open, size: 18),
+                label: const Text('Mở thư mục fap_inbox'),
+                onPressed: _openInboxFolder,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _storageCard() {
     return ListenableBuilder(
       listenable: AppState.instance,
@@ -497,6 +658,7 @@ class _SettingsPageState extends State<SettingsPage> {
               _KeyValue(
                 label: 'Dữ liệu hiện có',
                 value:
+                    '${state.stats['curriculums'] ?? 0} khung CTĐT · '
                     '${state.stats['subjects'] ?? 0} môn · '
                     '${state.stats['edges'] ?? 0} liên kết · '
                     '${state.stats['orphans'] ?? 0} môn rời rạc',

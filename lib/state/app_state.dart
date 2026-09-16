@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import '../models/graph_data.dart';
 import '../models/prerequisite.dart';
 import '../models/subject.dart';
+import '../models/curriculum.dart';
 import '../services/db_service.dart';
 import '../services/obsidian_service.dart';
 import '../services/settings_service.dart';
+import '../services/curriculum_parser_service.dart';
 import '../services/subject_delete_guard.dart';
 import '../utils/app_colors.dart';
 
@@ -88,6 +90,45 @@ class AppState extends ChangeNotifier {
   Map<String, int> _stats = const {'subjects': 0, 'edges': 0, 'orphans': 0};
   Map<String, int> get stats => _stats;
 
+  List<Map<String, dynamic>> _curriculums = [];
+  List<Map<String, dynamic>> get curriculums => _curriculums;
+
+  List<CurriculumGroup> _curriculumGroups = [];
+  List<CurriculumGroup> get curriculumGroups => _curriculumGroups;
+
+  String? _activeCurriculumCode;
+  String? get activeCurriculumCode => _activeCurriculumCode;
+
+  void setActiveCurriculum(String? code) {
+    if (_activeCurriculumCode == code) return;
+    _activeCurriculumCode = code;
+    notifyListeners();
+  }
+
+  /// Dữ liệu đồ thị lọc theo Khung CTĐT đang hoạt động (null = Toàn bộ môn trong DB)
+  GraphData get currentGraph {
+    if (_activeCurriculumCode == null) return _graph;
+
+    CurriculumGroup? group;
+    for (final g in _curriculumGroups) {
+      if (g.code == _activeCurriculumCode) {
+        group = g;
+        break;
+      }
+    }
+    if (group == null) return _graph;
+
+    final groupSubjects = group.semesters.values.expand((list) => list).toList();
+    final groupSubjectIds = groupSubjects.map((s) => s.id).whereType<int>().toSet();
+
+    final groupEdges = _graph.edges.where((e) {
+      return groupSubjectIds.contains(e.subjectId) &&
+          groupSubjectIds.contains(e.prerequisiteId);
+    }).toList();
+
+    return GraphData(subjects: groupSubjects, edges: groupEdges);
+  }
+
   /// Nạp lần đầu khi app khởi động.
   Future<void> bootstrap() async {
     final savedTheme = await _settings.getThemeMode();
@@ -95,6 +136,10 @@ class AppState extends ChangeNotifier {
     AppColors.isDark = (_themeMode == ThemeMode.dark);
 
     _vaultPath = await _settings.getVaultPath();
+
+    // Dọn dẹp các node PLO rác cũ nếu có trong CSDL
+    await _db.cleanInvalidPloSubjects();
+
     await refresh();
   }
 
@@ -104,6 +149,9 @@ class AppState extends ChangeNotifier {
     try {
       _graph = await _db.loadGraph();
       _stats = await _db.stats();
+      _curriculums = await _db.getCurriculumsWithStats();
+      _curriculumGroups = await _db.getCurriculumTreeData();
+
       if (_selectedSubjectId != null &&
           !_graph.byId.containsKey(_selectedSubjectId)) {
         _selectedSubjectId = null;
@@ -117,6 +165,88 @@ class AppState extends ChangeNotifier {
   void select(int? subjectId) {
     _selectedSubjectId = subjectId;
     notifyListeners();
+  }
+
+  // --- Quản lý Khung chương trình (Curriculum CRUD) ---
+
+  Future<int> addCurriculum({
+    required String code,
+    required String name,
+    required String major,
+    int totalCredits = 145,
+    String decisionNo = '',
+    String description = '',
+  }) async {
+    final id = await _db.insertCurriculum(
+      code: code,
+      name: name,
+      major: major,
+      totalCredits: totalCredits,
+      decisionNo: decisionNo,
+      description: description,
+    );
+    await refresh();
+    return id;
+  }
+
+  Future<void> updateCurriculum(int id, {
+    String? code,
+    String? name,
+    String? major,
+    int? totalCredits,
+    String? decisionNo,
+    String? description,
+  }) async {
+    await _db.updateCurriculum(
+      id,
+      code: code,
+      name: name,
+      major: major,
+      totalCredits: totalCredits,
+      decisionNo: decisionNo,
+      description: description,
+    );
+    await refresh();
+  }
+
+  Future<void> deleteCurriculum(int id, {bool deleteSubjects = false}) async {
+    final group = _curriculumGroups.firstWhere(
+      (g) => g.curriculumId == id,
+      orElse: () => CurriculumGroup(
+        curriculumId: id,
+        code: '',
+        name: '',
+        major: '',
+        totalCredits: 0,
+        semesters: {},
+        totalSubjects: 0,
+      ),
+    );
+    final deletedCode = group.code;
+
+    await _db.deleteCurriculum(id, deleteSubjects: deleteSubjects);
+
+    if (deletedCode.isNotEmpty && _activeCurriculumCode == deletedCode) {
+      _activeCurriculumCode = null;
+    }
+    await refresh();
+
+    if (deleteSubjects) {
+      _openNoteTabs.removeWhere((tab) => !_graph.byId.containsKey(tab.id));
+      if (_activeNote != null && !_graph.byId.containsKey(_activeNote!.id)) {
+        _activeNote = _openNoteTabs.isNotEmpty ? _openNoteTabs.last : null;
+      }
+      notifyListeners();
+    }
+  }
+
+  /// Dọn dẹp thủ công các node PLO rác
+  Future<int> cleanLegacyPloSubjects() async {
+    final count = await _db.cleanInvalidPloSubjects();
+    if (count > 0) {
+      await refresh();
+    }
+    return count;
   }
 
   // --- Môn học ---
@@ -263,5 +393,60 @@ class AppState extends ChangeNotifier {
     await _db.resetAll();
     _selectedSubjectId = null;
     await refresh();
+  }
+
+  // --- Curriculum (FLM Scraper & Cache & Auto DB Sync) ---
+  Curriculum? _curriculum;
+  Curriculum? get curriculum => _curriculum;
+
+  bool _isScrapingCurriculum = false;
+  bool get isScrapingCurriculum => _isScrapingCurriculum;
+
+  String? _curriculumError;
+  String? get curriculumError => _curriculumError;
+
+  CurriculumImportResult? _lastImportResult;
+  CurriculumImportResult? get lastImportResult => _lastImportResult;
+
+  /// Nạp đối tượng Curriculum vào CSDL SQLite và cập nhật toàn bộ đồ thị
+  Future<CurriculumImportResult> importCurriculumToDb(Curriculum curriculum) async {
+    final res = await _db.importCurriculum(curriculum);
+    _lastImportResult = res;
+    await refresh();
+    return res;
+  }
+
+  /// Bóc tách chương trình học. Mặc định [autoSaveToDb] = true:
+  /// Ngay khi cào xong sẽ tự động lưu thẳng vào CSDL SQLite và làm mới đồ thị.
+  Future<Curriculum> loadCurriculum({
+    String? rawHtml,
+    bool forceRefresh = false,
+    bool autoSaveToDb = true,
+  }) async {
+    _isScrapingCurriculum = true;
+    _curriculumError = null;
+    notifyListeners();
+
+    try {
+      final result = await CurriculumParserService.instance.getCurriculum(
+        rawHtml: rawHtml,
+        forceRefresh: forceRefresh,
+      );
+      _curriculum = result;
+
+      // Tự động lưu vào SQLite DB nếu có môn học hợp lệ
+      if (autoSaveToDb && result.semesters.isNotEmpty) {
+        _lastImportResult = await _db.importCurriculum(result);
+        await refresh();
+      }
+
+      return result;
+    } catch (e) {
+      _curriculumError = e.toString();
+      rethrow;
+    } finally {
+      _isScrapingCurriculum = false;
+      notifyListeners();
+    }
   }
 }

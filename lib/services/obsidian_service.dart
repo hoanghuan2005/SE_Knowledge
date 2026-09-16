@@ -364,9 +364,13 @@ class ObsidianService {
     await file.writeAsString(content, flush: true);
   }
 
-  Future<void> deleteNote(String filePath) async {
+  /// Trả `true` nếu file có thật và đã bị xoá, `false` nếu vốn không tồn tại.
+  /// Phân biệt hai ca để lớp gọi không báo "đã xoá file" khi chẳng xoá gì.
+  Future<bool> deleteNote(String filePath) async {
     final file = File(filePath);
-    if (await file.exists()) await file.delete();
+    if (!await file.exists()) return false;
+    await file.delete();
+    return true;
   }
 
   // ------------------------------------------------------------------

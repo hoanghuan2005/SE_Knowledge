@@ -115,4 +115,13 @@ class SettingsService {
 
   Future<void> setThemeMode(String mode) async =>
       (await _p).setString(AppConstants.keyThemeMode, mode);
+
+  // --- FAP / FLM Auto-Save ---
+
+  Future<bool> getAutoSaveFapNotes() async =>
+      (await _p).getBool('auto_save_fap_notes') ?? true;
+
+  Future<void> setAutoSaveFapNotes(bool value) async =>
+      (await _p).setBool('auto_save_fap_notes', value);
 }
+

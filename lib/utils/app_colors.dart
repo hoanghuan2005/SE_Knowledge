@@ -53,6 +53,9 @@ class AppColors {
       isDark ? obsidianTextDark : obsidianTextLight;
   static Color get obsidianTextMuted =>
       isDark ? obsidianTextMutedDark : obsidianTextMutedLight;
+  static Color get obsidianCard =>
+      isDark ? const Color(0xFF1E1E24) : Colors.white;
+  static Color get obsidianAccent => primary;
 
   // Neutral (Adaptive theo Theme)
   static Color get background =>

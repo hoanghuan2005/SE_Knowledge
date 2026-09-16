@@ -4,6 +4,7 @@ import '../../models/subject.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
+import '../curriculum/syllabus_detail_dialog.dart';
 import '../widgets/subject_detail_panel.dart';
 import 'subject_form_dialog.dart';
 
@@ -64,6 +65,12 @@ class _SubjectsPageState extends State<SubjectsPage> {
                   ),
                 ),
                 const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.auto_stories, size: 18),
+                  label: const Text('Tra cứu Syllabus'),
+                  onPressed: () => SyllabusDetailDialog.show(context),
+                ),
+                const SizedBox(width: 8),
                 OutlinedButton.icon(
                   icon: const Icon(Icons.route_outlined, size: 18),
                   label: const Text('Gợi ý lộ trình'),
@@ -212,7 +219,7 @@ class _Table extends StatelessWidget {
               SizedBox(width: 72, child: _Th('TÍN CHỈ')),
               SizedBox(width: 96, child: _Th('TIÊN QUYẾT')),
               SizedBox(width: 88, child: _Th('MỞ RA')),
-              SizedBox(width: 52),
+              SizedBox(width: 76),
             ],
           ),
         ),
@@ -281,11 +288,25 @@ class _Table extends StatelessWidget {
                         SizedBox(width: 96, child: _Td('$inDeg môn')),
                         SizedBox(width: 88, child: _Td('$outDeg môn')),
                         SizedBox(
-                          width: 52,
-                          child: IconButton(
-                            tooltip: 'Thêm môn tiên quyết',
-                            icon: const Icon(Icons.add_link, size: 18),
-                            onPressed: () => AddEdgeDialog.show(context, s),
+                          width: 76,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              IconButton(
+                                tooltip: 'Xem Syllabus FLM',
+                                icon: const Icon(Icons.auto_stories_outlined, size: 18),
+                                onPressed: () => SyllabusDetailDialog.show(
+                                  context,
+                                  subjectCode: s.code,
+                                  subjectId: s.id,
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Thêm môn tiên quyết',
+                                icon: const Icon(Icons.add_link, size: 18),
+                                onPressed: () => AddEdgeDialog.show(context, s),
+                              ),
+                            ],
                           ),
                         ),
                       ],
