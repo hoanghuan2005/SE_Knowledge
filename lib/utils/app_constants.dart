@@ -22,7 +22,7 @@ class AppConstants {
       'https://generativelanguage.googleapis.com/v1beta';
   static const String openAiBaseUrl = 'https://api.openai.com/v1';
 
-  static const String defaultGeminiModel = 'gemini-2.0-flash';
+  static const String defaultGeminiModel = 'gemini-3.6-flash';
   static const String defaultOpenAiModel = 'gpt-4o-mini';
 
   // --- Kích thước cửa sổ desktop ---
