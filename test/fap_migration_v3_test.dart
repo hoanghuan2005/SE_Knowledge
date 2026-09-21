@@ -39,7 +39,7 @@ void main() {
     final db = await DbService.instance.database;
 
     final version = (await db.rawQuery('PRAGMA user_version')).first.values.first;
-    expect(version, 3);
+    expect(version, DbService.dbVersion);
 
     final subjects = await db.query('subjects', orderBy: 'code ASC');
     expect(subjects.map((r) => r['code']).toList(), ['MAD101', 'PRF192']);

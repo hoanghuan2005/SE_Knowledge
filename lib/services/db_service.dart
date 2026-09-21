@@ -24,7 +24,7 @@ class DbService {
   static final DbService instance = DbService._();
 
   static const String dbFileName = 'se_knowledge.db';
-  static const int dbVersion = 3;
+  static const int dbVersion = 5;
 
   Database? _db;
   String? _dbPath;
@@ -87,7 +87,11 @@ class DbService {
         description TEXT    NOT NULL DEFAULT '',
         note_path   TEXT,
         created_at  TEXT    NOT NULL,
-        updated_at  TEXT    NOT NULL
+        updated_at  TEXT    NOT NULL,
+        -- 1 = kỳ/tín chỉ là giá trị tạm gán khi tạo môn từ một trang Syllabus
+        -- lẻ (trang đó không có cột Semester). Trang Curriculum Details đầu
+        -- tiên xác nhận kỳ thật của môn được phép ghi đè khi cờ này bật.
+        semester_is_placeholder INTEGER NOT NULL DEFAULT 0
       )
     ''');
 
@@ -181,6 +185,26 @@ class DbService {
 
     if (oldVersion < 3) {
       await _createFapTables(db);
+    }
+
+    if (oldVersion < 4) {
+      await db.execute(
+        'ALTER TABLE subjects ADD COLUMN semester_is_placeholder INTEGER NOT NULL DEFAULT 0',
+      );
+    }
+
+    if (oldVersion < 5) {
+      // Vá ngược cho dữ liệu đã nhập TRƯỚC khi có cột `semester_is_placeholder`
+      // (v4): những môn có bản ghi trong `syllabi` (nghĩa là từng được tạo chỉ
+      // từ một trang Syllabus lẻ, không có cột kỳ) nhưng chưa từng gắn với
+      // `curriculum_subjects` nào (chưa có Curriculum Details nào xác nhận kỳ
+      // thật) thì coi kỳ hiện tại là giá trị tạm, cho phép ghi đè sau này.
+      await db.execute('''
+        UPDATE subjects
+        SET semester_is_placeholder = 1
+        WHERE id IN (SELECT subject_id FROM syllabi)
+          AND id NOT IN (SELECT subject_id FROM curriculum_subjects)
+      ''');
     }
   }
 
@@ -1479,7 +1503,7 @@ class DbService {
 
     final existing = await db.query(
       'subjects',
-      columns: ['id'],
+      columns: ['id', 'semester_is_placeholder'],
       where: 'code = ?',
       whereArgs: [normalized],
       limit: 1,
@@ -1487,9 +1511,23 @@ class DbService {
 
     if (existing.isNotEmpty) {
       final id = existing.first['id'] as int;
+      final values = <String, Object?>{'name': name, 'updated_at': now};
+
+      // Môn này có thể chỉ tồn tại vì được tạo tạm từ một trang Syllabus lẻ
+      // (không có cột Semester nên `importFapSyllabus` phải gán tạm kỳ 1 và
+      // đánh dấu `semester_is_placeholder = 1`). Trang Curriculum Details đầu
+      // tiên xác nhận kỳ thật của môn thì được phép ghi đè giá trị tạm đó;
+      // môn do người dùng tự thêm hoặc đã có kỳ thật từ trước thì không đụng.
+      final placeholder = existing.first['semester_is_placeholder'] == 1;
+      if (placeholder) {
+        values['semester'] = semester > 0 ? semester : 1;
+        values['credits'] = credits;
+        values['semester_is_placeholder'] = 0;
+      }
+
       await db.update(
         'subjects',
-        {'name': name, 'updated_at': now},
+        values,
         where: 'id = ?',
         whereArgs: [id],
       );
@@ -1745,6 +1783,10 @@ class DbService {
           'name': data.fullName.isNotEmpty ? data.fullName : code,
           'semester': 1,
           'credits': 3,
+          // Trang Syllabus Details không có cột kỳ học, nên kỳ 1 ở đây chỉ là
+          // giá trị tạm. Đánh dấu để lần nhập Curriculum Details sau này (nếu
+          // có) được phép ghi đè bằng kỳ thật của môn.
+          'semester_is_placeholder': 1,
           'description': data.description,
           'created_at': now,
           'updated_at': now,
