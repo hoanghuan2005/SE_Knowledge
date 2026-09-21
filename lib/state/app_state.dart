@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/graph_data.dart';
@@ -9,6 +11,7 @@ import '../services/obsidian_service.dart';
 import '../services/settings_service.dart';
 import '../services/curriculum_parser_service.dart';
 import '../services/subject_delete_guard.dart';
+import '../services/window_theme_service.dart';
 import '../utils/app_colors.dart';
 
 /// Store trạng thái dùng chung, không cần package quản lý state bên ngoài.
@@ -37,6 +40,7 @@ class AppState extends ChangeNotifier {
     _themeMode = mode;
     AppColors.isDark = (mode == ThemeMode.dark);
     await _settings.setThemeMode(mode == ThemeMode.dark ? 'dark' : 'light');
+    unawaited(WindowThemeService.setDarkTitleBar(AppColors.isDark));
     notifyListeners();
   }
 
@@ -134,6 +138,7 @@ class AppState extends ChangeNotifier {
     final savedTheme = await _settings.getThemeMode();
     _themeMode = savedTheme == 'light' ? ThemeMode.light : ThemeMode.dark;
     AppColors.isDark = (_themeMode == ThemeMode.dark);
+    unawaited(WindowThemeService.setDarkTitleBar(AppColors.isDark));
 
     _vaultPath = await _settings.getVaultPath();
 
