@@ -1665,14 +1665,18 @@ class _FileItemTileState extends State<_FileItemTile> {
                 color: AppColors.obsidianTextMuted,
               ),
               const SizedBox(width: 6),
-              Text(
-                s.code,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: active
-                      ? (AppColors.isDark ? Colors.white : AppColors.primaryDark)
-                      : AppColors.obsidianText,
+              Flexible(
+                child: Text(
+                  s.code,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: active
+                        ? (AppColors.isDark ? Colors.white : AppColors.primaryDark)
+                        : AppColors.obsidianText,
+                  ),
                 ),
               ),
               const SizedBox(width: 6),
