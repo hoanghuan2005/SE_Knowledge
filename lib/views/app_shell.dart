@@ -1204,7 +1204,7 @@ class _SettingsSidebarContent extends StatelessWidget {
         Expanded(
           child: ListView(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            children: const [
+            children: [
               _SettingsMenuItem(
                 icon: Icons.psychology_outlined,
                 title: 'Nhà cung cấp AI',
