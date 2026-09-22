@@ -10,6 +10,7 @@ import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_constants.dart';
 import '../../utils/ui_helpers.dart';
+import '../vault/vault_export_flow.dart';
 import '../vault/vault_import_flow.dart';
 
 /// Cấu hình cục bộ và thông tin kiến trúc (tiện lúc demo bảo vệ đồ án).
@@ -74,11 +75,15 @@ class _SettingsPageState extends State<SettingsPage> {
       final size = await DbService.instance.databaseSizeInBytes();
       if (!mounted) return;
       setState(() => _dbSize = size);
+      final skipped = res['skipped'] as int? ?? 0;
+      final failed = res['failed'] as int? ?? 0;
       Ui.success(
         context,
-        'Đã nạp ${res['totalFiles']} files '
-        '(${res['curricula']} khung CTĐT, ${res['syllabi']} syllabus, '
-        '${res['edges']} cạnh tiên quyết).',
+        'Đã quét ${res['totalFiles']} file .md: '
+        'nạp ${res['curricula']} khung CTĐT, ${res['syllabi']} syllabus, '
+        '${res['edges']} cạnh tiên quyết'
+        '${skipped > 0 ? ', bỏ qua $skipped file không phải trang FAP' : ''}'
+        '${failed > 0 ? ', lỗi $failed file' : ''}.',
       );
     } catch (e) {
       if (!mounted) return;
@@ -134,29 +139,16 @@ class _SettingsPageState extends State<SettingsPage> {
   // EXPORT / IMPORT VAULT — logic thật, dùng chung backend với tab Vault
   // ------------------------------------------------------------------
 
-  /// Ghi toàn bộ môn trong SQLite thành file `.md` trong Vault.
+  /// Ghi môn trong SQLite thành file `.md` trong Vault.
   ///
-  /// `exportAll` gọi `mergeMarkdown` cho file đã tồn tại, nên chỉ ba khối app
-  /// sở hữu (front matter, "Môn tiên quyết", "Mở ra các môn") bị ghi đè; mọi
-  /// mục người dùng tự thêm được giữ nguyên.
+  /// Hộp thoại hỏi trước ghi những môn nào — cả CSDL, một tệp môn học, một kỳ,
+  /// hay chọn tay. Với file đã tồn tại thì `mergeMarkdown` chỉ ghi đè ba khối
+  /// app sở hữu (front matter, "Môn tiên quyết", "Mở ra các môn"); mọi mục
+  /// người dùng tự thêm được giữ nguyên.
   Future<void> _exportToVault() async {
-    final ok = await Ui.confirm(
-      context,
-      title: 'Ghi đồ thị ra Vault?',
-      message:
-          'Mỗi môn trong CSDL sẽ thành một file <MÃ MÔN>.md, kèm front matter '
-          'và các liên kết [[...]]. Phần ghi chú bạn tự viết trong file vẫn '
-          'được giữ lại.',
-      confirmLabel: 'Ghi ra Vault',
-    );
-    if (!ok || !mounted) return;
-
     setState(() => _vaultBusy = true);
     try {
-      final count = await AppState.instance.exportToVault();
-      if (mounted) Ui.success(context, 'Đã ghi $count file .md ra Vault.');
-    } catch (e) {
-      if (mounted) Ui.error(context, e);
+      await VaultExportFlow.run(context);
     } finally {
       if (mounted) setState(() => _vaultBusy = false);
     }

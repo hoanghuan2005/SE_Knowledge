@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:se_knowledge/services/db_service.dart';
 import 'package:se_knowledge/services/fap_markdown_parser.dart';
+import 'package:se_knowledge/services/obsidian_service.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// 10 bảng FAP mà migration v3 phải tạo ra.
@@ -447,6 +448,101 @@ PR101
         await mockInbox.delete(recursive: true);
       }
     });
+
+    // Bản extension mới giữ nguyên bảng Markdown. Trước khi parser biết đọc
+    // bảng, cả hai file dưới đây bóc ra rỗng: không môn, không syllabus, và
+    // quan trọng nhất là không cạnh tiên quyết nào.
+    test('batchImportFromInbox nạp được file .md dạng bảng và nối tiên quyết', () async {
+      final mockInbox = await Directory.systemTemp.createTemp('mock_inbox_tbl');
+      try {
+        await File('${mockInbox.path}/curriculum.md')
+            .writeAsString(_curriculumTableMd);
+        // Nằm trong thư mục con để kiểm luôn việc quét đệ quy.
+        final sub = Directory('${mockInbox.path}/BIT_SE_K19B');
+        await sub.create();
+        await File('${sub.path}/PRO192c_12288.md')
+            .writeAsString(_syllabusTableMd);
+
+        final res = await DbService.instance.batchImportFromInbox(inboxDir: mockInbox);
+        expect(res['curricula'], 1);
+        expect(res['syllabi'], 1);
+        expect(res['failed'], 0);
+
+        final db = await DbService.instance.database;
+        final codes = (await db.query('subjects', columns: ['code']))
+            .map((r) => r['code'] as String)
+            .toList();
+        expect(codes, containsAll(['PRF192', 'PRO192C', 'LAB211']));
+
+        final edges = await db.rawQuery('''
+          SELECT s.code AS subject, pre.code AS prereq
+          FROM prerequisites p
+          JOIN subjects s   ON s.id = p.subject_id
+          JOIN subjects pre ON pre.id = p.prerequisite_id
+        ''');
+        final pairs = edges.map((e) => '${e['prereq']}->${e['subject']}').toSet();
+        expect(pairs, contains('PRF192->PRO192C'));
+        // Khung ghi tiên quyết của LAB211 là "PRO192" nhưng môn trong khung
+        // mang mã biến thể "PRO192c" — vẫn phải nối được.
+        expect(pairs, contains('PRO192C->LAB211'));
+      } finally {
+        await mockInbox.delete(recursive: true);
+      }
+    });
+
+    test('nạp từ Vault: trang FAP thô không đẻ ra môn rác mang tên file', () async {
+      final vault = await Directory.systemTemp.createTemp('mock_vault');
+      try {
+        final fapDir = Directory('${vault.path}/FAP');
+        await fapDir.create();
+        await File('${fapDir.path}/curriculum.md').writeAsString(_curriculumTableMd);
+        await File('${fapDir.path}/PRO192c_12288.md').writeAsString(_syllabusTableMd);
+
+        final plan = await ObsidianService.instance.planImport(vault.path);
+        // Cả hai file đều là trang FAP nên không file nào được coi là ghi chú môn.
+        expect(plan.fapPages, hasLength(2));
+        expect(plan.toCreate, isEmpty);
+        expect(plan.isEmpty, isFalse);
+
+        final report = await ObsidianService.instance.applyPlan(plan);
+        expect(report.fapPagesImported, 2);
+
+        final db = await DbService.instance.database;
+        final codes = (await db.query('subjects', columns: ['code']))
+            .map((r) => r['code'] as String)
+            .toList();
+        expect(codes, containsAll(['PRF192', 'PRO192C']));
+        expect(codes, isNot(contains('PRO192C_12288')));
+        expect(await db.query('prerequisites'), isNotEmpty);
+      } finally {
+        await vault.delete(recursive: true);
+      }
+    });
+
+    group('resolveSubjectCode — mã biến thể', () {
+      const codes = {'PRF192': 1, 'PRO192C': 2, 'LAB211': 3};
+
+      test('khớp tuyệt đối được ưu tiên', () {
+        expect(DbService.resolveSubjectCode(codes, 'prf192'), 1);
+      });
+
+      test('lệch đúng một chữ cái cuối thì vẫn nối', () {
+        expect(DbService.resolveSubjectCode(codes, 'PRO192'), 2);
+        expect(DbService.resolveSubjectCode({'PRO192': 9}, 'PRO192c'), 9);
+      });
+
+      test('nhiều ứng viên thì thà bỏ còn hơn nối bừa', () {
+        expect(
+          DbService.resolveSubjectCode({'PRO192C': 2, 'PRO192X': 5}, 'PRO192'),
+          isNull,
+        );
+      });
+
+      test('lệch bằng chữ số thì không phải biến thể', () {
+        expect(DbService.resolveSubjectCode({'CSI1041': 7}, 'CSI104'), isNull);
+      });
+    });
+
     group('Curriculum deletion', () {
       test('deleteCurriculum with deleteSubjects=false preserves subjects but removes curriculum records', () async {
         await DbService.instance.importFapCurriculum(_curriculum(
@@ -607,3 +703,44 @@ FapSyllabusImport _sampleSyllabus({
     ],
   );
 }
+
+/// Trang Curriculum Details như bản extension turndown + plugin GFM sinh ra.
+const String _curriculumTableMd = r'''
+# Curriculum Details
+
+Source: https://flm.fpt.edu.vn/gui/role/student/CurriculumDetails?curid=1074
+
+| CurriculumCode: | BIT_SE_K19B |
+| --- | --- |
+| Name: | Bachelor of IT - Software Engineering |
+
+3 subjects, 9 credits
+
+| Subject Code | Subject Name | Semester | NoCredit | Pre-Requisite |
+| --- | --- | --- | --- | --- |
+| PRF192 | [Programming Fundamentals\_Nhập môn lập trình](/gui/role/student/Syllabuses?subCode=PRF192&curriculumID=1074) | 1 | 3 |  |
+| PRO192c | [Object Oriented Programming\_Lập trình hướng đối tượng](/gui/role/student/Syllabuses?subCode=PRO192c&curriculumID=1074) | 2 | 3 | PRF192 |
+| LAB211 | [OOP with Java Lab\_Thực hành OOP](/gui/role/student/Syllabuses?subCode=LAB211&curriculumID=1074) | 3 | 3 | PRO192 |
+''';
+
+/// Trang Syllabus Details cùng đời extension đó.
+const String _syllabusTableMd = r'''
+# PRO192c_12288
+
+Source: https://flm.fpt.edu.vn/gui/role/student/SyllabusDetails?sylID=12288
+
+# Syllabus Details
+
+| Syllabus ID: | 12288 |
+| --- | --- |
+| Syllabus Name: | **Object Oriented Programming with Java\_Lập trình hướng đối tượng với Java** |
+| Course Name English: | **Object Oriented Programming with Java** |
+| Subject Code: | **PRO192c** |
+| NoCredit: | 3 |
+| Degree Level: | Bachelor |
+| Pre-Requisite: | PRF192 |
+| Description: | This course provides the knowledge and skills of OOP. |
+| Scoring Scale: | 10 |
+| IsApproved: | **True** |
+| IsActive: | True |
+''';

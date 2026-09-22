@@ -7,6 +7,7 @@ import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
 import '../notes/obsidian_note_editor_page.dart';
+import 'vault_export_flow.dart';
 import 'vault_import_flow.dart';
 
 /// Cầu nối giữa file `.md` trên đĩa và SQLite.
@@ -70,24 +71,11 @@ class _VaultPageState extends State<VaultPage> {
   }
 
   Future<void> _export() async {
-    final ok = await Ui.confirm(
-      context,
-      title: 'Ghi đồ thị ra Vault?',
-      message:
-          'Mỗi môn trong CSDL sẽ thành một file <MÃ MÔN>.md, kèm front matter '
-          'và các liên kết [[...]]. File cùng tên sẽ bị ghi đè, nhưng phần '
-          '"## Ghi chú" bạn tự viết vẫn được giữ lại.',
-      confirmLabel: 'Ghi ra Vault',
-    );
-    if (!ok) return;
-
     setState(() => _busy = true);
     try {
-      final count = await AppState.instance.exportToVault();
+      final report = await VaultExportFlow.run(context);
+      if (report == null) return;
       await _scan();
-      if (mounted) Ui.success(context, 'Đã ghi $count file .md ra Vault.');
-    } catch (e) {
-      if (mounted) Ui.error(context, e);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

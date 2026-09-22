@@ -9,6 +9,7 @@ class AppConstants {
 
   // --- Khoá lưu cấu hình cục bộ (SharedPreferences) ---
   static const String keyVaultPath = 'OBSIDIAN_VAULT_PATH';
+  static const String keyExportSubFolder = 'OBSIDIAN_EXPORT_SUBFOLDER';
   static const String keyAiProvider = 'AI_PROVIDER';
   static const String keyAiApiKey = 'AI_API_KEY';
   static const String keyAiModel = 'AI_MODEL';

@@ -33,6 +33,7 @@ Future<void> main(List<String> args) async {
   // Cổng nhận markdown từ extension Chrome. Hỏng thì chỉ ghi `lastError`,
   // không được phép chặn khởi động app.
   await MdIntakeService.instance.start();
+  AppState.instance.listenFapIntake();
 
   runApp(const SeKnowledgeApp());
 }

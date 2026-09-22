@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as dev;
 
 import 'package:flutter/material.dart';
 
@@ -8,6 +9,8 @@ import '../models/subject.dart';
 import '../models/curriculum.dart';
 import '../models/graph_settings.dart';
 import '../services/db_service.dart';
+import '../services/fap_markdown_parser.dart';
+import '../services/md_intake_service.dart';
 import '../services/obsidian_service.dart';
 import '../services/settings_service.dart';
 import '../services/curriculum_parser_service.dart';
@@ -464,6 +467,60 @@ class AppState extends ChangeNotifier {
     return report;
   }
 
+  // ------------------------------------------------------------------
+  // CỔNG NHẬN TRANG FAP TỪ EXTENSION CHROME
+  // ------------------------------------------------------------------
+
+  StreamSubscription<IncomingNote>? _intakeSub;
+
+  /// Kết quả lần nhận gần nhất, để màn hình Cài đặt hiện được trạng thái.
+  String? _lastFapIntakeMessage;
+  String? get lastFapIntakeMessage => _lastFapIntakeMessage;
+
+  /// Nối cổng nhận markdown của extension vào CSDL.
+  ///
+  /// Công tắc "Tự động lưu vào CSDL khi nhận từ extension" trong Cài đặt trước
+  /// đây không nối vào đâu cả: trang được ghi thành file `.md` rồi thôi, nên
+  /// cào xong cả khung mà CSDL vẫn trống và đồ thị vẫn rỗng. Tắt công tắc thì
+  /// file vẫn nằm sẵn trong `<Vault>/FAP` chờ nút "Quét & Nhập toàn bộ".
+  void listenFapIntake() {
+    _intakeSub ??= MdIntakeService.instance.onNote.listen(_onIncomingFapNote);
+  }
+
+  Future<void> _onIncomingFapNote(IncomingNote note) async {
+    if (!await _settings.getAutoSaveFapNotes()) return;
+    try {
+      final parsed = FapMarkdownParser.parse(note.markdown);
+      if (parsed.curriculum != null) {
+        await _db.importFapCurriculum(parsed.curriculum!);
+      } else if (parsed.syllabus != null) {
+        await _db.importFapSyllabus(parsed.syllabus!);
+      } else {
+        _lastFapIntakeMessage = '${note.title}: ${parsed.message}';
+        notifyListeners();
+        return;
+      }
+
+      // Trang vừa nạp có thể là mắt xích còn thiếu của một cạnh đã chờ sẵn.
+      final edges = await _db.syncPrerequisitesFromFap();
+      _lastFapIntakeMessage = edges > 0
+          ? 'Đã nạp "${note.title}" và dựng thêm $edges liên kết tiên quyết.'
+          : 'Đã nạp "${note.title}".';
+      await refresh();
+    } catch (e) {
+      _lastFapIntakeMessage = 'Không nạp được "${note.title}": $e';
+      dev.log('Nhập trang FAP thất bại: $e');
+      notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _intakeSub?.cancel();
+    _intakeSub = null;
+    super.dispose();
+  }
+
   /// Xem trước thay đổi trước khi nạp Vault vào CSDL. Chưa ghi gì.
   Future<VaultSyncPlan> planImportFromVault({String subFolder = ''}) =>
       _vault.planImport(_requireVault(), subFolder: subFolder);
@@ -482,17 +539,54 @@ class AppState extends ChangeNotifier {
     return report;
   }
 
-  Future<int> exportToVault() async {
-    final written = await _vault.exportAll(_requireVault());
+  /// Ghi ra Vault đúng một nhóm môn (một tệp môn học hoặc một kỳ).
+  ///
+  /// Đi theo thư mục đích của lần ghi đầy đủ gần nhất, để môn mới không rơi
+  /// lạc ra gốc Vault trong khi cả bộ còn lại nằm trong thư mục con.
+  Future<int> exportSubjectsToVault(List<Subject> subjects) async {
+    final written = await _vault.exportSubjects(
+      _requireVault(),
+      subjects,
+      subFolder: await lastExportSubFolder(),
+    );
     await refresh();
     return written;
   }
 
-  /// Ghi ra Vault đúng một nhóm môn (một tệp môn học hoặc một kỳ).
-  Future<int> exportSubjectsToVault(List<Subject> subjects) async {
-    final written = await _vault.exportSubjects(_requireVault(), subjects);
+  /// Chụp trạng thái Vault để hộp thoại "Ghi ra Vault" tính con số xem trước.
+  /// Không ghi gì.
+  Future<VaultExportPreview> buildExportPreview({String subFolder = ''}) =>
+      _vault.buildExportPreview(_requireVault(), subFolder: subFolder);
+
+  /// Thư mục con đã dùng ở lần ghi trước, để hộp thoại điền sẵn.
+  Future<String> lastExportSubFolder() async =>
+      (await _settings.getExportSubFolder()) ?? '';
+
+  /// Đường dẫn vừa chọn trong hộp thoại hệ điều hành -> thư mục con của Vault.
+  /// `null` nghĩa là chọn ra ngoài Vault.
+  String? subFolderFromAbsolute(String absolute) =>
+      _vault.subFolderFromAbsolute(_requireVault(), absolute);
+
+  /// Ghi ra Vault đúng nhóm môn người dùng đã tích trong hộp thoại.
+  Future<VaultExportReport> exportSelectionToVault(
+    List<Subject> subjects, {
+    bool writeIndex = false,
+    String subFolder = '',
+    bool moveExisting = true,
+  }) async {
+    final vault = _requireVault();
+    final report = await _vault.exportSelection(
+      vault,
+      subjects: subjects,
+      writeIndex: writeIndex,
+      subFolder: subFolder,
+      moveExisting: moveExisting,
+    );
+    await _settings.setExportSubFolder(
+      _vault.normalizeSubFolder(vault, subFolder),
+    );
     await refresh();
-    return written;
+    return report;
   }
 
   String _requireVault() {

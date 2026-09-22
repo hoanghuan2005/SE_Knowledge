@@ -59,6 +59,22 @@ class SettingsService {
     }
   }
 
+  /// Thư mục con trong Vault mà lần "Ghi ra Vault" gần nhất đã dùng.
+  ///
+  /// Nhớ lại để người dùng không phải gõ lại mỗi lần — và quan trọng hơn, để
+  /// lần ghi sau không vô tình rơi về gốc Vault rồi đẻ ra một bộ file trùng.
+  Future<String?> getExportSubFolder() async =>
+      (await _p).getString(AppConstants.keyExportSubFolder);
+
+  Future<void> setExportSubFolder(String? folder) async {
+    final prefs = await _p;
+    if (folder == null || folder.isEmpty) {
+      await prefs.remove(AppConstants.keyExportSubFolder);
+    } else {
+      await prefs.setString(AppConstants.keyExportSubFolder, folder);
+    }
+  }
+
   // --- AI ---
 
   Future<String> getAiProvider() async =>

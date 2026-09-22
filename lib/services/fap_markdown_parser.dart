@@ -1,11 +1,13 @@
 /// Bóc tách Markdown do extension "Page to Markdown Note" sinh ra từ các trang
 /// FAP/FLM.
 ///
-/// Điểm mấu chốt: **turndown không sinh ra bảng Markdown**. Mọi ô trong bảng
-/// HTML của FAP bị làm phẳng thành từng dòng riêng, và ô rỗng bị bỏ hẳn — không
-/// để lại dòng trống nào. Nghĩa là số dòng mỗi hàng KHÔNG cố định (4 dòng nếu
-/// môn không có tiên quyết, 5 dòng nếu có). Cắt theo cụm 5 dòng là hỏng toàn bộ
-/// từ môn đầu tiên không có tiên quyết trở đi.
+/// Điểm mấu chốt: **mọi thứ được quy về "mỗi ô một dòng"**. turndown trần làm
+/// phẳng sẵn bảng HTML thành từng dòng riêng; bản turndown có plugin GFM thì
+/// giữ bảng dạng `| ô | ô |` và [_significantLines] cắt nó ra thành đúng dạng
+/// đó. Cả hai đường đều bỏ hẳn ô rỗng — không để lại dòng trống nào. Nghĩa là
+/// số dòng mỗi hàng KHÔNG cố định (4 dòng nếu môn không có tiên quyết, 5 dòng
+/// nếu có). Cắt theo cụm 5 dòng là hỏng toàn bộ từ môn đầu tiên không có tiên
+/// quyết trở đi.
 ///
 /// Vì vậy thuật toán ở đây **neo vào dòng link `Syllabuses?subCode=...`** —
 /// mỗi dòng như vậy là ô "Subject Name" của đúng một hàng — rồi suy ra biên của
@@ -334,6 +336,20 @@ class FapMarkdownParser {
     return code.isEmpty ? null : code;
   }
 
+  /// File này có phải một trang FAP thô (Curriculum/Syllabus Details) không.
+  ///
+  /// Phép thử rẻ tiền bằng chuỗi con, dùng để luồng nạp Vault tách riêng nhóm
+  /// file đó ra khỏi nhóm ghi chú môn học mà không phải [parse] từng file.
+  static bool looksLikeFapPage(String markdown) {
+    if (markdown.contains('SyllabusDetails?sylID=') ||
+        markdown.contains('SyllabusDetails.aspx') ||
+        markdown.contains('CurriculumDetails?curid=')) {
+      return true;
+    }
+    return markdown.contains('# Syllabus Details') ||
+        markdown.contains('# Curriculum Details');
+  }
+
   /// Phân tích toàn văn Markdown của một trang FAP.
   static FapParseResult parse(String markdown) {
     final lines = _significantLines(markdown);
@@ -502,9 +518,9 @@ class FapMarkdownParser {
     final subjectCodeRaw = _valueAfterLabel(lines, 'Subject Code:');
     final subjectCode = subjectCodeRaw.replaceAll('*', '').trim().toUpperCase();
 
-    final courseNameEnglish = unescapeTurndown(_valueAfterLabel(lines, 'Course Name English:'));
-    final courseNameNative = unescapeTurndown(_valueAfterLabel(lines, 'Course Name Native:'));
-    final syllabusName = unescapeTurndown(_valueAfterLabel(lines, 'Syllabus Name:'));
+    final courseNameEnglish = _stripBold(unescapeTurndown(_valueAfterLabel(lines, 'Course Name English:')));
+    final courseNameNative = _stripBold(unescapeTurndown(_valueAfterLabel(lines, 'Course Name Native:')));
+    final syllabusName = _stripBold(unescapeTurndown(_valueAfterLabel(lines, 'Syllabus Name:')));
 
     String nameEn = courseNameEnglish;
     String nameNative = courseNameNative;
@@ -1021,12 +1037,67 @@ class FapMarkdownParser {
   // ------------------------------------------------------------------
 
   /// Các dòng đã trim, bỏ hết dòng trống — đúng dạng thuật toán neo cần.
+  ///
+  /// Có hai đời extension sinh ra hai dạng Markdown khác nhau cho cùng một
+  /// trang FAP:
+  ///  - turndown "trần": bảng HTML bị làm phẳng sẵn, mỗi ô một dòng;
+  ///  - turndown + plugin GFM: bảng giữ nguyên dạng `| ô | ô |`.
+  ///
+  /// Hàm này kéo dạng thứ hai về dạng thứ nhất — mỗi ô thành một dòng, hàng
+  /// gạch ngăn bị bỏ — để toàn bộ phần còn lại của parser không phải biết bảng
+  /// là gì. Ô rỗng vẫn bị bỏ hẳn, đúng như turndown trần vẫn làm.
   static List<String> _significantLines(String markdown) {
-    return markdown
-        .split('\n')
-        .map((l) => l.trim())
-        .where((l) => l.isNotEmpty)
-        .toList();
+    final out = <String>[];
+    for (final raw in markdown.split('\n')) {
+      final line = raw.trim();
+      if (line.isEmpty) continue;
+      if (!_isTableRow(line)) {
+        out.add(line);
+        continue;
+      }
+      if (_isTableSeparatorRow(line)) continue;
+      out.addAll(_tableCells(line));
+    }
+    return out;
+  }
+
+  /// Dấu `|` không bị escape — biên giữa hai ô của một hàng bảng GFM.
+  static final RegExp _cellSplitter = RegExp(r'(?<!\\)\|');
+
+  /// Ô bảng của FAP hay chứa `<br>` thay cho xuống dòng (Tools, StudentTasks...).
+  static final RegExp _brTag = RegExp(r'<br\s*/?>', caseSensitive: false);
+
+  /// Hàng gạch ngăn header: `| --- | :--- |`.
+  static final RegExp _separatorCell = RegExp(r'^:?-{1,}:?$');
+
+  static bool _isTableRow(String line) => line.length > 1 && line.startsWith('|');
+
+  static bool _isTableSeparatorRow(String line) {
+    final cells = _splitRow(line);
+    if (cells.isEmpty) return false;
+    return cells.every((c) => _separatorCell.hasMatch(c.trim()));
+  }
+
+  /// Nội dung từng ô của một hàng, đã gỡ `<br>` thành dòng riêng và bỏ ô rỗng.
+  static List<String> _tableCells(String line) {
+    final cells = <String>[];
+    for (final rawCell in _splitRow(line)) {
+      final cell = rawCell.replaceAll(r'\|', '|').replaceAll(_brTag, '\n');
+      for (final piece in cell.split('\n')) {
+        final trimmed = piece.trim();
+        if (trimmed.isNotEmpty) cells.add(trimmed);
+      }
+    }
+    return cells;
+  }
+
+  /// Cắt một hàng thành các ô thô: bỏ `|` mở/đóng rồi tách theo `|` chưa escape.
+  static List<String> _splitRow(String line) {
+    var body = line.substring(1);
+    if (body.endsWith('|') && !body.endsWith(r'\|')) {
+      body = body.substring(0, body.length - 1);
+    }
+    return body.split(_cellSplitter);
   }
 
   static String _findSourceUrl(List<String> lines) {
@@ -1053,6 +1124,16 @@ class FapMarkdownParser {
       return '';
     }
     return '';
+  }
+
+  /// FLM in đậm vài ô của bảng đầu trang (`**PRO192c**`). Dấu `**` là trang
+  /// trí chứ không phải dữ liệu, để nguyên thì nó chui thẳng vào tên môn.
+  static String _stripBold(String text) {
+    final t = text.trim();
+    if (t.length > 4 && t.startsWith('**') && t.endsWith('**')) {
+      return t.substring(2, t.length - 2).trim();
+    }
+    return t;
   }
 
   /// Gỡ các ký tự turndown đã escape khi làm phẳng HTML.

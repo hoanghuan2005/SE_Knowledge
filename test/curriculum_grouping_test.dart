@@ -459,6 +459,33 @@ void main() {
       );
     }
 
+    /// Một trang "Syllabus Details" như extension FAP lưu ra: không front
+    /// matter, mã môn nằm trong bảng chứ không ở tên file.
+    Future<void> writeSyllabus(
+      String relativePath,
+      String code,
+      int sylId,
+    ) async {
+      final file = File(p.join(vault.path, relativePath));
+      await file.parent.create(recursive: true);
+      await file.writeAsString(
+        '# ${p.basenameWithoutExtension(relativePath)}\n\n'
+        'Source: https://flm.fpt.edu.vn/gui/role/student/SyllabusDetails?sylID=$sylId\n\n'
+        '# Syllabus Details\n\n'
+        '| Syllabus ID: | $sylId |\n'
+        '| --- | --- |\n'
+        '| Syllabus Name: | **Môn $code** |\n'
+        '| Course Name English: | **Môn $code** |\n'
+        '| Subject Code: | **$code** |\n'
+        '| NoCredit: | 3 |\n'
+        '| Degree Level: | Bachelor |\n'
+        '| Pre-Requisite: | None |\n'
+        '| Description: | Mô tả môn $code. |\n'
+        '| Scoring Scale: | 10 |\n'
+        '| IsActive: | True |\n',
+      );
+    }
+
     test('quét giới hạn trong một thư mục con', () async {
       await writeNote('ghi-chu-ca-nhan.md', 'CACHCHOI');
       await writeNote('FAP/PRF192.md', 'PRF192');
@@ -576,6 +603,49 @@ void main() {
       expect(report.curriculumCode, isEmpty);
       final tree = await db.getCurriculumTreeData();
       expect(groupOf(tree, 'OTHER').totalSubjects, 1);
+    });
+
+    // Thư mục mà extension FAP lưu ra thường chỉ toàn Syllabus Details, không
+    // kèm trang Curriculum Details nào. Những trang đó đi đường `fapPages` chứ
+    // không thành [ObsidianNote], nên trước đây chúng rơi khỏi bước xếp môn vào
+    // tệp: tệp dựng ra rỗng trơn còn môn thì dồn hết vào "Môn ngoài khung".
+    test('thư mục chỉ có Syllabus Details vẫn xếp môn vào tệp đích', () async {
+      await writeSyllabus('CEA201_13245.md', 'CEA201', 13245);
+      await writeSyllabus('PRF192_12223.md', 'PRF192', 12223);
+
+      final report = await vaultService.applyPlan(
+        await vaultService.planImport(vault.path),
+        target: const VaultImportTarget.create('BIT_SE_K17B'),
+      );
+
+      expect(report.fapPagesImported, 2);
+      expect(report.curriculumCode, 'BIT_SE_K17B');
+      expect(report.subjectsAssigned, 2);
+
+      final tree = await db.getCurriculumTreeData();
+      final k17b = groupOf(tree, 'BIT_SE_K17B');
+      expect(k17b.totalSubjects, 2);
+      expect(
+        [for (final list in k17b.semesters.values) ...list.map((s) => s.code)]
+          ..sort(),
+        ['CEA201', 'PRF192'],
+      );
+      // Không còn môn nào lạc ra nhóm ngoài khung.
+      expect(tree.any((g) => g.code == 'OTHER'), isFalse);
+    });
+
+    test('nạp lại cùng thư mục syllabus không nhân đôi dòng trong tệp', () async {
+      await writeSyllabus('CEA201_13245.md', 'CEA201', 13245);
+
+      for (var i = 0; i < 2; i++) {
+        await vaultService.applyPlan(
+          await vaultService.planImport(vault.path),
+          target: const VaultImportTarget.create('BIT_SE_K17B'),
+        );
+      }
+
+      final tree = await db.getCurriculumTreeData();
+      expect(groupOf(tree, 'BIT_SE_K17B').totalSubjects, 1);
     });
 
     test(

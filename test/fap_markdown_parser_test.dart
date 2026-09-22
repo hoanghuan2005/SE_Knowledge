@@ -320,6 +320,90 @@ void main() {
       expect(result.isSupported, isFalse);
     });
   });
+
+  // Bản extension dùng turndown + plugin GFM giữ nguyên bảng dạng `| ô | ô |`.
+  // Trước khi hỗ trợ dạng này, mọi nhãn đều nằm sau dấu `|` nên không khớp
+  // `startsWith` và cả trang bóc ra rỗng — kể cả ô Pre-Requisite.
+  group('FapMarkdownParser — Markdown dạng bảng GFM', () {
+    test('trang Syllabus dạng bảng bóc được mã môn và môn tiên quyết', () {
+      final syl = FapMarkdownParser.parse(_syllabusTableMd).syllabus!;
+
+      expect(syl.subjectCode, 'PRO192C');
+      expect(syl.fapSyllabusId, 12288);
+      expect(syl.rawPrerequisiteText.trim(), 'PRF192');
+      expect(
+        FapMarkdownParser.extractPrerequisiteCodes(syl.rawPrerequisiteText),
+        ['PRF192'],
+      );
+    });
+
+    test('bỏ dấu ** FLM in đậm quanh tên môn', () {
+      final syl = FapMarkdownParser.parse(_syllabusTableMd).syllabus!;
+
+      expect(syl.nameEn, 'Object Oriented Programming with Java');
+      expect(syl.nameNative, 'Lập trình hướng đối tượng với Java');
+    });
+
+    test('các bảng con của trang Syllabus vẫn bóc được', () {
+      final syl = FapMarkdownParser.parse(_syllabusTableMd).syllabus!;
+
+      expect(syl.clos.map((c) => c.code), ['CLO1', 'CLO2']);
+      expect(syl.sessions, hasLength(2));
+      expect(syl.sessions.first.cloCodes, ['CLO1', 'CLO2']);
+      expect(syl.isApproved, isTrue);
+      expect(syl.scoringScale, 10);
+    });
+
+    test('"None" trong ô Pre-Requisite không thành mã môn', () {
+      final syl = FapMarkdownParser.parse(
+        _syllabusTableMd.replaceFirst(
+          '| Pre-Requisite: | PRF192 |',
+          '| Pre-Requisite: | None |',
+        ),
+      ).syllabus!;
+
+      expect(syl.rawPrerequisiteText, isEmpty);
+    });
+
+    test('trang Curriculum dạng bảng bóc đủ hàng môn kèm cột tiên quyết', () {
+      final cur = FapMarkdownParser.parse(_curriculumTableMd).curriculum!;
+
+      expect(cur.code, 'BIT_SE_K19B');
+      expect(cur.subjects.map((s) => s.code), ['PRF192', 'PRO192c', 'LAB211']);
+      expect(cur.subjects[0].rawPrerequisite, isEmpty);
+      expect(cur.subjects[1].semester, 2);
+      expect(cur.subjects[1].credits, 3);
+      expect(cur.subjects[1].rawPrerequisite, 'PRF192');
+      expect(cur.subjects[2].rawPrerequisite, 'PRO192');
+    });
+
+    test('ô nhiều dòng bằng `<br>` không làm lệch các hàng còn lại', () {
+      final cur = FapMarkdownParser.parse(
+        _curriculumTableMd.replaceFirst('| 2 | 3 | PRF192 |', '| 2 | 3 | PRF192<br>MAE101 |'),
+      ).curriculum!;
+
+      expect(cur.subjects.map((s) => s.code), ['PRF192', 'PRO192c', 'LAB211']);
+      expect(cur.subjects[1].rawPrerequisite, 'PRF192 MAE101');
+      expect(
+        FapMarkdownParser.extractPrerequisiteCodes(cur.subjects[1].rawPrerequisite),
+        containsAll(['PRF192', 'MAE101']),
+      );
+      // Hàng sau vẫn nguyên vẹn, không bị ô nhiều dòng của hàng trước nuốt.
+      expect(cur.subjects[2].semester, 3);
+      expect(cur.subjects[2].rawPrerequisite, 'PRO192');
+    });
+
+    test('looksLikeFapPage tách được trang FAP khỏi ghi chú thường', () {
+      expect(FapMarkdownParser.looksLikeFapPage(_syllabusTableMd), isTrue);
+      expect(FapMarkdownParser.looksLikeFapPage(_curriculumTableMd), isTrue);
+      expect(
+        FapMarkdownParser.looksLikeFapPage(
+          '---\ncode: PRF192\n---\n\n# PRF192\n\n## Môn tiên quyết\n\n_Không có_\n',
+        ),
+        isFalse,
+      );
+    });
+  });
 }
 
 const String _syllabusMd = '''
@@ -614,4 +698,71 @@ All chapters
 by exam board
 
 Note
+''';
+
+/// Trang Syllabus Details như bản extension mới (turndown + plugin GFM) sinh ra:
+/// bảng được giữ nguyên thay vì bị làm phẳng thành từng dòng.
+const String _syllabusTableMd = r'''
+# PRO192c_12288
+
+Source: https://flm.fpt.edu.vn/gui/role/student/SyllabusDetails?sylID=12288
+
+# Syllabus Details
+
+| Syllabus ID: | 12288 |
+| --- | --- |
+| Syllabus Name: | **Object Oriented Programming with Java\_Lập trình hướng đối tượng với Java** |
+| Course Name English: | **Object Oriented Programming with Java** |
+| Subject Code: | **PRO192c** |
+| Learning-Teaching Method: | Blended,Online |
+| NoCredit: | 3 |
+| Degree Level: | Bachelor |
+| Time Allocation: | Study hour (150h) = 45 hours online |
+| Pre-Requisite: | PRF192 |
+| Description: | This course provides the knowledge and skills of OOP. |
+| StudentTasks: | Students complete the online courses MOOC. |
+| Tools: | JDK 8+<br>NetBean 13+ IDE |
+| Scoring Scale: | 10 |
+| DecisionNo MM/dd/yyyy: | 1363/QĐ-ĐHFPT dated 12/06/2024 |
+| IsApproved: | **True** |
+| Is Scored: | **True** |
+| MinAvgMarkToPass: | 5 |
+| IsActive: | True |
+| ApprovedDate: | 12/6/2024 |
+
+2 LO(s)
+
+| No. | CLO Name | CLO Details |
+| --- | --- | --- |
+| 1 | CLO1 | Understand the concepts of object oriented programs |
+| 2 | CLO2 | Practice basic Java language syntax and semantics |
+
+Download All Student Material 10 sessions (45'/session)
+
+| Session | Topic | Learning-Teaching Type | LO | ITU | Student Materials | S-Download | Student's Tasks | URLs |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | Course introduction<br>Java introduction | Offline, Online | LO1, LO2 | ITU | MOOC |  | Enroll to the spec on Coursera |  |
+| 2 | Reference Types introduction | Online | LO2 | ITU | MOOC |  | Watch all videos |  |
+
+0 Constructive question(s)
+0 assessment(s)
+''';
+
+/// Trang Curriculum Details cùng đời extension đó.
+const String _curriculumTableMd = r'''
+# Curriculum Details
+
+Source: https://flm.fpt.edu.vn/gui/role/student/CurriculumDetails?curid=1074
+
+| CurriculumCode: | BIT_SE_K19B |
+| --- | --- |
+| Name: | Bachelor of IT - Software Engineering |
+
+3 subjects, 9 credits
+
+| Subject Code | Subject Name | Semester | NoCredit | Pre-Requisite |
+| --- | --- | --- | --- | --- |
+| PRF192 | [Programming Fundamentals\_Nhập môn lập trình](/gui/role/student/Syllabuses?subCode=PRF192&curriculumID=1074) | 1 | 3 |  |
+| PRO192c | [Object Oriented Programming\_Lập trình hướng đối tượng](/gui/role/student/Syllabuses?subCode=PRO192c&curriculumID=1074) | 2 | 3 | PRF192 |
+| LAB211 | [OOP with Java Lab\_Thực hành OOP](/gui/role/student/Syllabuses?subCode=LAB211&curriculumID=1074) | 3 | 3 | PRO192 |
 ''';

@@ -2323,7 +2323,7 @@ class DbService {
     for (final entry in candidates.entries) {
       final subjectId = entry.key;
       for (final pCode in entry.value) {
-        final prereqId = codeToId[pCode.trim().toUpperCase()];
+        final prereqId = resolveSubjectCode(codeToId, pCode);
         if (prereqId != null && prereqId != subjectId) {
           final cycle = await _wouldCreateCycle(subjectId, prereqId, txn: db);
           if (!cycle) {
@@ -2343,6 +2343,37 @@ class DbService {
     }
 
     return newEdges;
+  }
+
+  /// Tra id môn theo mã, có nới lỏng đúng một bậc cho **mã biến thể**.
+  ///
+  /// FLM đặt hai mã cho cùng một môn tuỳ hình thức học: `PRO192` (lớp thường)
+  /// và `PRO192c` (bản online/Coursera). Trang Syllabus của LAB211 ghi tiên
+  /// quyết là `PRO192` trong khi khung CTĐT của người học lại chỉ có `PRO192c`
+  /// — so khớp tuyệt đối thì đúng cạnh cần nhất lại rơi mất.
+  ///
+  /// Chỉ nới lỏng khi hai mã lệch nhau đúng **một chữ cái ở cuối** và tìm thấy
+  /// **đúng một** ứng viên. Hai ứng viên trở lên thì bỏ qua, thà thiếu một
+  /// cạnh còn hơn nối bừa hai môn khác nhau.
+  static int? resolveSubjectCode(Map<String, int> codeToId, String rawCode) {
+    final code = rawCode.trim().toUpperCase();
+    if (code.isEmpty) return null;
+
+    final exact = codeToId[code];
+    if (exact != null) return exact;
+
+    bool endsWithLetter(String s) => RegExp(r'[A-Z]$').hasMatch(s);
+
+    final matches = <int>{};
+    for (final entry in codeToId.entries) {
+      final other = entry.key;
+      final variantOfWanted =
+          other.length == code.length + 1 && other.startsWith(code) && endsWithLetter(other);
+      final wantedIsVariant =
+          code.length == other.length + 1 && code.startsWith(other) && endsWithLetter(code);
+      if (variantOfWanted || wantedIsVariant) matches.add(entry.value);
+    }
+    return matches.length == 1 ? matches.first : null;
   }
 
   /// Lấy danh sách tóm tắt tất cả các môn đã có Syllabus trong CSDL
@@ -2566,6 +2597,12 @@ class DbService {
   /// Quét và tự động nạp toàn bộ các file .md trong thư mục `fap_inbox/` vào CSDL.
   /// Ưu tiên nạp file Curriculum trước (để có khung và mã môn), sau đó nạp các file Syllabus,
   /// cuối cùng đồng bộ cạnh tiên quyết (prerequisites).
+  ///
+  /// Quét **đệ quy** và quét cả gốc Vault chứ không riêng `<Vault>/FAP`: người
+  /// dùng hay tự tay bỏ file vào gốc Vault hoặc chia thư mục con theo khung
+  /// (`FAP/BIT_SE_K19B/`). File nào không phải trang FAP thì
+  /// [FapMarkdownParser.parse] trả về `unknown` và nó bị bỏ qua, nên quét rộng
+  /// không đụng gì tới ghi chú cá nhân.
   Future<Map<String, dynamic>> batchImportFromInbox({Directory? inboxDir}) async {
     final directoriesToCheck = <Directory>[];
     if (inboxDir != null) {
@@ -2575,18 +2612,20 @@ class DbService {
       directoriesToCheck.add(Directory(p.join(appSupport.path, 'fap_inbox')));
       final vault = await SettingsService.instance.getVaultPath();
       if (vault != null && vault.isNotEmpty) {
-        directoriesToCheck.add(Directory(p.join(vault, 'FAP')));
+        directoriesToCheck.add(Directory(vault));
       }
     }
 
     final mdFilesMap = <String, File>{};
     for (final dir in directoriesToCheck) {
       if (!await dir.exists()) continue;
-      final entities = await dir.list().toList();
-      for (final e in entities) {
-        if (e is File && e.path.toLowerCase().endsWith('.md')) {
-          mdFilesMap[p.canonicalize(e.path)] = e;
-        }
+      await for (final e in dir.list(recursive: true, followLinks: false)) {
+        if (e is! File) continue;
+        if (!e.path.toLowerCase().endsWith('.md')) continue;
+        // Bỏ `.obsidian/`, `.trash/` và mọi thư mục ẩn khác.
+        final rel = p.relative(e.path, from: dir.path);
+        if (p.split(rel).any((s) => s.startsWith('.'))) continue;
+        mdFilesMap[p.canonicalize(e.path)] = e;
       }
     }
 
@@ -2596,6 +2635,7 @@ class DbService {
         'totalFiles': 0,
         'curricula': 0,
         'syllabi': 0,
+        'skipped': 0,
         'failed': 0,
         'edges': 0,
       };
@@ -2604,6 +2644,7 @@ class DbService {
     var curCount = 0;
     var sylCount = 0;
     var failCount = 0;
+    var skipCount = 0;
 
     final curFiles = <(File, FapParseResult)>[];
     final sylFiles = <(File, FapParseResult)>[];
@@ -2616,6 +2657,9 @@ class DbService {
           curFiles.add((file, parsed));
         } else if (parsed.syllabus != null) {
           sylFiles.add((file, parsed));
+        } else {
+          // Ghi chú thường của người dùng — không phải trang FAP, bỏ qua im lặng.
+          skipCount++;
         }
       } catch (_) {
         failCount++;
@@ -2649,6 +2693,7 @@ class DbService {
       'totalFiles': mdFiles.length,
       'curricula': curCount,
       'syllabi': sylCount,
+      'skipped': skipCount,
       'failed': failCount,
       'edges': edgesCreated,
     };
