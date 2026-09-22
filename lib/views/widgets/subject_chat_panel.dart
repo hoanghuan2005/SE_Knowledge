@@ -3,6 +3,9 @@ import 'package:flutter/services.dart';
 
 import '../../models/chat_message.dart';
 import '../../models/subject.dart';
+import '../../services/db_service.dart';
+import '../../services/fap_markdown_parser.dart';
+import '../../services/graph_rag_service.dart';
 import '../../services/obsidian_service.dart';
 import '../../services/subject_chat_service.dart';
 import '../../state/app_state.dart';
@@ -12,10 +15,18 @@ import '../../utils/app_colors.dart';
 /// ngay khi bấm chọn một node trên đồ thị.
 ///
 /// Khác với tab "Trợ lý AI" (dùng Graph RAG trên toàn bộ đồ thị), ngữ cảnh ở
-/// đây luôn là nội dung của riêng môn đang chọn: đọc từ file `.md` trong
-/// Obsidian Vault nếu đã xuất ra (`subject.notePath`), hoặc ghép từ các
-/// trường trong CSDL nếu môn chưa có file `.md`. Ngay khi mở, AI được nhờ đọc
-/// nội dung đó và đề xuất sẵn vài câu hỏi để bấm hỏi ngay, không cần tự gõ.
+/// đây luôn là nội dung của riêng môn đang chọn, ghép từ ba nguồn:
+///
+/// 1. Đề cương chính thức nhập từ FAP/FLM — nguồn dày nhất (mô tả, CLO, tài
+///    liệu, lịch trình từng buổi, đầu điểm đánh giá).
+/// 2. Quan hệ tiên quyết trong đồ thị SQLite.
+/// 3. Ghi chú `.md` người dùng tự viết trong Obsidian Vault, nếu có.
+///
+/// Trước đây chỉ có (2) và (3), nên môn nào chưa xuất ra file `.md` thì AI
+/// gần như chỉ biết mã, tên, kỳ và tín chỉ — trả lời được rất ít.
+///
+/// Ngay khi mở, AI được nhờ đọc nội dung đó và đề xuất sẵn vài câu hỏi để bấm
+/// hỏi ngay, không cần tự gõ.
 class SubjectChatPanel extends StatefulWidget {
   final Subject subject;
 
@@ -29,9 +40,12 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
 
-  /// Nội dung file `.md` đọc được (nếu môn đã xuất ra Vault). Chỉ mỗi phần
-  /// này cần đọc bất đồng bộ nên mới phải giữ lại.
+  /// Nội dung file `.md` đọc được (nếu môn đã xuất ra Vault).
   String? _noteContent;
+
+  /// Đề cương chính thức lấy về từ FAP/FLM, nếu môn này đã được nhập.
+  FapSyllabusImport? _syllabus;
+
   bool _loadingContext = true;
 
   @override
@@ -55,8 +69,9 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
     super.dispose();
   }
 
-  /// Ưu tiên đọc nguyên văn file `.md` trong Vault; nếu chưa xuất ra file nào
-  /// thì ghép tạm từ các trường đã có trong CSDL để vẫn hỏi được.
+  /// Nạp hai nguồn cần đọc bất đồng bộ: ghi chú `.md` trong Vault và đề cương
+  /// FAP trong SQLite. Không nguồn nào thay thế nguồn nào — có gì dùng nấy,
+  /// thiếu thì phần đó vắng mặt trong ngữ cảnh chứ không chặn các phần khác.
   Future<void> _loadContext() async {
     setState(() => _loadingContext = true);
     final subject = widget.subject;
@@ -73,9 +88,22 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
       }
     }
 
+    // Đề cương FAP là nguồn dày nhất: mô tả, CLO, lịch trình từng buổi, đầu
+    // điểm. Thiếu nó thì AI chỉ biết mã/tên/tín chỉ và trả lời rất chung.
+    FapSyllabusImport? syllabus;
+    try {
+      syllabus = await DbService.instance.getSyllabusDetail(
+        subjectId: subject.id,
+        subjectCode: subject.code,
+      );
+    } catch (_) {
+      // Chưa nhập đề cương cho môn này — vẫn hỏi được bằng dữ liệu đồ thị.
+    }
+
     if (!mounted) return;
     setState(() {
       _noteContent = note;
+      _syllabus = syllabus;
       _loadingContext = false;
     });
 
@@ -145,12 +173,36 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
       }
     }
 
+    final syllabus = _syllabus;
+    if (syllabus != null) {
+      sb
+        ..writeln()
+        ..writeln('===== ĐỀ CƯƠNG CHÍNH THỨC TỪ FAP/FLM =====')
+        ..writeln(GraphRagService.instance.renderSyllabusForPrompt(syllabus));
+    } else {
+      sb
+        ..writeln()
+        ..writeln(
+          'Môn này CHƯA có dữ liệu đề cương chi tiết (CLO, lịch trình, đầu '
+          'điểm) trong máy. Đừng bịa các thông tin đó.',
+        );
+    }
+
     final note = _noteContent;
     if (note != null) {
       sb
         ..writeln()
-        ..writeln('Ghi chú Obsidian (.md) của môn này:')
-        ..writeln(note);
+        ..writeln('Ghi chú Obsidian (.md) do người dùng tự viết cho môn này:');
+      // Ghi chú cá nhân có thể đã cũ hoặc chép sai so với đề cương. Không dặn
+      // trước thì AI dễ tin phần này hơn, vì nó nằm cuối prompt.
+      if (syllabus != null) {
+        sb.writeln(
+          '(Đây là ghi chú cá nhân, chỉ để tham khảo. Nếu có chỗ nào mâu '
+          'thuẫn với đề cương chính thức ở trên thì lấy đề cương làm chuẩn, '
+          'và nói cho người dùng biết chỗ lệch đó.)',
+        );
+      }
+      sb.writeln(note);
     }
     return sb.toString();
   }
