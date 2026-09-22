@@ -520,9 +520,10 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
           _SectionCard(
             title: 'Nhiệm vụ của sinh viên (Student Tasks)',
             icon: Icons.task_alt,
-            content: Text(
-              data.studentTasks,
-              style: const TextStyle(fontSize: 13, height: 1.5),
+            content: _LinkifiedText(
+              text: data.studentTasks,
+              baseStyle: const TextStyle(fontSize: 13, height: 1.5),
+              onLinkTap: _openSourceUrl,
             ),
           ),
           const SizedBox(height: 16),
@@ -531,9 +532,10 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
           _SectionCard(
             title: 'Công cụ & Phần mềm yêu cầu (Tools / Software)',
             icon: Icons.construction,
-            content: Text(
-              data.tools,
-              style: const TextStyle(fontSize: 13, height: 1.4),
+            content: _LinkifiedText(
+              text: data.tools,
+              baseStyle: const TextStyle(fontSize: 13, height: 1.4),
+              onLinkTap: _openSourceUrl,
             ),
           ),
         ],
@@ -610,14 +612,15 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                 ],
               ),
               const SizedBox(height: 8),
-              Text(
-                m.description,
-                style: TextStyle(
+              _LinkifiedText(
+                text: m.description,
+                baseStyle: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
                   height: 1.3,
                   color: AppColors.obsidianText,
                 ),
+                onLinkTap: _openSourceUrl,
               ),
               if (m.author.isNotEmpty || m.publisher.isNotEmpty || m.publishedDate.isNotEmpty) ...[
                 const SizedBox(height: 6),
@@ -633,13 +636,15 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
               ],
               if (m.note.isNotEmpty) ...[
                 const SizedBox(height: 6),
-                Text(
-                  'Ghi chú: ${m.note}',
-                  style: TextStyle(
+                _LinkifiedText(
+                  prefix: 'Ghi chú: ',
+                  text: m.note,
+                  baseStyle: TextStyle(
                     fontSize: 11.5,
                     fontStyle: FontStyle.italic,
                     color: isDark ? Colors.orangeAccent : const Color(0xFFC2410C),
                   ),
+                  onLinkTap: _openSourceUrl,
                 ),
               ],
             ],
@@ -1253,6 +1258,106 @@ class _AssessmentAttr extends StatelessWidget {
         Text('$label: ', style: TextStyle(fontSize: 11.5, color: AppColors.obsidianTextMuted)),
         Text(value, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: AppColors.obsidianText)),
       ],
+    );
+  }
+}
+
+/// Widget tự động phát hiện URL (http/https) trong văn bản và biến thành liên kết có thể nhấp vào
+class _LinkifiedText extends StatelessWidget {
+  final String prefix;
+  final String text;
+  final TextStyle? baseStyle;
+  final ValueChanged<String>? onLinkTap;
+
+  const _LinkifiedText({
+    this.prefix = '',
+    required this.text,
+    this.baseStyle,
+    this.onLinkTap,
+  });
+
+  static final RegExp _urlRegex = RegExp(
+    r'(https?:\/\/[^\s]+)',
+    caseSensitive: false,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final matches = _urlRegex.allMatches(text).toList();
+    if (matches.isEmpty) {
+      return Text(
+        '$prefix$text',
+        style: baseStyle,
+      );
+    }
+
+    final spans = <InlineSpan>[];
+    if (prefix.isNotEmpty) {
+      spans.add(TextSpan(text: prefix, style: baseStyle));
+    }
+
+    var lastIndex = 0;
+    for (final match in matches) {
+      if (match.start > lastIndex) {
+        spans.add(
+          TextSpan(
+            text: text.substring(lastIndex, match.start),
+            style: baseStyle,
+          ),
+        );
+      }
+
+      final url = match.group(0)!;
+      spans.add(
+        WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: () => onLinkTap?.call(url),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      url,
+                      style: TextStyle(
+                        fontSize: baseStyle?.fontSize ?? 11.5,
+                        color: AppColors.primary,
+                        decoration: TextDecoration.underline,
+                        decorationColor: AppColors.primary.withValues(alpha: 0.6),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(width: 3),
+                    Icon(
+                      Icons.open_in_new,
+                      size: (baseStyle?.fontSize ?? 11.5) + 1,
+                      color: AppColors.primary,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      lastIndex = match.end;
+    }
+
+    if (lastIndex < text.length) {
+      spans.add(
+        TextSpan(
+          text: text.substring(lastIndex),
+          style: baseStyle,
+        ),
+      );
+    }
+
+    return Text.rich(
+      TextSpan(children: spans),
+      style: baseStyle,
     );
   }
 }
