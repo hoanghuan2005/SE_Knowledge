@@ -11,12 +11,33 @@ class SubjectFormDialog extends StatefulWidget {
   /// null = thêm mới.
   final Subject? subject;
 
-  const SubjectFormDialog({super.key, this.subject});
+  /// Khi thêm mới từ menu chuột phải của một tệp môn học: môn vừa tạo được
+  /// gắn luôn vào tệp đó thay vì rơi vào nhóm "Môn ngoài khung".
+  final int? curriculumId;
 
-  static Future<bool> show(BuildContext context, {Subject? subject}) async {
+  /// Kỳ điền sẵn khi tạo môn từ menu chuột phải của một kỳ.
+  final int? initialSemester;
+
+  const SubjectFormDialog({
+    super.key,
+    this.subject,
+    this.curriculumId,
+    this.initialSemester,
+  });
+
+  static Future<bool> show(
+    BuildContext context, {
+    Subject? subject,
+    int? curriculumId,
+    int? initialSemester,
+  }) async {
     final saved = await showDialog<bool>(
       context: context,
-      builder: (_) => SubjectFormDialog(subject: subject),
+      builder: (_) => SubjectFormDialog(
+        subject: subject,
+        curriculumId: curriculumId,
+        initialSemester: initialSemester,
+      ),
     );
     return saved ?? false;
   }
@@ -46,7 +67,7 @@ class _SubjectFormDialogState extends State<SubjectFormDialog> {
     _code = TextEditingController(text: s?.code ?? '');
     _name = TextEditingController(text: s?.name ?? '');
     _description = TextEditingController(text: s?.description ?? '');
-    _semester = s?.semester ?? 1;
+    _semester = s?.semester ?? widget.initialSemester ?? 1;
     _credits = s?.credits ?? 3;
     if (s?.id != null) {
       _selectedPrerequisiteIds.addAll(
@@ -96,6 +117,24 @@ class _SubjectFormDialogState extends State<SubjectFormDialog> {
       }
 
       final failures = await _syncPrerequisites(subjectId);
+
+      // Môn tạo từ menu chuột phải của một tệp môn học thì phải nằm luôn
+      // trong tệp đó, nếu không nó sẽ rơi xuống nhóm "Môn ngoài khung" và
+      // người dùng tưởng thao tác không ăn.
+      final curriculumId = widget.curriculumId;
+      if (curriculumId != null) {
+        await AppState.instance.assignSubjectsToCurriculum(
+          curriculumId: curriculumId,
+          subjects: [
+            Subject.create(
+              code: _code.text,
+              name: _name.text,
+              semester: _semester,
+              credits: _credits,
+            ).copyWith(id: subjectId),
+          ],
+        );
+      }
 
       if (!mounted) return;
       // Mon da luu thanh cong roi: canh bao cac canh loi nhung khong chan.

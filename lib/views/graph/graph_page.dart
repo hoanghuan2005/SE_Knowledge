@@ -1491,6 +1491,10 @@ class _CurriculumFilter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = AppColors.isDark;
+    // DropdownButton khẳng định phải có ĐÚNG MỘT item khớp `value`. Khung đang
+    // lọc có thể vừa bị đổi mã/xoá ở thanh bên, nên phải tự hạ về "Tất cả
+    // khung" thay vì để cả trang thành ô báo lỗi đỏ.
+    final safe = groups.any((g) => g.code == value) ? value : null;
     return Container(
       height: 28,
       constraints: const BoxConstraints(minWidth: 100, maxWidth: 145),
@@ -1499,13 +1503,13 @@ class _CurriculumFilter extends StatelessWidget {
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
-          color: value != null ? AppColors.primary : AppColors.border,
-          width: value != null ? 1.5 : 1.0,
+          color: safe != null ? AppColors.primary : AppColors.border,
+          width: safe != null ? 1.5 : 1.0,
         ),
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String?>(
-          value: value,
+          value: safe,
           isDense: true,
           isExpanded: true,
           icon: Icon(
@@ -1516,7 +1520,7 @@ class _CurriculumFilter extends StatelessWidget {
           style: TextStyle(
             fontSize: 11.5,
             fontWeight: FontWeight.w600,
-            color: value != null ? AppColors.primary : AppColors.textPrimary,
+            color: safe != null ? AppColors.primary : AppColors.textPrimary,
           ),
           dropdownColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
           borderRadius: BorderRadius.circular(8),

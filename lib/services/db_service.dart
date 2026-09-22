@@ -882,7 +882,13 @@ class DbService {
     });
   }
 
-  /// Cập nhật thông tin khung chương trình
+  /// Cập nhật thông tin khung chương trình.
+  ///
+  /// Đổi mã thì phải đổi CẢ hàng song song bên `curricula` (bộ bảng FAP).
+  /// Hai bảng được `getCurriculumTreeData` soi chiếu với nhau BẰNG MÃ: để lệch
+  /// mã thì lần dựng cây kế tiếp tưởng hàng `curricula` chưa có bản sao, bèn
+  /// tạo lại một khung trùng nội dung — người dùng đổi tên một tệp lại thấy
+  /// mọc ra hai.
   Future<int> updateCurriculum(int id, {
     String? code,
     String? name,
@@ -896,19 +902,49 @@ class DbService {
     final data = <String, dynamic>{
       'updated_at': now,
     };
-    if (code != null) data['code'] = code.trim().toUpperCase();
+    final newCode = code?.trim().toUpperCase();
+    if (newCode != null) data['code'] = newCode;
     if (name != null) data['name'] = name.trim();
     if (major != null) data['major'] = major.trim();
     if (totalCredits != null) data['total_credits'] = totalCredits;
     if (decisionNo != null) data['decision_no'] = decisionNo.trim();
     if (description != null) data['description'] = description.trim();
 
-    return db.update(
-      'curriculums',
-      data,
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    return db.transaction((txn) async {
+      final current = await txn.query(
+        'curriculums',
+        columns: ['code'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (current.isEmpty) return 0;
+      final oldCode = (current.first['code'] as String).trim().toUpperCase();
+
+      if (newCode != null && newCode != oldCode) {
+        if (newCode.isEmpty) {
+          throw DbConflictException('Mã tệp môn học không được để trống.');
+        }
+        final clash = await txn.query(
+          'curriculums',
+          columns: ['id'],
+          where: 'UPPER(code) = ? AND id <> ?',
+          whereArgs: [newCode, id],
+          limit: 1,
+        );
+        if (clash.isNotEmpty) {
+          throw DbConflictException('Đã có tệp môn học mang mã "$newCode".');
+        }
+        await txn.update(
+          'curricula',
+          {'code': newCode},
+          where: 'UPPER(code) = ?',
+          whereArgs: [oldCode],
+        );
+      }
+
+      return txn.update('curriculums', data, where: 'id = ?', whereArgs: [id]);
+    });
   }
 
   /// Xoá khung chương trình:
@@ -1155,6 +1191,265 @@ class DbService {
       WHERE cc.curriculum_id = ?
       ORDER BY cc.term ASC, s.code ASC
     ''', [curriculumId]);
+  }
+
+  // ------------------------------------------------------------------
+  // GÁN MÔN VÀO "TỆP MÔN HỌC" (KHUNG CTĐT)
+  //
+  // Một "tệp môn học" trên thanh bên chính là một hàng của bảng `curriculums`.
+  // Quan hệ môn <-> tệp nằm ở `curriculum_courses`, nên cùng một môn dùng
+  // chung (PRF192, MAD101...) có thể thuộc nhiều tệp mà không bị nhân bản
+  // trong bảng `subjects`.
+  // ------------------------------------------------------------------
+
+  /// Lấy một khung theo id, `null` nếu không còn.
+  Future<Map<String, dynamic>?> getCurriculumById(int id) async {
+    final db = await database;
+    final rows = await db.query(
+      'curriculums',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  /// Tìm khung theo mã, tạo mới nếu chưa có. Trả về id trong `curriculums`.
+  ///
+  /// So khớp không phân biệt hoa thường vì mã khung nhập từ FAP
+  /// (`bit_se_k19b`) và mã người dùng gõ tay (`BIT_SE_K19B`) phải là một.
+  Future<int> ensureCurriculumByCode({
+    required String code,
+    String? name,
+    String? major,
+    int? totalCredits,
+    String? description,
+    DatabaseExecutor? txn,
+  }) async {
+    final db = txn ?? await database;
+    final normalized = code.trim().toUpperCase();
+    if (normalized.isEmpty) {
+      throw DbConflictException('Mã tệp môn học không được để trống.');
+    }
+
+    final existing = await db.query(
+      'curriculums',
+      columns: ['id'],
+      where: 'UPPER(code) = ?',
+      whereArgs: [normalized],
+      limit: 1,
+    );
+    if (existing.isNotEmpty) return existing.first['id'] as int;
+
+    final now = DateTime.now().toIso8601String();
+    final label = (name ?? '').trim().isNotEmpty ? name!.trim() : normalized;
+    return db.insert('curriculums', {
+      'code': normalized,
+      'name': label,
+      'major': (major ?? '').trim().isNotEmpty ? major!.trim() : label,
+      'total_credits': totalCredits ?? 0,
+      'decision_no': '',
+      'description': (description ?? '').trim(),
+      'created_at': now,
+      'updated_at': now,
+    });
+  }
+
+  /// Gắn một loạt môn vào một tệp môn học. Trả về số dòng thêm mới.
+  ///
+  /// [entries] là các bộ `(subjectId, term, credits)`. Môn đã nằm trong tệp
+  /// thì MẶC ĐỊNH giữ nguyên kỳ và tín chỉ đang có: kỳ trong một tệp là thứ
+  /// người dùng tự sửa bằng "Đổi kỳ…" và file `.md` không có chỗ nào ghi được
+  /// nó (front matter chỉ có một khoá `semester` dùng chung cho mọi tệp), nên
+  /// nạp lại Vault mà ghi đè thì mọi lần sửa kỳ đều bị nuốt mất.
+  ///
+  /// [overwriteExisting] = true khi nguồn dữ liệu thật sự có thẩm quyền về kỳ
+  /// (trang Curriculum Details của FAP chẳng hạn).
+  Future<int> assignSubjectsToCurriculum({
+    required int curriculumId,
+    required List<CurriculumCourseEntry> entries,
+    bool overwriteExisting = false,
+  }) async {
+    if (entries.isEmpty) return 0;
+    final db = await database;
+    var inserted = 0;
+
+    await db.transaction((txn) async {
+      for (final e in entries) {
+        final existing = await txn.query(
+          'curriculum_courses',
+          columns: ['id'],
+          where: 'curriculum_id = ? AND subject_id = ?',
+          whereArgs: [curriculumId, e.subjectId],
+          limit: 1,
+        );
+        if (existing.isEmpty) {
+          await txn.insert('curriculum_courses', {
+            'curriculum_id': curriculumId,
+            'subject_id': e.subjectId,
+            'term': e.term,
+            'credits': e.credits,
+          });
+          inserted++;
+        } else if (overwriteExisting) {
+          await txn.update(
+            'curriculum_courses',
+            {'term': e.term, 'credits': e.credits},
+            where: 'id = ?',
+            whereArgs: [existing.first['id'] as int],
+          );
+        }
+      }
+    });
+    return inserted;
+  }
+
+  /// Gỡ môn khỏi một tệp môn học. KHÔNG xoá môn khỏi bảng `subjects` —
+  /// môn rơi về nhóm "Môn ngoài khung" và mọi ghi chú vẫn còn nguyên.
+  Future<int> removeSubjectsFromCurriculum({
+    required int curriculumId,
+    required List<int> subjectIds,
+  }) async {
+    if (subjectIds.isEmpty) return 0;
+    final db = await database;
+    final placeholders = List.filled(subjectIds.length, '?').join(', ');
+    return db.delete(
+      'curriculum_courses',
+      where: 'curriculum_id = ? AND subject_id IN ($placeholders)',
+      whereArgs: [curriculumId, ...subjectIds],
+    );
+  }
+
+  /// Chuyển môn từ tệp này sang tệp khác, giữ nguyên kỳ và tín chỉ.
+  ///
+  /// [fromCurriculumId] null nghĩa là môn đang ở nhóm "ngoài khung" — lúc đó
+  /// chỉ thêm vào tệp đích chứ không gỡ ở đâu cả.
+  Future<void> moveSubjectsToCurriculum({
+    int? fromCurriculumId,
+    required int toCurriculumId,
+    required List<int> subjectIds,
+    int? forcedTerm,
+  }) async {
+    if (subjectIds.isEmpty || fromCurriculumId == toCurriculumId) return;
+    final db = await database;
+
+    await db.transaction((txn) async {
+      for (final subjectId in subjectIds) {
+        int term = forcedTerm ?? 1;
+        int credits = 3;
+
+        if (forcedTerm == null) {
+          if (fromCurriculumId != null) {
+            final src = await txn.query(
+              'curriculum_courses',
+              columns: ['term', 'credits'],
+              where: 'curriculum_id = ? AND subject_id = ?',
+              whereArgs: [fromCurriculumId, subjectId],
+              limit: 1,
+            );
+            if (src.isNotEmpty) {
+              term = (src.first['term'] as int?) ?? 1;
+              credits = (src.first['credits'] as int?) ?? 3;
+            }
+          } else {
+            final subj = await txn.query(
+              'subjects',
+              columns: ['semester', 'credits'],
+              where: 'id = ?',
+              whereArgs: [subjectId],
+              limit: 1,
+            );
+            if (subj.isNotEmpty) {
+              term = (subj.first['semester'] as int?) ?? 1;
+              credits = (subj.first['credits'] as int?) ?? 3;
+            }
+          }
+        }
+
+        if (fromCurriculumId != null) {
+          await txn.delete(
+            'curriculum_courses',
+            where: 'curriculum_id = ? AND subject_id = ?',
+            whereArgs: [fromCurriculumId, subjectId],
+          );
+        }
+
+        final dup = await txn.query(
+          'curriculum_courses',
+          columns: ['id'],
+          where: 'curriculum_id = ? AND subject_id = ?',
+          whereArgs: [toCurriculumId, subjectId],
+          limit: 1,
+        );
+        final values = {
+          'curriculum_id': toCurriculumId,
+          'subject_id': subjectId,
+          'term': term,
+          'credits': credits,
+        };
+        if (dup.isEmpty) {
+          await txn.insert('curriculum_courses', values);
+        } else {
+          await txn.update(
+            'curriculum_courses',
+            values,
+            where: 'id = ?',
+            whereArgs: [dup.first['id'] as int],
+          );
+        }
+      }
+    });
+  }
+
+  /// Đổi kỳ của một loạt môn.
+  ///
+  /// [curriculumId] null = môn ngoài khung, lúc đó kỳ nằm ở `subjects.semester`.
+  /// Có khung thì ghi vào `curriculum_courses.term` để không đụng tới kỳ mà
+  /// các tệp môn học khác đang khai báo cho cùng một môn.
+  Future<void> setTermOfSubjects({
+    int? curriculumId,
+    required List<int> subjectIds,
+    required int term,
+  }) async {
+    if (subjectIds.isEmpty) return;
+    final db = await database;
+    final placeholders = List.filled(subjectIds.length, '?').join(', ');
+
+    if (curriculumId == null) {
+      await db.rawUpdate(
+        'UPDATE subjects SET semester = ?, semester_is_placeholder = 0, '
+        'updated_at = ? WHERE id IN ($placeholders)',
+        [term, DateTime.now().toIso8601String(), ...subjectIds],
+      );
+      return;
+    }
+
+    await db.update(
+      'curriculum_courses',
+      {'term': term},
+      where: 'curriculum_id = ? AND subject_id IN ($placeholders)',
+      whereArgs: [curriculumId, ...subjectIds],
+    );
+  }
+
+  /// `{subject_id: [mã tệp môn học, ...]}` — dùng khi ghi front matter
+  /// `curriculum:` ra file `.md` để lần nạp sau nhận lại đúng tệp.
+  Future<Map<int, List<String>>> curriculumCodesBySubjectId() async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT cc.subject_id AS sid, c.code AS code
+      FROM curriculum_courses cc
+      INNER JOIN curriculums c ON c.id = cc.curriculum_id
+      ORDER BY c.code ASC
+    ''');
+    final out = <int, List<String>>{};
+    for (final r in rows) {
+      final sid = r['sid'] as int;
+      final code = (r['code'] as String?)?.trim() ?? '';
+      if (code.isEmpty) continue;
+      out.putIfAbsent(sid, () => []).add(code);
+    }
+    return out;
   }
 
   /// Xoá toàn bộ dữ liệu (dùng trong Cài đặt khi muốn làm lại demo).
@@ -2446,6 +2741,20 @@ class FapImportResult {
   String toString() =>
       'FapImportResult($curriculumCode: $insertedSubjects mon moi, '
       '$updatedSubjects mon cap nhat, $plos PLO, $curriculumSubjects lien ket)';
+}
+
+/// Một dòng sắp ghi vào `curriculum_courses`: môn nào, thuộc kỳ nào của tệp
+/// môn học đó, mang bao nhiêu tín chỉ trong khung này.
+class CurriculumCourseEntry {
+  final int subjectId;
+  final int term;
+  final int credits;
+
+  const CurriculumCourseEntry({
+    required this.subjectId,
+    this.term = 1,
+    this.credits = 3,
+  });
 }
 
 /// Lỗi nghiệp vụ từ tầng DB (trùng khoá, chu trình, ...) để UI hiển thị tử tế.

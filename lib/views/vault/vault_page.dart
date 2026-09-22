@@ -7,6 +7,7 @@ import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
 import '../notes/obsidian_note_editor_page.dart';
+import 'vault_import_flow.dart';
 
 /// Cầu nối giữa file `.md` trên đĩa và SQLite.
 ///
@@ -58,13 +59,11 @@ class _VaultPageState extends State<VaultPage> {
   Future<void> _import() async {
     setState(() => _busy = true);
     try {
-      final report = await AppState.instance.importFromVault();
+      final report = await VaultImportFlow.run(context);
+      if (report == null) return;
       await _scan();
       if (!mounted) return;
       setState(() => _lastReport = report);
-      Ui.success(context, report.summary);
-    } catch (e) {
-      if (mounted) Ui.error(context, e);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../models/curriculum.dart';
 import '../models/subject.dart';
 import '../services/chat_session_service.dart';
 import '../state/app_state.dart';
 import '../utils/app_colors.dart';
+import '../utils/ui_helpers.dart';
 import 'chat/ai_chat_page.dart';
+import 'curriculum/curriculum_form_dialog.dart';
 import 'graph/graph_page.dart';
 import 'notes/obsidian_note_editor_view.dart';
 import 'settings/settings_page.dart';
@@ -13,6 +16,7 @@ import 'subjects/subject_form_dialog.dart';
 import 'subjects/subjects_page.dart';
 import 'vault/vault_page.dart';
 import 'widgets/subject_detail_panel.dart';
+import 'widgets/tree_context_menu.dart';
 
 /// Intent để bắt phím tắt Ctrl+B toggle thanh bên.
 class _ToggleSidebarIntent extends Intent {
@@ -39,7 +43,11 @@ class _AppShellState extends State<AppShell> {
   int _index = 0;
   bool _isSidebarOpen = true;
   String _searchQuery = '';
-  final Set<int> _collapsedSemesters = {};
+
+  /// Khoá của các nút đang thu gọn trên cây thư mục. Khoá do
+  /// [_FilesSidebarContent.curriculumKey] / `semesterKey` sinh ra, vì cây giờ
+  /// có hai cấp thư mục (tệp môn học -> học kỳ) chứ không chỉ một cấp kỳ.
+  final Set<String> _collapsedNodes = {};
   int _sidebarTab = 0; // 0: Files, 1: Search, 2: Bookmarks
 
   final List<int> _history = [0];
@@ -153,24 +161,22 @@ class _AppShellState extends State<AppShell> {
                           mainIndex: _index,
                           activeTabIndex: _sidebarTab,
                           searchQuery: _searchQuery,
-                          collapsedSemesters: _collapsedSemesters,
+                          collapsedNodes: _collapsedNodes,
                           onTabChanged: (tab) => setState(() => _sidebarTab = tab),
                           onSearchChanged: (q) => setState(() => _searchQuery = q),
-                          onToggleSemester: (sem) {
+                          onToggleNode: (key) {
                             setState(() {
-                              if (_collapsedSemesters.contains(sem)) {
-                                _collapsedSemesters.remove(sem);
-                              } else {
-                                _collapsedSemesters.add(sem);
+                              if (!_collapsedNodes.remove(key)) {
+                                _collapsedNodes.add(key);
                               }
                             });
                           },
-                          onCollapseAllSemesters: (semesters) {
+                          onSetNodesCollapsed: (keys, collapsed) {
                             setState(() {
-                              if (_collapsedSemesters.length == semesters.length) {
-                                _collapsedSemesters.clear();
+                              if (collapsed) {
+                                _collapsedNodes.addAll(keys);
                               } else {
-                                _collapsedSemesters.addAll(semesters);
+                                _collapsedNodes.removeAll(keys);
                               }
                             });
                           },
@@ -449,11 +455,11 @@ class _ObsidianSidebarPanel extends StatelessWidget {
   final int mainIndex;
   final int activeTabIndex;
   final String searchQuery;
-  final Set<int> collapsedSemesters;
+  final Set<String> collapsedNodes;
   final ValueChanged<int> onTabChanged;
   final ValueChanged<String> onSearchChanged;
-  final ValueChanged<int> onToggleSemester;
-  final ValueChanged<List<int>> onCollapseAllSemesters;
+  final ValueChanged<String> onToggleNode;
+  final void Function(List<String> keys, bool collapsed) onSetNodesCollapsed;
   final ValueChanged<Subject> onSelectSubject;
   final VoidCallback onOpenVault;
   final VoidCallback onCloseSidebar;
@@ -464,11 +470,11 @@ class _ObsidianSidebarPanel extends StatelessWidget {
     required this.mainIndex,
     required this.activeTabIndex,
     required this.searchQuery,
-    required this.collapsedSemesters,
+    required this.collapsedNodes,
     required this.onTabChanged,
     required this.onSearchChanged,
-    required this.onToggleSemester,
-    required this.onCollapseAllSemesters,
+    required this.onToggleNode,
+    required this.onSetNodesCollapsed,
     required this.onSelectSubject,
     required this.onOpenVault,
     required this.onCloseSidebar,
@@ -503,15 +509,16 @@ class _ObsidianSidebarPanel extends StatelessWidget {
     return _FilesSidebarContent(
       activeTabIndex: activeTabIndex,
       searchQuery: searchQuery,
-      collapsedSemesters: collapsedSemesters,
+      collapsedNodes: collapsedNodes,
       onTabChanged: onTabChanged,
       onSearchChanged: onSearchChanged,
-      onToggleSemester: onToggleSemester,
-      onCollapseAllSemesters: onCollapseAllSemesters,
+      onToggleNode: onToggleNode,
+      onSetNodesCollapsed: onSetNodesCollapsed,
       onSelectSubject: onSelectSubject,
       onOpenVault: onOpenVault,
       onCloseSidebar: onCloseSidebar,
       onNewSubject: onNewSubject,
+      onNavigateToTab: onNavigateToTab,
     );
   }
 }
@@ -1289,32 +1296,43 @@ class _SettingsMenuItem extends StatelessWidget {
 // ============================================================================
 // 2D. SIDEBAR CHO TỆP & MÔN HỌC (FILE EXPLORER MẶC ĐỊNH)
 // ============================================================================
+/// Cây thư mục: **Tệp môn học (Khung CTĐT) -> Học kỳ -> Môn học**.
+///
+/// Trước đây cây chỉ gom theo số kỳ, nên mọi lần "Nạp vào CSDL" đều đổ chung
+/// vào đúng một bộ "Học kỳ 1..n" và hai khung chương trình khác nhau trộn lẫn
+/// không gỡ ra được. Giờ mỗi khung là một thư mục gốc riêng, sửa/xoá/ghi ra
+/// Vault độc lập; các môn chưa gắn khung nào nằm ở nhóm "Môn ngoài khung".
 class _FilesSidebarContent extends StatelessWidget {
   final int activeTabIndex;
   final String searchQuery;
-  final Set<int> collapsedSemesters;
+  final Set<String> collapsedNodes;
   final ValueChanged<int> onTabChanged;
   final ValueChanged<String> onSearchChanged;
-  final ValueChanged<int> onToggleSemester;
-  final ValueChanged<List<int>> onCollapseAllSemesters;
+  final ValueChanged<String> onToggleNode;
+  final void Function(List<String> keys, bool collapsed) onSetNodesCollapsed;
   final ValueChanged<Subject> onSelectSubject;
   final VoidCallback onOpenVault;
   final VoidCallback onCloseSidebar;
   final VoidCallback onNewSubject;
+  final ValueChanged<int> onNavigateToTab;
 
   const _FilesSidebarContent({
     required this.activeTabIndex,
     required this.searchQuery,
-    required this.collapsedSemesters,
+    required this.collapsedNodes,
     required this.onTabChanged,
     required this.onSearchChanged,
-    required this.onToggleSemester,
-    required this.onCollapseAllSemesters,
+    required this.onToggleNode,
+    required this.onSetNodesCollapsed,
     required this.onSelectSubject,
     required this.onOpenVault,
     required this.onCloseSidebar,
     required this.onNewSubject,
+    required this.onNavigateToTab,
   });
+
+  static String curriculumKey(CurriculumGroup g) => 'curr:${g.code}';
+  static String semesterKey(CurriculumGroup g, int sem) => 'sem:${g.code}:$sem';
 
   @override
   Widget build(BuildContext context) {
@@ -1322,17 +1340,52 @@ class _FilesSidebarContent extends StatelessWidget {
       listenable: AppState.instance,
       builder: (context, _) {
         final state = AppState.instance;
-        final subjects = state.graph.subjects;
-        final semesters = subjects.map((s) => s.semester).toSet().toList()..sort();
+        final groups = state.curriculumGroups;
+        final query = searchQuery.trim().toLowerCase();
 
-        // Lọc theo từ khóa tìm kiếm
-        final filtered = searchQuery.trim().isEmpty
-            ? subjects
-            : subjects.where((s) {
-                final q = searchQuery.trim().toLowerCase();
-                return s.code.toLowerCase().contains(q) ||
-                    s.name.toLowerCase().contains(q);
-              }).toList();
+        // Lọc theo từ khoá ngay trên cấu trúc cây: thư mục nào không còn môn
+        // nào khớp thì biến mất, thay vì hiện một thư mục rỗng.
+        final visible = <_VisibleGroup>[];
+        for (final g in groups) {
+          final sems = <int, List<Subject>>{};
+          for (final entry in g.semesters.entries) {
+            final list = query.isEmpty
+                ? entry.value
+                : entry.value
+                      .where(
+                        (s) =>
+                            s.code.toLowerCase().contains(query) ||
+                            s.name.toLowerCase().contains(query),
+                      )
+                      .toList();
+            if (list.isNotEmpty) sems[entry.key] = list;
+          }
+          final matchesName =
+              g.code.toLowerCase().contains(query) ||
+              g.name.toLowerCase().contains(query);
+          // Tệp rỗng vẫn phải hiện: vừa tạo bằng nút "Tạo tệp môn học mới",
+          // hoặc vừa gỡ hết môn ra. Ẩn nó đi thì không còn nút nào để chuột
+          // phải mà đổi tên / nạp thêm / xoá. Nhóm "ngoài khung" thì ngược
+          // lại — rỗng nghĩa là mọi môn đã được xếp chỗ, giấu đi là đúng.
+          final keep = sems.isNotEmpty || (matchesName && !g.isUnassigned);
+          if (keep) {
+            visible.add(
+              _VisibleGroup(
+                group: g,
+                semesters: matchesName && sems.isEmpty ? g.semesters : sems,
+              ),
+            );
+          }
+        }
+
+        final allKeys = <String>[
+          for (final v in visible) ...[
+            curriculumKey(v.group),
+            for (final sem in v.semesters.keys) semesterKey(v.group, sem),
+          ],
+        ];
+        final allCollapsed =
+            allKeys.isNotEmpty && allKeys.every(collapsedNodes.contains);
 
         return Column(
           children: [
@@ -1396,6 +1449,11 @@ class _FilesSidebarContent extends StatelessWidget {
                   ),
                   const Spacer(),
                   _MiniActionIcon(
+                    icon: Icons.create_new_folder_outlined,
+                    tooltip: 'Tạo tệp môn học mới',
+                    onTap: () => _createCurriculum(context),
+                  ),
+                  _MiniActionIcon(
                     icon: Icons.note_add_outlined,
                     tooltip: 'Tạo môn học mới',
                     onTap: onNewSubject,
@@ -1406,11 +1464,9 @@ class _FilesSidebarContent extends StatelessWidget {
                     onTap: () => state.refresh(),
                   ),
                   _MiniActionIcon(
-                    icon: collapsedSemesters.length == semesters.length
-                        ? Icons.unfold_more
-                        : Icons.unfold_less,
+                    icon: allCollapsed ? Icons.unfold_more : Icons.unfold_less,
                     tooltip: 'Thu gọn/Mở rộng tất cả',
-                    onTap: () => onCollapseAllSemesters(semesters),
+                    onTap: () => onSetNodesCollapsed(allKeys, !allCollapsed),
                   ),
                 ],
               ),
@@ -1430,15 +1486,25 @@ class _FilesSidebarContent extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 6),
                   child: Row(
                     children: [
-                      Icon(Icons.search, size: 14, color: AppColors.obsidianTextMuted),
+                      Icon(
+                        Icons.search,
+                        size: 14,
+                        color: AppColors.obsidianTextMuted,
+                      ),
                       const SizedBox(width: 6),
                       Expanded(
                         child: TextField(
                           onChanged: onSearchChanged,
-                          style: TextStyle(fontSize: 12, color: AppColors.obsidianText),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.obsidianText,
+                          ),
                           decoration: InputDecoration(
                             hintText: 'Tìm kiếm...',
-                            hintStyle: TextStyle(fontSize: 12, color: AppColors.obsidianTextMuted),
+                            hintStyle: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.obsidianTextMuted,
+                            ),
                             border: InputBorder.none,
                             isDense: true,
                             contentPadding: EdgeInsets.zero,
@@ -1448,32 +1514,44 @@ class _FilesSidebarContent extends StatelessWidget {
                       if (searchQuery.isNotEmpty)
                         GestureDetector(
                           onTap: () => onSearchChanged(''),
-                          child: Icon(Icons.close, size: 14, color: AppColors.obsidianTextMuted),
+                          child: Icon(
+                            Icons.close,
+                            size: 14,
+                            color: AppColors.obsidianTextMuted,
+                          ),
                         ),
                     ],
                   ),
                 ),
               ),
 
-            // Danh sách môn học dạng cây thư mục Obsidian
+            // Cây thư mục: Tệp môn học -> Học kỳ -> Môn học
             Expanded(
-              child: filtered.isEmpty
+              child: visible.isEmpty
                   ? Center(
-                      child: Text(
-                        'Không có môn nào',
-                        style: TextStyle(fontSize: 12, color: AppColors.obsidianTextMuted),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Text(
+                          searchQuery.isNotEmpty
+                              ? 'Không có môn nào khớp'
+                              : 'Chưa có tệp môn học nào.\nNạp một khung chương '
+                                    'trình từ Vault để bắt đầu.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.5,
+                            color: AppColors.obsidianTextMuted,
+                          ),
+                        ),
                       ),
                     )
                   : ListView(
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       children: [
-                        for (final sem in semesters)
-                          _buildSemesterGroup(
-                            semester: sem,
-                            subjects: filtered.where((s) => s.semester == sem).toList(),
-                            isCollapsed: collapsedSemesters.contains(sem),
-                            onToggle: () => onToggleSemester(sem),
-                            onSelectSubject: onSelectSubject,
+                        for (final v in visible)
+                          _buildCurriculumGroup(
+                            context: context,
+                            visible: v,
                             selectedId: state.selectedSubjectId,
                           ),
                       ],
@@ -1494,7 +1572,11 @@ class _FilesSidebarContent extends StatelessWidget {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.swap_vert, size: 16, color: AppColors.obsidianTextMuted),
+                    Icon(
+                      Icons.swap_vert,
+                      size: 16,
+                      color: AppColors.obsidianTextMuted,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Column(
@@ -1514,7 +1596,8 @@ class _FilesSidebarContent extends StatelessWidget {
                             ),
                           ),
                           Text(
-                            '${state.stats['subjects'] ?? 0} môn • ${state.stats['edges'] ?? 0} liên kết',
+                            '${state.stats['subjects'] ?? 0} môn • '
+                            '${state.stats['edges'] ?? 0} liên kết',
                             style: TextStyle(
                               fontSize: 10,
                               color: AppColors.obsidianTextMuted,
@@ -1538,78 +1621,156 @@ class _FilesSidebarContent extends StatelessWidget {
     );
   }
 
-  Widget _buildSemesterGroup({
-    required int semester,
-    required List<Subject> subjects,
-    required bool isCollapsed,
-    required VoidCallback onToggle,
-    required ValueChanged<Subject> onSelectSubject,
+  Future<void> _createCurriculum(BuildContext context) async {
+    final data = await CurriculumFormDialog.show(context);
+    if (data == null || !context.mounted) return;
+    try {
+      await AppState.instance.addCurriculum(
+        code: data['code']?.toString() ?? '',
+        name: data['name']?.toString() ?? '',
+        major: data['major']?.toString() ?? '',
+        totalCredits:
+            int.tryParse(data['total_credits']?.toString() ?? '') ?? 0,
+        decisionNo: data['decision_no']?.toString() ?? '',
+        description: data['description']?.toString() ?? '',
+      );
+      if (context.mounted) Ui.success(context, 'Đã tạo tệp môn học mới.');
+    } catch (e) {
+      if (context.mounted) Ui.error(context, e);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // CẤP 1: TỆP MÔN HỌC
+  // ------------------------------------------------------------------
+
+  Widget _buildCurriculumGroup({
+    required BuildContext context,
+    required _VisibleGroup visible,
     required int? selectedId,
   }) {
-    if (subjects.isEmpty) return const SizedBox.shrink();
+    final group = visible.group;
+    final key = curriculumKey(group);
+    final isCollapsed = collapsedNodes.contains(key);
+    final semesters = visible.semesters.keys.toList()..sort();
+    final count = visible.semesters.values.fold<int>(
+      0,
+      (sum, l) => sum + l.length,
+    );
+
+    final childKeys = [
+      key,
+      for (final sem in semesters) semesterKey(group, sem),
+    ];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Tiêu đề Folder Kỳ học
-        InkWell(
-          onTap: onToggle,
-          borderRadius: BorderRadius.circular(4),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            child: Row(
-              children: [
-                Icon(
-                  isCollapsed ? Icons.arrow_right : Icons.arrow_drop_down,
-                  size: 16,
-                  color: AppColors.obsidianTextMuted,
-                ),
-                const SizedBox(width: 4),
-                Icon(
-                  isCollapsed ? Icons.folder : Icons.folder_open,
-                  size: 15,
-                  color: AppColors.forSemester(semester),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  'Học kỳ $semester',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.obsidianText,
-                  ),
-                ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: AppColors.obsidianActive,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    '${subjects.length}',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: AppColors.obsidianTextMuted,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+        _TreeRow(
+          indent: 0,
+          isCollapsed: isCollapsed,
+          hasChildren: semesters.isNotEmpty,
+          leading: Icon(
+            group.isUnassigned
+                ? Icons.folder_special_outlined
+                : Icons.snippet_folder_outlined,
+            size: 15,
+            color: group.isUnassigned
+                ? AppColors.obsidianTextMuted
+                : AppColors.primary,
+          ),
+          label: group.isUnassigned ? 'Môn ngoài khung' : group.code,
+          labelStyle: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: AppColors.obsidianText,
+          ),
+          badge: '$count',
+          tooltip: group.isUnassigned
+              ? 'Các môn chưa gắn vào khung chương trình nào'
+              : '${group.name}\n${group.totalSubjects} môn',
+          onTap: () => onToggleNode(key),
+          onContextMenu: (pos) => TreeContextMenu.showForCurriculum(
+            context,
+            position: pos,
+            group: group,
+            onNavigate: onNavigateToTab,
+            onExpandAll: () => onSetNodesCollapsed(childKeys, false),
+            onCollapseAll: () => onSetNodesCollapsed(childKeys, true),
           ),
         ),
 
-        // Danh sách các file môn học bên trong
+        if (!isCollapsed)
+          for (final sem in semesters)
+            _buildSemesterGroup(
+              context: context,
+              group: group,
+              semester: sem,
+              subjects: visible.semesters[sem]!,
+              selectedId: selectedId,
+            ),
+      ],
+    );
+  }
+
+  // ------------------------------------------------------------------
+  // CẤP 2: HỌC KỲ
+  // ------------------------------------------------------------------
+
+  Widget _buildSemesterGroup({
+    required BuildContext context,
+    required CurriculumGroup group,
+    required int semester,
+    required List<Subject> subjects,
+    required int? selectedId,
+  }) {
+    if (subjects.isEmpty) return const SizedBox.shrink();
+    final key = semesterKey(group, semester);
+    final isCollapsed = collapsedNodes.contains(key);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _TreeRow(
+          indent: 14,
+          isCollapsed: isCollapsed,
+          hasChildren: true,
+          leading: Icon(
+            isCollapsed ? Icons.folder : Icons.folder_open,
+            size: 15,
+            color: AppColors.forSemester(semester),
+          ),
+          label: 'Học kỳ $semester',
+          labelStyle: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.obsidianText,
+          ),
+          badge: '${subjects.length}',
+          onTap: () => onToggleNode(key),
+          onContextMenu: (pos) => TreeContextMenu.showForSemester(
+            context,
+            position: pos,
+            group: group,
+            semester: semester,
+            subjects: subjects,
+            isCollapsed: isCollapsed,
+            onToggle: () => onToggleNode(key),
+          ),
+        ),
+
         if (!isCollapsed)
           Padding(
-            padding: const EdgeInsets.only(left: 18),
+            padding: const EdgeInsets.only(left: 32),
             child: Column(
               children: [
                 for (final s in subjects)
                   _FileItemTile(
                     subject: s,
+                    group: group,
                     isSelected: selectedId == s.id,
                     onTap: () => onSelectSubject(s),
+                    onNavigate: onNavigateToTab,
                   ),
               ],
             ),
@@ -1619,15 +1780,157 @@ class _FilesSidebarContent extends StatelessWidget {
   }
 }
 
+/// Một tệp môn học sau khi đã lọc theo từ khoá tìm kiếm.
+class _VisibleGroup {
+  final CurriculumGroup group;
+  final Map<int, List<Subject>> semesters;
+
+  const _VisibleGroup({required this.group, required this.semesters});
+}
+
+/// Một dòng thư mục trên cây: mũi tên, biểu tượng, nhãn, số đếm.
+/// Chuột phải ở bất kỳ đâu trên dòng đều mở menu ngữ cảnh.
+class _TreeRow extends StatefulWidget {
+  final double indent;
+  final bool isCollapsed;
+  final bool hasChildren;
+  final Widget leading;
+  final String label;
+  final TextStyle labelStyle;
+  final String badge;
+  final String? tooltip;
+  final VoidCallback onTap;
+  final ValueChanged<Offset> onContextMenu;
+
+  const _TreeRow({
+    required this.indent,
+    required this.isCollapsed,
+    required this.hasChildren,
+    required this.leading,
+    required this.label,
+    required this.labelStyle,
+    required this.badge,
+    this.tooltip,
+    required this.onTap,
+    required this.onContextMenu,
+  });
+
+  @override
+  State<_TreeRow> createState() => _TreeRowState();
+}
+
+class _TreeRowState extends State<_TreeRow> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final row = MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onSecondaryTapUp: (d) => widget.onContextMenu(d.globalPosition),
+        onLongPressStart: (d) => widget.onContextMenu(d.globalPosition),
+        child: InkWell(
+          onTap: widget.onTap,
+          borderRadius: BorderRadius.circular(4),
+          child: Container(
+            padding: EdgeInsets.fromLTRB(10 + widget.indent, 4, 8, 4),
+            decoration: BoxDecoration(
+              color: _hovered ? AppColors.obsidianHover : Colors.transparent,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  widget.hasChildren
+                      ? (widget.isCollapsed
+                            ? Icons.arrow_right
+                            : Icons.arrow_drop_down)
+                      : Icons.remove,
+                  size: 16,
+                  color: AppColors.obsidianTextMuted,
+                ),
+                const SizedBox(width: 4),
+                widget.leading,
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    widget.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: widget.labelStyle,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                // Đổi chỗ con số đếm lấy nút "..." khi rê chuột: giữ nguyên
+                // bề ngang nên hàng không bị giật, và người dùng thấy ngay là
+                // dòng này có menu chứ không phải chỉ chuột phải mới biết.
+                if (_hovered)
+                  InkWell(
+                    onTapUp: (d) => widget.onContextMenu(d.globalPosition),
+                    borderRadius: BorderRadius.circular(4),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 1,
+                      ),
+                      child: Icon(
+                        Icons.more_horiz,
+                        size: 15,
+                        color: AppColors.obsidianText,
+                      ),
+                    ),
+                  )
+                else
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.obsidianActive,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      widget.badge,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: AppColors.obsidianTextMuted,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final tip = widget.tooltip;
+    return tip == null
+        ? row
+        : Tooltip(
+            message: tip,
+            waitDuration: const Duration(milliseconds: 600),
+            child: row,
+          );
+  }
+}
+
 class _FileItemTile extends StatefulWidget {
   final Subject subject;
+  final CurriculumGroup group;
   final bool isSelected;
   final VoidCallback onTap;
+  final ValueChanged<int> onNavigate;
 
   const _FileItemTile({
     required this.subject,
+    required this.group,
     required this.isSelected,
     required this.onTap,
+    required this.onNavigate,
   });
 
   @override
@@ -1637,6 +1940,14 @@ class _FileItemTile extends StatefulWidget {
 class _FileItemTileState extends State<_FileItemTile> {
   bool _hovered = false;
 
+  void _menu(Offset position) => TreeContextMenu.showForSubject(
+    context,
+    position: position,
+    subject: widget.subject,
+    group: widget.group,
+    onNavigate: widget.onNavigate,
+  );
+
   @override
   Widget build(BuildContext context) {
     final s = widget.subject;
@@ -1645,59 +1956,78 @@ class _FileItemTileState extends State<_FileItemTile> {
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      child: InkWell(
-        onTap: widget.onTap,
-        borderRadius: BorderRadius.circular(4),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4.5),
-          margin: const EdgeInsets.symmetric(vertical: 1),
-          decoration: BoxDecoration(
-            color: active
-                ? AppColors.obsidianActive
-                : (_hovered ? AppColors.obsidianHover : Colors.transparent),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                Icons.description_outlined,
-                size: 14,
-                color: AppColors.obsidianTextMuted,
-              ),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  s.code,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: active
-                        ? (AppColors.isDark ? Colors.white : AppColors.primaryDark)
-                        : AppColors.obsidianText,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onSecondaryTapUp: (d) => _menu(d.globalPosition),
+        onLongPressStart: (d) => _menu(d.globalPosition),
+        child: InkWell(
+          onTap: widget.onTap,
+          onDoubleTap: () => AppState.instance.openNoteTab(s),
+          borderRadius: BorderRadius.circular(4),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4.5),
+            margin: const EdgeInsets.symmetric(vertical: 1),
+            decoration: BoxDecoration(
+              color: active
+                  ? AppColors.obsidianActive
+                  : (_hovered ? AppColors.obsidianHover : Colors.transparent),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.description_outlined,
+                  size: 14,
+                  color: AppColors.obsidianTextMuted,
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    s.code,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: active
+                          ? (AppColors.isDark
+                                ? Colors.white
+                                : AppColors.primaryDark)
+                          : AppColors.obsidianText,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  s.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: AppColors.obsidianTextMuted,
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    s.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: AppColors.obsidianTextMuted,
+                    ),
                   ),
                 ),
-              ),
-            ],
+                if (_hovered)
+                  InkWell(
+                    onTapUp: (d) => _menu(d.globalPosition),
+                    borderRadius: BorderRadius.circular(4),
+                    child: Icon(
+                      Icons.more_horiz,
+                      size: 15,
+                      color: AppColors.obsidianText,
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 }
+
 
 class _PanelTabIcon extends StatelessWidget {
   final IconData icon;

@@ -10,7 +10,7 @@ import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_constants.dart';
 import '../../utils/ui_helpers.dart';
-import '../widgets/vault_import_plan_dialog.dart';
+import '../vault/vault_import_flow.dart';
 
 /// Cấu hình cục bộ và thông tin kiến trúc (tiện lúc demo bảo vệ đồ án).
 class SettingsPage extends StatefulWidget {
@@ -170,29 +170,11 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _importFromVault() async {
     setState(() => _vaultBusy = true);
     try {
-      final plan = await AppState.instance.planImportFromVault();
-      if (!mounted) return;
-
-      if (plan.isEmpty) {
-        Ui.toast(context, 'Vault không có thay đổi nào so với CSDL.');
-        return;
-      }
-
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (_) => VaultImportPlanDialog(plan: plan),
-      );
-      if (ok != true || !mounted) return;
-
-      final report = await AppState.instance.applyVaultPlan(plan);
-      if (!mounted) return;
-      if (report.warnings.isEmpty) {
-        Ui.success(context, report.summary);
-      } else {
+      final report = await VaultImportFlow.run(context);
+      if (report == null || !mounted) return;
+      if (report.warnings.isNotEmpty) {
         Ui.toast(context, '${report.summary} ${report.warnings.join(' ')}');
       }
-    } catch (e) {
-      if (mounted) Ui.error(context, e);
     } finally {
       if (mounted) setState(() => _vaultBusy = false);
     }
