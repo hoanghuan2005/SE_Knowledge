@@ -23,8 +23,17 @@ class SubjectChatService extends ChangeNotifier {
   final Set<int> _loadingSuggestions = {};
   final Set<int> _sending = {};
 
+  /// Phần câu trả lời đang chảy về, giữ riêng theo môn.
+  ///
+  /// Để ở service chứ không ở state của panel: người dùng bấm sang môn khác
+  /// giữa chừng rồi quay lại thì vẫn thấy đúng đoạn đang chạy dở.
+  final Map<int, String> _streamingText = {};
+
   List<ChatMessage> messagesOf(int subjectId) =>
       List.unmodifiable(_messages[subjectId] ?? const []);
+
+  /// Rỗng khi chưa nhận được chữ nào (còn đang chờ mạng) hoặc đã xong.
+  String streamingTextOf(int subjectId) => _streamingText[subjectId] ?? '';
 
   List<String> suggestionsOf(int subjectId) =>
       List.unmodifiable(_suggestions[subjectId] ?? const []);
@@ -40,6 +49,7 @@ class SubjectChatService extends ChangeNotifier {
   void clear(int subjectId) {
     _messages.remove(subjectId);
     _suggestions.remove(subjectId);
+    _streamingText.remove(subjectId);
     notifyListeners();
   }
 
@@ -95,6 +105,10 @@ class SubjectChatService extends ChangeNotifier {
         history: history,
         includeKnowledgeContext: false,
         extraContext: context,
+        onDelta: (delta) {
+          _streamingText[subjectId] = (_streamingText[subjectId] ?? '') + delta;
+          notifyListeners();
+        },
       );
       _messages[subjectId]!.add(ChatMessage.assistant(answer.text));
     } on AiException catch (e) {
@@ -106,6 +120,9 @@ class SubjectChatService extends ChangeNotifier {
         ChatMessage.assistant(e.toString(), isError: true),
       );
     } finally {
+      // Đoạn đang chảy dở đã thành tin nhắn hoàn chỉnh (hoặc bị bỏ vì lỗi),
+      // giữ lại nữa sẽ hiện trùng hai lần.
+      _streamingText.remove(subjectId);
       _sending.remove(subjectId);
       notifyListeners();
     }

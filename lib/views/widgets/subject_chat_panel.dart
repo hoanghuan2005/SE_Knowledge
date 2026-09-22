@@ -10,6 +10,7 @@ import '../../services/obsidian_service.dart';
 import '../../services/subject_chat_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
+import 'linked_answer_text.dart';
 
 /// Khung chat AI thu gọn, gắn theo TỪNG môn học — hiện trong sidebar bên phải
 /// ngay khi bấm chọn một node trên đồ thị.
@@ -232,6 +233,15 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
     });
   }
 
+  /// Lúc chữ đang chảy về thì nhảy thẳng xuống đáy: chạy animation cho từng
+  /// mẩu chữ sẽ giật, vì animation sau cắt ngang animation trước.
+  void _stickToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
+  }
+
   Future<void> _send([String? preset]) async {
     final subjectId = widget.subject.id;
     if (subjectId == null || _loadingContext) return;
@@ -264,6 +274,13 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
             : SubjectChatService.instance.messagesOf(subjectId);
         final sending =
             subjectId != null && SubjectChatService.instance.isSending(subjectId);
+        final streamingText = subjectId == null
+            ? ''
+            : SubjectChatService.instance.streamingTextOf(subjectId);
+
+        // Chữ đang chảy về thì bám đáy, để câu trả lời dài không chạy khuất
+        // khỏi khung.
+        if (sending) _stickToBottom();
 
         return Column(
           children: [
@@ -282,7 +299,15 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
                       children: [
                         _suggestionsBlock(subjectId),
                         for (final m in messages) _ChatBubble(message: m),
-                        if (sending) const _TypingRow(),
+                        // Chưa có chữ nào nghĩa là còn đang chờ mạng, lúc đó
+                        // mới hiện chấm "đang gõ".
+                        if (sending)
+                          streamingText.isEmpty
+                              ? const _TypingRow()
+                              : _ChatBubble(
+                                  message: ChatMessage.assistant(streamingText),
+                                  streaming: true,
+                                ),
                       ],
                     ),
             ),
@@ -455,7 +480,11 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
 class _ChatBubble extends StatelessWidget {
   final ChatMessage message;
 
-  const _ChatBubble({required this.message});
+  /// Câu trả lời còn đang chảy về: thêm con trỏ ở cuối và chưa bóc link, vì
+  /// chữ có thể đang đứt ngang giữa "[[CSD2".
+  final bool streaming;
+
+  const _ChatBubble({required this.message, this.streaming = false});
 
   @override
   Widget build(BuildContext context) {
@@ -484,10 +513,15 @@ class _ChatBubble extends StatelessWidget {
             borderRadius: BorderRadius.circular(10),
             border: isUser ? null : Border.all(color: AppColors.border),
           ),
-          child: SelectableText(
-            message.content,
-            style: TextStyle(fontSize: 12.5, height: 1.5, color: fg),
-          ),
+          child: isUser || message.isError || streaming
+              ? SelectableText(
+                  streaming ? '${message.content}▌' : message.content,
+                  style: TextStyle(fontSize: 12.5, height: 1.5, color: fg),
+                )
+              : LinkedAnswerText(
+                  text: message.content,
+                  style: TextStyle(fontSize: 12.5, height: 1.5, color: fg),
+                ),
         ),
       ),
     );
