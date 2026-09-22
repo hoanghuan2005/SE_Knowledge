@@ -4,6 +4,7 @@ import '../models/graph_data.dart';
 import '../models/prerequisite.dart';
 import '../models/subject.dart';
 import '../models/curriculum.dart';
+import '../models/graph_settings.dart';
 import '../services/db_service.dart';
 import '../services/obsidian_service.dart';
 import '../services/settings_service.dart';
@@ -38,6 +39,20 @@ class AppState extends ChangeNotifier {
     AppColors.isDark = (mode == ThemeMode.dark);
     await _settings.setThemeMode(mode == ThemeMode.dark ? 'dark' : 'light');
     notifyListeners();
+  }
+
+  // --- Graph Custom Settings ---
+  GraphSettings _graphSettings = GraphSettings.defaults;
+  GraphSettings get graphSettings => _graphSettings;
+
+  void updateGraphSettings(GraphSettings newSettings) {
+    _graphSettings = newSettings;
+    _settings.setGraphSettings(newSettings);
+    notifyListeners();
+  }
+
+  void resetGraphSettings() {
+    updateGraphSettings(GraphSettings.defaults);
   }
 
   GraphData _graph = GraphData.empty;
@@ -136,6 +151,7 @@ class AppState extends ChangeNotifier {
     AppColors.isDark = (_themeMode == ThemeMode.dark);
 
     _vaultPath = await _settings.getVaultPath();
+    _graphSettings = await _settings.getGraphSettings();
 
     // Dọn dẹp các node PLO rác cũ nếu có trong CSDL
     await _db.cleanInvalidPloSubjects();

@@ -5,11 +5,13 @@ import 'package:flutter/scheduler.dart';
 import '../../models/graph_data.dart';
 import '../../models/subject.dart';
 import '../../models/curriculum.dart';
+import '../../models/graph_settings.dart';
 import '../../services/db_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
 import '../subjects/subject_form_dialog.dart';
+import 'graph_settings_panel.dart';
 
 /// Màn hình trực quan hoá bản đồ tri thức.
 class GraphPage extends StatefulWidget {
@@ -21,8 +23,10 @@ class GraphPage extends StatefulWidget {
 
 class _GraphPageState extends State<GraphPage> {
   final TransformationController _viewer = TransformationController();
+  final GlobalKey<_ObsidianGraphCanvasState> _canvasKey = GlobalKey<_ObsidianGraphCanvasState>();
 
   bool _showRelated = true;
+  bool _showSettings = false;
   int? _semesterFilter;
 
   Future<void> _batchImportInbox(BuildContext context) async {
@@ -162,6 +166,21 @@ class _GraphPageState extends State<GraphPage> {
                   constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                   onPressed: state.refresh,
                 ),
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: _showSettings
+                      ? 'Đóng cài đặt đồ thị'
+                      : 'Tùy chỉnh đồ thị (Khoảng cách, độ to, lực đẩy...)',
+                  icon: Icon(
+                    _showSettings ? Icons.tune : Icons.tune_outlined,
+                    size: 16,
+                  ),
+                  color: _showSettings ? AppColors.primary : AppColors.textSecondary,
+                  splashRadius: 14,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  onPressed: () => setState(() => _showSettings = !_showSettings),
+                ),
                 const SizedBox(width: 8),
                 SizedBox(
                   height: 28,
@@ -201,17 +220,38 @@ class _GraphPageState extends State<GraphPage> {
               ],
             ),
             Expanded(
-              child: state.loading && currentGraph.isEmpty
-                  ? const Center(child: CircularProgressIndicator())
-                  : currentGraph.isEmpty
-                  ? _emptyGraph(context)
-                  : _ObsidianGraphCanvas(
-                      data: currentGraph,
-                      showRelated: _showRelated,
-                      semesterFilter: _semesterFilter,
-                      curriculumCode: state.activeCurriculumCode,
-                      viewer: _viewer,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: state.loading && currentGraph.isEmpty
+                        ? const Center(child: CircularProgressIndicator())
+                        : currentGraph.isEmpty
+                        ? _emptyGraph(context)
+                        : _ObsidianGraphCanvas(
+                            key: _canvasKey,
+                            data: currentGraph,
+                            settings: state.graphSettings,
+                            showRelated: _showRelated,
+                            semesterFilter: _semesterFilter,
+                            curriculumCode: state.activeCurriculumCode,
+                            viewer: _viewer,
+                          ),
+                  ),
+                  if (_showSettings)
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: GraphSettingsPanel(
+                        settings: state.graphSettings,
+                        onChanged: (newSettings) => state.updateGraphSettings(newSettings),
+                        onClose: () => setState(() => _showSettings = false),
+                        onResimulate: () => _canvasKey.currentState?.resimulate(),
+                        onResetZoom: _resetZoom,
+                        onResetDefaults: () => state.resetGraphSettings(),
+                      ),
                     ),
+                ],
+              ),
             ),
             _Legend(isDark: state.isDark),
           ],
@@ -272,13 +312,16 @@ class _EdgeSim {
 
 class _ObsidianGraphCanvas extends StatefulWidget {
   final GraphData data;
+  final GraphSettings settings;
   final bool showRelated;
   final int? semesterFilter;
   final String? curriculumCode;
   final TransformationController viewer;
 
   const _ObsidianGraphCanvas({
+    super.key,
     required this.data,
+    required this.settings,
     required this.showRelated,
     required this.semesterFilter,
     this.curriculumCode,
@@ -299,8 +342,8 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
   static const double canvasSize = 2000.0;
   static const double centerX = 1000.0;
   static const double centerY = 1000.0;
-  static const double nodeWidth = 110.0;
-  static const double nodeHeight = 32.0;
+  double get nodeWidth => 110.0 * widget.settings.nodeScale;
+  double get nodeHeight => 32.0 * widget.settings.nodeScale;
 
   @override
   void initState() {
@@ -316,10 +359,27 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
     final relatedChanged = widget.showRelated != oldWidget.showRelated;
     final dataChanged = widget.data != oldWidget.data;
     final curriculumChanged = widget.curriculumCode != oldWidget.curriculumCode;
+    final settingsChanged = widget.settings != oldWidget.settings;
 
     if (filterChanged || relatedChanged || dataChanged || curriculumChanged) {
       _syncGraph(resetPositions: filterChanged || curriculumChanged);
+    } else if (settingsChanged && widget.settings.enablePhysics) {
+      _wakeSimulation();
     }
+  }
+
+  void resimulate({bool randomize = false}) {
+    final rng = math.Random();
+    for (final node in _nodes) {
+      if (randomize) {
+        node.x += (rng.nextDouble() - 0.5) * 80.0;
+        node.y += (rng.nextDouble() - 0.5) * 80.0;
+      }
+      node.vx = (rng.nextDouble() - 0.5) * 16.0;
+      node.vy = (rng.nextDouble() - 0.5) * 16.0;
+    }
+    _wakeSimulation();
+    setState(() {});
   }
 
   @override
@@ -397,8 +457,14 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
 
   void _onTick(Duration elapsed) {
     if (_nodes.isEmpty) return;
+    if (!widget.settings.enablePhysics) {
+      if (_ticker.isActive) _ticker.stop();
+      return;
+    }
 
     double maxVelocity = 0.0;
+    final repulsionThreshold = math.max(380.0, widget.settings.linkDistance * 2.5);
+    final repulsionStrength = widget.settings.repulsionForce;
 
     // 1. Lực đẩy giữa các node (Repulsion Coulomb)
     for (int i = 0; i < _nodes.length; i++) {
@@ -409,8 +475,8 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
         final dy = n2.y - n1.y;
         final distSq = dx * dx + dy * dy + 400.0;
         final dist = math.sqrt(distSq);
-        if (dist < 420.0) {
-          final force = 24000.0 / distSq;
+        if (dist < repulsionThreshold) {
+          final force = repulsionStrength / distSq;
           final fx = (dx / dist) * force;
           final fy = (dy / dist) * force;
           if (!n1.isDragging) {
@@ -426,11 +492,11 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
     }
 
     // 2. Lực lò xo đàn hồi dọc theo liên kết (Spring Hooke)
+    final desiredDist = widget.settings.linkDistance;
     for (final e in _edges) {
       final dx = e.to.x - e.from.x;
       final dy = e.to.y - e.from.y;
       final dist = math.sqrt(dx * dx + dy * dy) + 0.1;
-      const desiredDist = 130.0;
       final delta = dist - desiredDist;
       final force = delta * 0.045;
       final fx = (dx / dist) * force;
@@ -447,10 +513,11 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
     }
 
     // 3. Trọng lực hướng tâm & Giảm chấn (Damping Friction)
+    final grav = widget.settings.centerGravity;
     for (final n in _nodes) {
       if (!n.isDragging) {
-        n.vx += (centerX - n.x) * 0.005;
-        n.vy += (centerY - n.y) * 0.005;
+        n.vx += (centerX - n.x) * grav;
+        n.vy += (centerY - n.y) * grav;
 
         n.vx *= 0.86;
         n.vy *= 0.86;
@@ -505,6 +572,10 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
                   painter: _GraphEdgesPainter(
                     edges: _edges,
                     isDark: isDark,
+                    nodeWidth: nodeWidth,
+                    nodeHeight: nodeHeight,
+                    edgeWidth: widget.settings.edgeWidth,
+                    showArrows: widget.settings.showArrows,
                   ),
                 ),
               ),
@@ -517,6 +588,7 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
                   child: _DraggableNodeItem(
                     node: node,
                     data: widget.data,
+                    settings: widget.settings,
                     isSelected: selectedId == node.subject.id,
                     viewer: widget.viewer,
                     onDragStart: () {
@@ -561,6 +633,7 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
 class _DraggableNodeItem extends StatefulWidget {
   final _NodeSim node;
   final GraphData data;
+  final GraphSettings settings;
   final bool isSelected;
   final TransformationController viewer;
   final VoidCallback onDragStart;
@@ -570,6 +643,7 @@ class _DraggableNodeItem extends StatefulWidget {
   const _DraggableNodeItem({
     required this.node,
     required this.data,
+    required this.settings,
     required this.isSelected,
     required this.viewer,
     required this.onDragStart,
@@ -588,9 +662,33 @@ class _DraggableNodeItemState extends State<_DraggableNodeItem> {
   @override
   Widget build(BuildContext context) {
     final s = widget.node.subject;
-    final color = AppColors.forSemester(s.semester);
     final inDeg = widget.data.inDegree(s.id!);
     final outDeg = widget.data.outDegree(s.id!);
+    final totalDeg = inDeg + outDeg;
+
+    final Color color;
+    if (widget.settings.colorMode == 'degree') {
+      if (totalDeg >= 6) {
+        color = const Color(0xFFEF4444);
+      } else if (totalDeg >= 4) {
+        color = const Color(0xFFF97316);
+      } else if (totalDeg >= 2) {
+        color = const Color(0xFF8B5CF6);
+      } else if (totalDeg >= 1) {
+        color = const Color(0xFF3B82F6);
+      } else {
+        color = const Color(0xFF64748B);
+      }
+    } else {
+      color = AppColors.forSemester(s.semester);
+    }
+
+    final scale = widget.settings.nodeScale;
+    final width = 110.0 * scale;
+    final height = 32.0 * scale;
+    final fontSize = (11.5 * scale).clamp(9.0, 16.0);
+    final tagFontSize = (10.0 * scale).clamp(8.0, 14.0);
+    final dotSize = (7.5 * scale).clamp(5.0, 12.0);
 
     return Listener(
       onPointerDown: (e) {
@@ -625,12 +723,12 @@ class _DraggableNodeItemState extends State<_DraggableNodeItem> {
               '(Nhấp để chọn • Nhấp đúp mở ghi chú .md)',
           waitDuration: const Duration(milliseconds: 350),
           child: Container(
-            width: 110,
-            height: 32,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            width: width,
+            height: height,
+            padding: EdgeInsets.symmetric(horizontal: (8 * scale).clamp(4.0, 12.0), vertical: (4 * scale).clamp(2.0, 8.0)),
             decoration: BoxDecoration(
               color: widget.isSelected ? color : AppColors.surface,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(8 * scale.clamp(0.8, 1.4)),
               border: Border.all(
                 color: widget.isSelected
                     ? color
@@ -652,34 +750,46 @@ class _DraggableNodeItemState extends State<_DraggableNodeItem> {
             child: Row(
               children: [
                 Container(
-                  width: 7.5,
-                  height: 7.5,
+                  width: dotSize,
+                  height: dotSize,
                   decoration: BoxDecoration(
                     color: widget.isSelected ? Colors.white : color,
                     shape: BoxShape.circle,
                   ),
                 ),
-                const SizedBox(width: 6),
+                SizedBox(width: (6 * scale).clamp(3.0, 10.0)),
                 Expanded(
                   child: Text(
                     s.code,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 11.5,
+                      fontSize: fontSize,
                       fontWeight: FontWeight.w700,
                       color: widget.isSelected ? Colors.white : AppColors.textPrimary,
                     ),
                   ),
                 ),
-                Text(
-                  'K${s.semester}',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: widget.isSelected ? Colors.white70 : AppColors.textSecondary,
+                if (widget.settings.showCredits) ...[
+                  Text(
+                    '${s.credits}TC',
+                    style: TextStyle(
+                      fontSize: (tagFontSize - 0.5).clamp(7.5, 12.0),
+                      fontWeight: FontWeight.w600,
+                      color: widget.isSelected ? Colors.white70 : AppColors.primary,
+                    ),
                   ),
-                ),
+                  if (widget.settings.showSemesterBadge) SizedBox(width: 4 * scale),
+                ],
+                if (widget.settings.showSemesterBadge)
+                  Text(
+                    'K${s.semester}',
+                    style: TextStyle(
+                      fontSize: tagFontSize,
+                      fontWeight: FontWeight.w600,
+                      color: widget.isSelected ? Colors.white70 : AppColors.textSecondary,
+                    ),
+                  ),
               ],
             ),
           ),
@@ -696,13 +806,24 @@ class _DraggableNodeItemState extends State<_DraggableNodeItem> {
 class _GraphEdgesPainter extends CustomPainter {
   final List<_EdgeSim> edges;
   final bool isDark;
+  final double nodeWidth;
+  final double nodeHeight;
+  final double edgeWidth;
+  final bool showArrows;
 
-  _GraphEdgesPainter({required this.edges, required this.isDark});
+  _GraphEdgesPainter({
+    required this.edges,
+    required this.isDark,
+    required this.nodeWidth,
+    required this.nodeHeight,
+    required this.edgeWidth,
+    required this.showArrows,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    const nodeW = 110.0;
-    const nodeH = 32.0;
+    final nodeW = nodeWidth;
+    final nodeH = nodeHeight;
 
     for (final e in edges) {
       final fromX = e.from.x;
@@ -722,23 +843,28 @@ class _GraphEdgesPainter extends CustomPainter {
       final startX = fromX + ux * (borderFrom + 2);
       final startY = fromY + uy * (borderFrom + 2);
 
+      final arrowGap = showArrows ? 5.0 : 2.0;
       final borderTo = _distToRectBorder(ux, uy, nodeW, nodeH);
-      final endX = toX - ux * (borderTo + 5);
-      final endY = toY - uy * (borderTo + 5);
+      final endX = toX - ux * (borderTo + arrowGap);
+      final endY = toY - uy * (borderTo + arrowGap);
 
       if ((endX - startX) * ux + (endY - startY) * uy <= 0) continue;
 
+      final stroke = (e.isHard ? 1.8 : 1.2) * (edgeWidth / 1.5);
       final paint = Paint()
         ..color = e.isHard
             ? AppColors.edgePrerequisite
             : (isDark ? const Color(0xFF5A5A6E) : const Color(0xFFA6A2B8))
-        ..strokeWidth = e.isHard ? 1.8 : 1.2
+        ..strokeWidth = stroke
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round;
 
       canvas.drawLine(Offset(startX, startY), Offset(endX, endY), paint);
 
-      _drawArrowHead(canvas, endX, endY, ux, uy, paint.color, e.isHard ? 7.0 : 6.0);
+      if (showArrows) {
+        final arrowSize = (e.isHard ? 7.0 : 6.0) * (edgeWidth / 1.5).clamp(0.7, 2.0);
+        _drawArrowHead(canvas, endX, endY, ux, uy, paint.color, arrowSize);
+      }
     }
   }
 

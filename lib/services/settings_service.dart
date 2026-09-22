@@ -1,5 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/graph_settings.dart';
 import '../utils/app_constants.dart';
 
 /// Lưu cấu hình cục bộ: đường dẫn Obsidian Vault, nhà cung cấp AI, API key.
@@ -115,6 +116,21 @@ class SettingsService {
 
   Future<void> setThemeMode(String mode) async =>
       (await _p).setString(AppConstants.keyThemeMode, mode);
+
+  // --- Graph Settings ---
+
+  static const String _keyGraphSettings = 'graph_custom_settings';
+
+  Future<GraphSettings> getGraphSettings() async {
+    final raw = (await _p).getString(_keyGraphSettings);
+    if (raw == null || raw.isEmpty) return GraphSettings.defaults;
+    return GraphSettings.fromJson(raw);
+  }
+
+  Future<void> setGraphSettings(GraphSettings settings) async {
+    final prefs = await _p;
+    await prefs.setString(_keyGraphSettings, settings.toJson());
+  }
 
   // --- FAP / FLM Auto-Save ---
 
