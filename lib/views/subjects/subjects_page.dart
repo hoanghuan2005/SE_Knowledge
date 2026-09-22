@@ -219,7 +219,7 @@ class _Table extends StatelessWidget {
               SizedBox(width: 72, child: _Th('TÍN CHỈ')),
               SizedBox(width: 96, child: _Th('TIÊN QUYẾT')),
               SizedBox(width: 88, child: _Th('MỞ RA')),
-              SizedBox(width: 76),
+              SizedBox(width: 80),
             ],
           ),
         ),
@@ -261,12 +261,16 @@ class _Table extends StatelessWidget {
                                 ),
                               ),
                               const SizedBox(width: 8),
-                              Text(
-                                s.code,
-                                style: TextStyle(
-                                  fontSize: 12.5,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.textPrimary,
+                              Expanded(
+                                child: Text(
+                                  s.code,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.textPrimary,
+                                  ),
                                 ),
                               ),
                             ],
@@ -288,13 +292,18 @@ class _Table extends StatelessWidget {
                         SizedBox(width: 96, child: _Td('$inDeg môn')),
                         SizedBox(width: 88, child: _Td('$outDeg môn')),
                         SizedBox(
-                          width: 76,
+                          width: 80,
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
                               IconButton(
                                 tooltip: 'Xem Syllabus FLM',
                                 icon: const Icon(Icons.auto_stories_outlined, size: 18),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(
+                                  minWidth: 32,
+                                  minHeight: 32,
+                                ),
                                 onPressed: () => SyllabusDetailDialog.show(
                                   context,
                                   subjectCode: s.code,
@@ -304,6 +313,11 @@ class _Table extends StatelessWidget {
                               IconButton(
                                 tooltip: 'Thêm môn tiên quyết',
                                 icon: const Icon(Icons.add_link, size: 18),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(
+                                  minWidth: 32,
+                                  minHeight: 32,
+                                ),
                                 onPressed: () => AddEdgeDialog.show(context, s),
                               ),
                             ],

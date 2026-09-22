@@ -419,7 +419,7 @@ class _ObsidianNoteEditorPageState extends State<ObsidianNoteEditorPage> {
                           Container(
                             width: 6,
                             height: 6,
-                            decoration: const BoxDecoration(
+                            decoration: BoxDecoration(
                               color: AppColors.warning,
                               shape: BoxShape.circle,
                             ),

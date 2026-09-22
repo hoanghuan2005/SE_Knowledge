@@ -10,15 +10,7 @@ import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_constants.dart';
 import '../../utils/ui_helpers.dart';
-import '../widgets/vault_import_plan_dialog.dart';
-
-/// Trạng thái hiển thị (thuần UI) cho nút "Test kết nối" ở khối Trợ lý AI.
-///
-/// MOCK: chưa gọi API thật. Khi làm phần "Cài đặt — Test connect Gemini API"
-/// (xem Prompts_GiaiDoan_2345.md, Giai đoạn 3), thay `_mockTestConnection()`
-/// bằng lời gọi `AiService.instance.testConnection(...)` thật và map kết quả
-/// (thành công/thất bại) vào đúng 2 case success/failure bên dưới.
-enum _MockConnStatus { idle, testing, success, failure }
+import '../vault/vault_import_flow.dart';
 
 /// Cấu hình cục bộ và thông tin kiến trúc (tiện lúc demo bảo vệ đồ án).
 class SettingsPage extends StatefulWidget {
@@ -43,11 +35,6 @@ class _SettingsPageState extends State<SettingsPage> {
   /// Khoá hai nút Xuất/Nhập Vault trong lúc đang chạy, tránh bấm chồng nhau
   /// làm hai lượt ghi cùng đụng vào một thư mục.
   bool _vaultBusy = false;
-
-  // --- MOCK: trạng thái demo cho các nút chưa nối logic thật ---
-  // Xem Prompts_GiaiDoan_2345.md để biết nút nào ứng với giai đoạn nào.
-  _MockConnStatus _connStatus = _MockConnStatus.idle;
-  bool _mockNextOk = true;
 
   @override
   void initState() {
@@ -135,22 +122,6 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  /// MOCK — Test connect (Giai đoạn 3, Prompts_GiaiDoan_2345.md).
-  ///
-  /// Chưa gọi Gemini/OpenAI thật, chỉ giả lập độ trễ mạng rồi luân phiên
-  /// tick xanh / tick đỏ để xem trước giao diện. Khi làm thật: gọi
-  /// `AiService.instance.testConnection(provider, apiKey, model)`, set
-  /// `success` nếu request trả 200, `failure` cho mọi lỗi (401, timeout,...).
-  Future<void> _mockTestConnection() async {
-    setState(() => _connStatus = _MockConnStatus.testing);
-    await Future.delayed(const Duration(milliseconds: 900));
-    if (!mounted) return;
-    setState(() {
-      _connStatus = _mockNextOk ? _MockConnStatus.success : _MockConnStatus.failure;
-      _mockNextOk = !_mockNextOk;
-    });
-  }
-
   /// MOCK dùng chung cho các nút chưa có backend thật (Browse Vault, Mở bằng
   /// Obsidian, Xuất/Nhập Vault trong Cài đặt, Cập nhật từ FAP). Chỉ hiện
   /// toast xác nhận đã bấm — không đọc/ghi gì. Xem Prompts_GiaiDoan_2345.md
@@ -199,29 +170,11 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _importFromVault() async {
     setState(() => _vaultBusy = true);
     try {
-      final plan = await AppState.instance.planImportFromVault();
-      if (!mounted) return;
-
-      if (plan.isEmpty) {
-        Ui.toast(context, 'Vault không có thay đổi nào so với CSDL.');
-        return;
-      }
-
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (_) => VaultImportPlanDialog(plan: plan),
-      );
-      if (ok != true || !mounted) return;
-
-      final report = await AppState.instance.applyVaultPlan(plan);
-      if (!mounted) return;
-      if (report.warnings.isEmpty) {
-        Ui.success(context, report.summary);
-      } else {
+      final report = await VaultImportFlow.run(context);
+      if (report == null || !mounted) return;
+      if (report.warnings.isNotEmpty) {
         Ui.toast(context, '${report.summary} ${report.warnings.join(' ')}');
       }
-    } catch (e) {
-      if (mounted) Ui.error(context, e);
     } finally {
       if (mounted) setState(() => _vaultBusy = false);
     }
@@ -238,7 +191,7 @@ class _SettingsPageState extends State<SettingsPage> {
       builder: (context, _) {
         return Column(
           children: [
-            const PageHeader(
+            PageHeader(
               title: 'Cài đặt',
               subtitle: 'Mọi cấu hình chỉ nằm trên máy này, không gửi đi đâu',
             ),
@@ -357,75 +310,17 @@ class _SettingsPageState extends State<SettingsPage> {
             decoration: const InputDecoration(labelText: 'Tên model'),
           ),
           const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _connStatusBadge(),
-              Row(
-                children: [
-                  OutlinedButton.icon(
-                    icon: _connStatus == _MockConnStatus.testing
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.network_check, size: 18),
-                    label: const Text('Test kết nối'),
-                    onPressed: _connStatus == _MockConnStatus.testing
-                        ? null
-                        : _mockTestConnection,
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.save, size: 18),
-                    label: const Text('Lưu cấu hình'),
-                    onPressed: _saveAi,
-                  ),
-                ],
-              ),
-            ],
+          Align(
+            alignment: Alignment.centerRight,
+            child: ElevatedButton.icon(
+              icon: const Icon(Icons.save, size: 18),
+              label: const Text('Lưu cấu hình'),
+              onPressed: _saveAi,
+            ),
           ),
         ],
       ),
     );
-  }
-
-  /// MOCK — dải trạng thái tick xanh/tick đỏ cho "Test kết nối" ở trên.
-  Widget _connStatusBadge() {
-    switch (_connStatus) {
-      case _MockConnStatus.idle:
-        return const SizedBox.shrink();
-      case _MockConnStatus.testing:
-        return Text(
-          'Đang kiểm tra…',
-          style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
-        );
-      case _MockConnStatus.success:
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            Icon(Icons.check_circle, size: 18, color: Colors.green),
-            SizedBox(width: 6),
-            Text(
-              'Kết nối OK (demo)',
-              style: TextStyle(fontSize: 12.5, color: Colors.green),
-            ),
-          ],
-        );
-      case _MockConnStatus.failure:
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.cancel, size: 18, color: AppColors.error),
-            const SizedBox(width: 6),
-            Text(
-              'Kết nối thất bại (demo)',
-              style: TextStyle(fontSize: 12.5, color: AppColors.error),
-            ),
-          ],
-        );
-    }
   }
 
   /// Khối Obsidian Vault.

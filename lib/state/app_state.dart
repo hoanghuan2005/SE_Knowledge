@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/graph_data.dart';
@@ -10,6 +12,7 @@ import '../services/obsidian_service.dart';
 import '../services/settings_service.dart';
 import '../services/curriculum_parser_service.dart';
 import '../services/subject_delete_guard.dart';
+import '../services/window_theme_service.dart';
 import '../utils/app_colors.dart';
 
 /// Store trạng thái dùng chung, không cần package quản lý state bên ngoài.
@@ -38,6 +41,7 @@ class AppState extends ChangeNotifier {
     _themeMode = mode;
     AppColors.isDark = (mode == ThemeMode.dark);
     await _settings.setThemeMode(mode == ThemeMode.dark ? 'dark' : 'light');
+    unawaited(WindowThemeService.setDarkTitleBar(AppColors.isDark));
     notifyListeners();
   }
 
@@ -149,6 +153,7 @@ class AppState extends ChangeNotifier {
     final savedTheme = await _settings.getThemeMode();
     _themeMode = savedTheme == 'light' ? ThemeMode.light : ThemeMode.dark;
     AppColors.isDark = (_themeMode == ThemeMode.dark);
+    unawaited(WindowThemeService.setDarkTitleBar(AppColors.isDark));
 
     _vaultPath = await _settings.getVaultPath();
     _graphSettings = await _settings.getGraphSettings();
@@ -171,6 +176,15 @@ class AppState extends ChangeNotifier {
       if (_selectedSubjectId != null &&
           !_graph.byId.containsKey(_selectedSubjectId)) {
         _selectedSubjectId = null;
+      }
+
+      // Khung đang lọc có thể vừa bị đổi mã, bị xoá, hoặc — với nhóm "ngoài
+      // khung" — vừa hết môn nên biến mất khỏi cây. Để con trỏ chỉ vào một mã
+      // không còn tồn tại thì DropdownButton lọc khung trên Bản đồ tri thức
+      // vỡ khẳng định "đúng một item khớp value" và cả trang thành ô báo lỗi.
+      if (_activeCurriculumCode != null &&
+          !_curriculumGroups.any((g) => g.code == _activeCurriculumCode)) {
+        _activeCurriculumCode = null;
       }
     } finally {
       _loading = false;
@@ -254,6 +268,76 @@ class AppState extends ChangeNotifier {
       }
       notifyListeners();
     }
+  }
+
+  // --- Quản lý thành viên của một tệp môn học ---
+
+  /// Tìm tệp môn học theo mã, chưa có thì tạo. Trả về `curriculums.id`.
+  Future<int> ensureCurriculumByCode(String code, {String? name}) async {
+    final id = await _db.ensureCurriculumByCode(code: code, name: name);
+    await refresh();
+    return id;
+  }
+
+  /// Gắn một loạt môn vào tệp môn học. Kỳ lấy theo [Subject.semester].
+  Future<void> assignSubjectsToCurriculum({
+    required int curriculumId,
+    required List<Subject> subjects,
+  }) async {
+    await _db.assignSubjectsToCurriculum(
+      curriculumId: curriculumId,
+      entries: [
+        for (final s in subjects)
+          if (s.id != null)
+            CurriculumCourseEntry(
+              subjectId: s.id!,
+              term: s.semester,
+              credits: s.credits,
+            ),
+      ],
+    );
+    await refresh();
+  }
+
+  /// Gỡ môn khỏi một tệp môn học mà không xoá môn khỏi CSDL.
+  Future<int> removeSubjectsFromCurriculum({
+    required int curriculumId,
+    required List<int> subjectIds,
+  }) async {
+    final n = await _db.removeSubjectsFromCurriculum(
+      curriculumId: curriculumId,
+      subjectIds: subjectIds,
+    );
+    await refresh();
+    return n;
+  }
+
+  /// Chuyển môn sang tệp môn học khác.
+  Future<void> moveSubjectsToCurriculum({
+    int? fromCurriculumId,
+    required int toCurriculumId,
+    required List<int> subjectIds,
+  }) async {
+    await _db.moveSubjectsToCurriculum(
+      fromCurriculumId: fromCurriculumId,
+      toCurriculumId: toCurriculumId,
+      subjectIds: subjectIds,
+    );
+    await refresh();
+  }
+
+  /// Đổi kỳ của một loạt môn trong phạm vi một tệp môn học.
+  Future<void> setTermOfSubjects({
+    int? curriculumId,
+    required List<int> subjectIds,
+    required int term,
+  }) async {
+    await _db.setTermOfSubjects(
+      curriculumId: curriculumId,
+      subjectIds: subjectIds,
+      term: term,
+    );
+    await refresh();
   }
 
   /// Dọn dẹp thủ công các node PLO rác
@@ -367,40 +451,56 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<VaultSyncReport> importFromVault() async {
-    final path = _vaultPath;
-    if (path == null || path.isEmpty) {
-      throw ObsidianException('Chưa chọn thư mục Obsidian Vault.');
-    }
-    final report = await _vault.importVault(path);
+  Future<VaultSyncReport> importFromVault({
+    String subFolder = '',
+    VaultImportTarget? target,
+  }) async {
+    final report = await _vault.importVault(
+      _requireVault(),
+      subFolder: subFolder,
+      target: target,
+    );
     await refresh();
     return report;
   }
 
   /// Xem trước thay đổi trước khi nạp Vault vào CSDL. Chưa ghi gì.
-  Future<VaultSyncPlan> planImportFromVault() {
-    final path = _vaultPath;
-    if (path == null || path.isEmpty) {
-      throw ObsidianException('Chưa chọn thư mục Obsidian Vault.');
-    }
-    return _vault.planImport(path);
-  }
+  Future<VaultSyncPlan> planImportFromVault({String subFolder = ''}) =>
+      _vault.planImport(_requireVault(), subFolder: subFolder);
+
+  /// Các thư mục con có thể chọn làm phạm vi nạp.
+  Future<List<VaultFolderOption>> listVaultFolders() =>
+      _vault.listImportableFolders(_requireVault());
 
   /// Ghi một kế hoạch đã được người dùng xác nhận xuống CSDL.
-  Future<VaultSyncReport> applyVaultPlan(VaultSyncPlan plan) async {
-    final report = await _vault.applyPlan(plan);
+  Future<VaultSyncReport> applyVaultPlan(
+    VaultSyncPlan plan, {
+    VaultImportTarget? target,
+  }) async {
+    final report = await _vault.applyPlan(plan, target: target);
     await refresh();
     return report;
   }
 
   Future<int> exportToVault() async {
+    final written = await _vault.exportAll(_requireVault());
+    await refresh();
+    return written;
+  }
+
+  /// Ghi ra Vault đúng một nhóm môn (một tệp môn học hoặc một kỳ).
+  Future<int> exportSubjectsToVault(List<Subject> subjects) async {
+    final written = await _vault.exportSubjects(_requireVault(), subjects);
+    await refresh();
+    return written;
+  }
+
+  String _requireVault() {
     final path = _vaultPath;
     if (path == null || path.isEmpty) {
       throw ObsidianException('Chưa chọn thư mục Obsidian Vault.');
     }
-    final written = await _vault.exportAll(path);
-    await refresh();
-    return written;
+    return path;
   }
 
   Future<List<Subject>?> suggestLearningOrder() => _db.suggestLearningOrder();

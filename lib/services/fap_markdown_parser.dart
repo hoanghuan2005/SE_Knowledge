@@ -314,6 +314,26 @@ class FapMarkdownParser {
     caseSensitive: false,
   );
 
+  /// Mã khung CTĐT của một trang "Curriculum Details", `null` nếu file này
+  /// không phải trang đó.
+  ///
+  /// Tách riêng khỏi [parse] vì luồng nạp Obsidian Vault chỉ cần đúng cái mã
+  /// để đoán "lượt quét này thuộc khung nào" (BIT_SE_K19B...), không cần bóc
+  /// cả bảng môn — bóc cả bảng cho từng file trong Vault thì quá tốn.
+  static String? curriculumCodeOf(String markdown) {
+    if (!markdown.contains('CurriculumCode')) return null;
+    final lines = _significantLines(markdown);
+    final sourceUrl = _findSourceUrl(lines);
+    final isCurriculumPage = sourceUrl.contains('CurriculumDetails?curid=') ||
+        lines.any((l) => l.startsWith('# Curriculum Details'));
+    if (!isCurriculumPage) return null;
+
+    final code = unescapeTurndown(_valueAfterLabel(lines, 'CurriculumCode:'))
+        .trim()
+        .toUpperCase();
+    return code.isEmpty ? null : code;
+  }
+
   /// Phân tích toàn văn Markdown của một trang FAP.
   static FapParseResult parse(String markdown) {
     final lines = _significantLines(markdown);

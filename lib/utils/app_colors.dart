@@ -87,7 +87,11 @@ class AppColors {
 
   // Status
   static const Color success = Color(0xFF2FB170);
-  static const Color warning = Color(0xFFFFC107);
+  // Vàng amber chuẩn (0xFFFFC107) quá sáng, chói mắt khi đặt trên nền trắng
+  // của Giao diện Sáng — hạ độ sáng, ngả cam cho giao diện sáng để vẫn đọc
+  // được mà không cần đổi từng chỗ gọi.
+  static Color get warning =>
+      isDark ? const Color(0xFFFFC107) : const Color(0xFFB8790A);
   static const Color error = Color(0xFFE2445C);
   static const Color info = Color(0xFF00ACC1);
 
