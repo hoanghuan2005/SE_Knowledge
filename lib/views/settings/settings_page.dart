@@ -10,6 +10,7 @@ import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_constants.dart';
 import '../../utils/ui_helpers.dart';
+import '../academic/transcript_import_dialog.dart';
 import '../vault/vault_export_flow.dart';
 import '../vault/vault_import_flow.dart';
 
@@ -32,6 +33,9 @@ class _SettingsPageState extends State<SettingsPage> {
   int _dbSize = 0;
   bool _autoSaveFap = true;
   bool _batchImporting = false;
+  bool _sendTranscriptToAi = true;
+  bool _transcriptBusy = false;
+  DateTime? _lastTranscriptImport;
 
   /// Khoá hai nút Xuất/Nhập Vault trong lúc đang chạy, tránh bấm chồng nhau
   /// làm hai lượt ghi cùng đụng vào một thư mục.
@@ -56,6 +60,8 @@ class _SettingsPageState extends State<SettingsPage> {
     final model = await _settings.getModel();
     final size = await DbService.instance.databaseSizeInBytes();
     final autoSave = await _settings.getAutoSaveFapNotes();
+    final sendTranscript = await _settings.getSendTranscriptToAi();
+    final lastTranscript = await DbService.instance.lastTranscriptImportAt();
     if (!mounted) return;
     setState(() {
       _provider = provider;
@@ -63,6 +69,8 @@ class _SettingsPageState extends State<SettingsPage> {
       _model.text = model;
       _dbSize = size;
       _autoSaveFap = autoSave;
+      _sendTranscriptToAi = sendTranscript;
+      _lastTranscriptImport = lastTranscript;
       _loaded = true;
     });
   }
@@ -200,6 +208,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   _fapCard(),
                   const SizedBox(height: 16),
                   _intakeCard(),
+                  const SizedBox(height: 16),
+                  _transcriptCard(),
                   const SizedBox(height: 16),
                   _storageCard(),
                   const SizedBox(height: 16),
@@ -519,6 +529,133 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
       ),
     );
+  }
+
+  /// Khối Bảng điểm cá nhân.
+  ///
+  /// Công tắc gửi điểm cho AI mặc định bật, nhưng phần mô tả phải nói thẳng
+  /// một câu là điểm số sẽ rời khỏi máy: cả app theo triết lý local-first, nên
+  /// đúng chỗ dữ liệu đi ra ngoài thì người dùng phải được biết.
+  Widget _transcriptCard() {
+    return ListenableBuilder(
+      listenable: AppState.instance,
+      builder: (context, _) {
+        final state = AppState.instance;
+        final profile = state.academicProfileOrEmpty;
+        return _Section(
+          icon: Icons.insights_outlined,
+          title: 'Bảng điểm cá nhân',
+          description:
+              'Tải file "StudentTranscript_<MSSV>.xls" ở FAP (Report > '
+              'Transcript) rồi chọn file đó ở đây. Điểm được lưu vào một bảng '
+              'riêng nên xoá môn khỏi đồ thị không làm mất điểm đã học.',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _KeyValue(
+                label: 'Dữ liệu hiện có',
+                value: state.hasTranscript
+                    ? '${state.transcript.length} dòng điểm · GPA '
+                          '${profile.gpaLabel} · ${profile.totalCredits} tín chỉ'
+                    : '(chưa nhập bảng điểm)',
+              ),
+              _KeyValue(
+                label: 'Lần nhập gần nhất',
+                value: _lastTranscriptImport == null
+                    ? '(chưa có)'
+                    : _formatDateTime(_lastTranscriptImport!),
+              ),
+              const SizedBox(height: 4),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text(
+                  'Gửi bảng điểm kèm câu hỏi cho AI',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                subtitle: const Text(
+                  'Bật thì AI trả lời được "em yếu môn gì" bằng số liệu thật. '
+                  'Lưu ý: điểm số của bạn sẽ được gửi tới nhà cung cấp AI bên '
+                  'ngoài (Gemini / OpenAI) cùng với câu hỏi. Tắt thì AI chỉ '
+                  'còn nhìn thấy đồ thị môn học.',
+                  style: TextStyle(fontSize: 12),
+                ),
+                value: _sendTranscriptToAi,
+                onChanged: (val) async {
+                  await _settings.setSendTranscriptToAi(val);
+                  if (mounted) setState(() => _sendTranscriptToAi = val);
+                },
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.upload_file, size: 18),
+                    label: const Text('Nhập bảng điểm từ file FAP'),
+                    onPressed: _transcriptBusy ? null : _importTranscript,
+                  ),
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.error,
+                      side: const BorderSide(color: AppColors.error),
+                    ),
+                    icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                    label: const Text('Xoá bảng điểm'),
+                    onPressed: _transcriptBusy || !state.hasTranscript
+                        ? null
+                        : _clearTranscript,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _importTranscript() async {
+    setState(() => _transcriptBusy = true);
+    try {
+      final imported = await TranscriptImportDialog.pickAndShow(context);
+      if (imported == true) await _refreshTranscriptStatus();
+    } finally {
+      if (mounted) setState(() => _transcriptBusy = false);
+    }
+  }
+
+  Future<void> _clearTranscript() async {
+    final ok = await Ui.confirm(
+      context,
+      title: 'Xoá bảng điểm?',
+      message:
+          'Toàn bộ ${AppState.instance.transcript.length} dòng điểm sẽ bị xoá '
+          'khỏi CSDL. Môn học và liên kết tiên quyết trên đồ thị không bị ảnh '
+          'hưởng. Nhập lại file transcript là có lại.',
+      confirmLabel: 'Xoá bảng điểm',
+      destructive: true,
+    );
+    if (!ok) return;
+    try {
+      await AppState.instance.clearTranscript();
+      await _refreshTranscriptStatus();
+      if (mounted) Ui.success(context, 'Đã xoá bảng điểm.');
+    } catch (e) {
+      if (mounted) Ui.error(context, e);
+    }
+  }
+
+  Future<void> _refreshTranscriptStatus() async {
+    final at = await DbService.instance.lastTranscriptImportAt();
+    if (!mounted) return;
+    setState(() => _lastTranscriptImport = at);
+  }
+
+  String _formatDateTime(DateTime t) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(t.day)}/${two(t.month)}/${t.year} '
+        '${two(t.hour)}:${two(t.minute)}';
   }
 
   Widget _storageCard() {

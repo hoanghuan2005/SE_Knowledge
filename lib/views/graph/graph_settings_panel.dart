@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/graph_settings.dart';
+import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 
 /// Bảng điều khiển nổi (Floating Panel) tùy chỉnh Đồ thị tri thức (Graph View).
@@ -174,6 +175,17 @@ class GraphSettingsPanel extends StatelessWidget {
                             ),
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 8),
+                      // Chế độ này chỉ có nghĩa khi đã nhập bảng điểm, nên nó
+                      // đứng riêng một dòng kèm câu giải thích thay vì chen
+                      // vào hàng chip ở trên.
+                      _buildChoiceChip(
+                        label: AppState.instance.hasTranscript
+                            ? 'Theo điểm đã học'
+                            : 'Theo điểm đã học (chưa nhập bảng điểm)',
+                        selected: settings.colorMode == 'grade',
+                        onTap: () => onChanged(settings.copyWith(colorMode: 'grade')),
                       ),
 
                       const SizedBox(height: 16),

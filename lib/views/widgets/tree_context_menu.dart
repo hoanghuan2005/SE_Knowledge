@@ -498,7 +498,12 @@ class TreeContextMenu {
 
       final choice = await showDialog<SubjectDeleteChoice>(
         context: context,
-        builder: (_) => SubjectDeleteDialog(impact: impact),
+        builder: (_) => SubjectDeleteDialog(
+          impact: impact,
+          transcriptEntryCount: AppState.instance.transcript
+              .where((e) => e.subjectCode == impact.target.code.toUpperCase())
+              .length,
+        ),
       );
       if (choice == null || !context.mounted) return;
 

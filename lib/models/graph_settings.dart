@@ -26,7 +26,8 @@ class GraphSettings {
   /// Hiển thị đầu mũi tên chỉ hướng của liên kết tiên quyết
   final bool showArrows;
 
-  /// Chế độ tô màu node: 'semester' (theo kỳ học) hoặc 'degree' (theo mức độ kết nối)
+  /// Chế độ tô màu node: 'semester' (theo kỳ học), 'degree' (theo mức độ kết
+  /// nối) hoặc 'grade' (theo điểm đã học trong bảng điểm cá nhân).
   final String colorMode;
 
   /// Bật/tắt mô phỏng vật lý tự động cân bằng

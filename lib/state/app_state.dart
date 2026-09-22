@@ -1,13 +1,17 @@
 import 'dart:async';
 import 'dart:developer' as dev;
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
 import '../models/graph_data.dart';
 import '../models/prerequisite.dart';
 import '../models/subject.dart';
 import '../models/curriculum.dart';
 import '../models/graph_settings.dart';
+import '../models/transcript_entry.dart';
+import '../services/academic_analytics_service.dart';
 import '../services/db_service.dart';
 import '../services/fap_markdown_parser.dart';
 import '../services/md_intake_service.dart';
@@ -15,6 +19,7 @@ import '../services/obsidian_service.dart';
 import '../services/settings_service.dart';
 import '../services/curriculum_parser_service.dart';
 import '../services/subject_delete_guard.dart';
+import '../services/transcript_parser_service.dart';
 import '../services/window_theme_service.dart';
 import '../utils/app_colors.dart';
 
@@ -175,6 +180,7 @@ class AppState extends ChangeNotifier {
       _stats = await _db.stats();
       _curriculums = await _db.getCurriculumsWithStats();
       _curriculumGroups = await _db.getCurriculumTreeData();
+      await _loadTranscript();
 
       if (_selectedSubjectId != null &&
           !_graph.byId.containsKey(_selectedSubjectId)) {
@@ -446,6 +452,102 @@ class AppState extends ChangeNotifier {
       ..sort((a, b) => a.code.compareTo(b.code));
   }
 
+  // ------------------------------------------------------------------
+  // BẢNG ĐIỂM CÁ NHÂN
+  // ------------------------------------------------------------------
+
+  List<TranscriptEntry> _transcript = const [];
+  List<TranscriptEntry> get transcript => _transcript;
+
+  Map<String, TranscriptEntry> _gradeByCode = const {};
+
+  /// Tra điểm theo mã môn (đã viết hoa). Dựng lại trong mỗi [refresh] để luôn
+  /// khớp với đồ thị đang hiển thị.
+  Map<String, TranscriptEntry> get gradeByCode => _gradeByCode;
+
+  AcademicProfile? _academicProfile;
+
+  /// Tính **một lần** sau mỗi lần nạp, không tính lại trong `build()`: phân
+  /// tích rủi ro duyệt toàn bộ cạnh của đồ thị nên không thuộc về đường vẽ
+  /// giao diện.
+  AcademicProfile? get academicProfile => _academicProfile;
+
+  /// Tiện cho giao diện: chưa nhập bảng điểm thì vẫn có một hồ sơ rỗng để đọc.
+  AcademicProfile get academicProfileOrEmpty =>
+      _academicProfile ?? AcademicProfile.empty;
+
+  bool get hasTranscript => _transcript.isNotEmpty;
+
+  /// Điểm của một môn theo mã, `null` nghĩa là chưa từng học.
+  TranscriptEntry? gradeOf(String code) =>
+      _gradeByCode[code.trim().toUpperCase()];
+
+  Future<void> _loadTranscript() async {
+    try {
+      _transcript = await _db.getTranscript();
+      _gradeByCode = await _db.latestGradeByCode();
+      _academicProfile = _transcript.isEmpty
+          ? null
+          : AcademicAnalyticsService.instance.analyze(_transcript, _graph);
+    } catch (e) {
+      // Bảng điểm là phần cộng thêm: hỏng nó không được phép kéo sập cả lần
+      // refresh, vì [refresh] cũng là chỗ nạp đồ thị và cây môn học — ném lỗi
+      // ở đây thì mất luôn hai thứ đó, tức là cả app trắng vì một tính năng
+      // phụ. Mất bảng điểm thì các màn hình khác vẫn chạy như trước khi có nó.
+      _transcript = const [];
+      _gradeByCode = const {};
+      _academicProfile = null;
+      dev.log('Không nạp được bảng điểm: $e');
+    }
+  }
+
+  /// Đọc file transcript và đối chiếu với CSDL. Chưa ghi gì — kết quả dùng để
+  /// dựng màn hình xem trước, đúng mạch `planImport()` của Vault.
+  Future<TranscriptImportPlan> planTranscriptImport(String filePath) async {
+    final bytes = await File(filePath).readAsBytes();
+    final parsed = TranscriptParserService.instance.parseBytes(
+      bytes,
+      fileName: p.basename(filePath),
+    );
+    if (parsed.isEmpty) {
+      throw TranscriptImportException(
+        'Không đọc được dòng điểm nào từ file này. Kiểm tra lại xem đã tải '
+        'đúng file "StudentTranscript_<MSSV>.xls" từ FAP chưa.',
+      );
+    }
+    return _db.planTranscriptImport(
+      parsed.entries,
+      warnings: parsed.warnings,
+    );
+  }
+
+  Future<TranscriptImportResult> applyTranscriptPlan(
+    TranscriptImportPlan plan, {
+    bool createMissingSubjects = false,
+  }) async {
+    final result = await _db.applyTranscriptPlan(
+      plan,
+      createMissingSubjects: createMissingSubjects,
+    );
+    await refresh();
+    return result;
+  }
+
+  Future<void> clearTranscript() async {
+    await _db.clearTranscript();
+    await refresh();
+  }
+
+  /// Người dùng tự bật/tắt việc tính một dòng vào GPA, ví dụ khi quy chế khoá
+  /// của họ khác với cờ mà FAP đánh.
+  Future<void> setCountsTowardGpa(int entryId, bool value) async {
+    await _db.setCountsTowardGpa(entryId, value);
+    await refresh();
+  }
+
+  /// Lần nhập bảng điểm gần nhất, để màn hình Cài đặt hiện trạng thái.
+  Future<DateTime?> lastTranscriptImportAt() => _db.lastTranscriptImportAt();
+
   // --- Obsidian Vault ---
 
   Future<void> setVaultPath(String? path) async {
@@ -660,4 +762,13 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     }
   }
+}
+
+/// Lỗi nghiệp vụ của luồng nhập bảng điểm, để giao diện hiện một câu tử tế
+/// thay vì stack trace.
+class TranscriptImportException implements Exception {
+  final String message;
+  TranscriptImportException(this.message);
+  @override
+  String toString() => message;
 }

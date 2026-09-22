@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../models/subject.dart';
+import '../../models/transcript_entry.dart';
 import '../../services/db_service.dart';
 import '../../services/obsidian_launcher.dart';
 import '../../services/obsidian_service.dart';
@@ -276,6 +277,7 @@ class _Detail extends StatelessWidget {
           'Kỳ ${subject.semester}  ·  ${subject.credits} tín chỉ',
           style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
         ),
+        _GradeChips(subject: subject),
         _buildSyllabusButton(context, subject),
         if (subject.description.isNotEmpty) ...[
           const SizedBox(height: 14),
@@ -427,7 +429,12 @@ class _Detail extends StatelessWidget {
 
     final choice = await showDialog<SubjectDeleteChoice>(
       context: context,
-      builder: (_) => SubjectDeleteDialog(impact: impact),
+      builder: (_) => SubjectDeleteDialog(
+        impact: impact,
+        transcriptEntryCount: AppState.instance.transcript
+            .where((e) => e.subjectCode == impact.target.code.toUpperCase())
+            .length,
+      ),
     );
     if (choice == null || !context.mounted) return;
 
@@ -665,6 +672,63 @@ class _NoteSection extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// Hàng chip điểm của một môn: điểm, trạng thái, kỳ đã học.
+///
+/// Môn chưa có trong bảng điểm hiển thị "Chưa học" màu xám nhạt chứ **không
+/// để trống** — một khoảng trống trông y hệt lỗi không tải được dữ liệu, người
+/// dùng phải phân biệt được hai chuyện đó.
+class _GradeChips extends StatelessWidget {
+  final Subject subject;
+
+  const _GradeChips({required this.subject});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppState.instance;
+    final entry = state.gradeOf(subject.code);
+    final status = entry?.status ?? SubjectStatus.notStarted;
+    final color = AppColors.gradeColor(entry?.grade, status);
+
+    Widget chip(String label, {bool bold = false}) => Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: AppColors.isDark ? 0.18 : 0.14),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.45)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11.5,
+          fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
+          color: color,
+        ),
+      ),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          if (entry?.hasGrade == true) chip(entry!.displayGrade, bold: true),
+          chip(entry?.statusLabel ?? 'Chưa học'),
+          if (entry != null && entry.semesterLabel.isNotEmpty)
+            chip(entry.semesterLabel),
+          if (entry != null && entry.isGraduationCondition)
+            chip('Môn điều kiện tốt nghiệp'),
+          if (!state.hasTranscript)
+            Text(
+              'Chưa nhập bảng điểm',
+              style: TextStyle(fontSize: 11.5, color: AppColors.textHint),
+            ),
+        ],
+      ),
     );
   }
 }

@@ -11,6 +11,11 @@ class GraphRagSummary {
   /// bộ đồ thị làm ngữ cảnh (thay vì một subgraph nhỏ quanh vài node).
   final bool isFallbackFullGraph;
 
+  /// True khi ngữ cảnh có kèm điểm của sinh viên. Quyết định hai chuyện: hệ
+  /// thống prompt bổ sung bộ quy tắc nhận xét năng lực, và giao diện nói rõ
+  /// cho người dùng biết lần hỏi này có gửi điểm đi hay không.
+  final bool includesTranscript;
+
   const GraphRagSummary({
     required this.matchedCodes,
     required this.nodeCount,
@@ -18,6 +23,7 @@ class GraphRagSummary {
     required this.approxTokens,
     required this.elapsedMs,
     this.isFallbackFullGraph = false,
+    this.includesTranscript = false,
   });
 
   Map<String, Object?> toJson() => {
@@ -27,6 +33,7 @@ class GraphRagSummary {
         'approxTokens': approxTokens,
         'elapsedMs': elapsedMs,
         'isFallbackFullGraph': isFallbackFullGraph,
+        'includesTranscript': includesTranscript,
       };
 
   factory GraphRagSummary.fromJson(Map<String, dynamic> json) =>
@@ -39,6 +46,7 @@ class GraphRagSummary {
         approxTokens: json['approxTokens'] as int? ?? 0,
         elapsedMs: json['elapsedMs'] as int? ?? 0,
         isFallbackFullGraph: json['isFallbackFullGraph'] as bool? ?? false,
+        includesTranscript: json['includesTranscript'] as bool? ?? false,
       );
 }
 

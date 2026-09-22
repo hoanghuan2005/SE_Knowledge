@@ -1,8 +1,12 @@
+import '../models/graph_data.dart';
 import '../models/graph_rag_context.dart';
 import '../models/prerequisite.dart';
 import '../models/subject.dart';
+import '../models/transcript_entry.dart';
+import 'academic_analytics_service.dart';
 import 'db_service.dart';
 import 'fap_markdown_parser.dart';
+import 'settings_service.dart';
 
 /// Trích một subgraph liên quan trực tiếp đến câu hỏi từ đồ thị tiên quyết,
 /// thay vì gửi nguyên toàn bộ CSDL vào mọi prompt.
@@ -16,6 +20,7 @@ class GraphRagService {
   static final GraphRagService instance = GraphRagService._();
 
   final DbService _db = DbService.instance;
+  final SettingsService _settings = SettingsService.instance;
 
   /// Bắt các mã môn kiểu "PRF192", "CSD201" xuất hiện trong câu hỏi.
   static final RegExp _codePattern = RegExp(r'\b[A-Z]{2,4}\d{2,4}[A-Z]?\b');
@@ -33,6 +38,14 @@ class GraphRagService {
   /// Trần số node của subgraph. Đồ thị thật có vài chục môn, BFS 2 bước từ
   /// nhiều seed có thể chạm gần hết đồ thị và làm mất ý nghĩa của việc thu hẹp.
   static const int maxNodes = 24;
+
+  /// Trần thấp hơn khi có kèm điểm.
+  ///
+  /// Mỗi dòng môn dài thêm khoảng 55 ký tự (~14 token) vì phần điểm, cộng với
+  /// khối tóm tắt học lực ở đầu prompt (~90 token). Hạ trần xuống 20 giữ tổng
+  /// token của phần đồ thị xấp xỉ như cũ, để phần đề cương phía sau không bị
+  /// nhà cung cấp cắt mất.
+  static const int maxNodesWithGrades = 20;
 
   /// Số môn được đính kèm nguyên đề cương. Đề cương đầy đủ nặng cỡ nghìn
   /// token, chỉ đính cho vài môn khớp mạnh nhất chứ không cho cả subgraph.
@@ -66,6 +79,11 @@ class GraphRagService {
       );
     }
 
+    // Bảng điểm chỉ được đính khi người dùng còn bật công tắc trong Cài đặt —
+    // đây là chỗ dữ liệu cá nhân rời khỏi máy, nên tôn trọng lựa chọn đó ngay
+    // tại nguồn chứ không chỉ ẩn nút ở giao diện.
+    final grades = await _loadGrades(graph);
+
     final seeds = findSeeds(question, graph.subjects);
     final isFallback = seeds.isEmpty;
 
@@ -77,7 +95,9 @@ class GraphRagService {
       subgraphIds = graph.subjects.map((s) => s.id!).toSet();
     } else {
       final ordered = _expand(seeds.map((s) => s.id!).toList(), graph.edges, hops);
-      subgraphIds = ordered.take(maxNodes).toSet();
+      subgraphIds = ordered
+          .take(grades.isEmpty ? maxNodes : maxNodesWithGrades)
+          .toSet();
     }
 
     final nodes =
@@ -96,8 +116,15 @@ class GraphRagService {
     // cả subgraph thì riêng phần này đã vài chục nghìn token.
     final syllabi = await _loadSyllabiFor(seeds.take(maxSyllabi));
 
-    final promptText =
-        _renderPrompt(nodes, edges, graph.byId, isFallback, syllabi);
+    final promptText = _renderPrompt(
+      nodes,
+      edges,
+      graph.byId,
+      isFallback,
+      syllabi,
+      grades.byCode,
+      grades.profile,
+    );
     stopwatch.stop();
 
     return GraphRagContext(
@@ -109,6 +136,7 @@ class GraphRagService {
         approxTokens: _estimateTokens(promptText),
         elapsedMs: stopwatch.elapsedMilliseconds,
         isFallbackFullGraph: isFallback,
+        includesTranscript: grades.isNotEmpty,
       ),
     );
   }
@@ -325,17 +353,74 @@ class GraphRagService {
     return result;
   }
 
+  /// Nạp bảng điểm để đính kèm ngữ cảnh.
+  ///
+  /// Trả về rỗng khi chưa nhập bảng điểm hoặc khi người dùng đã tắt công tắc
+  /// "Gửi bảng điểm kèm câu hỏi cho AI" — hai trường hợp đó đi cùng một
+  /// nhánh: prompt không có một con điểm nào.
+  Future<_TranscriptContext> _loadGrades(GraphData graph) async {
+    try {
+      if (!await _settings.getSendTranscriptToAi()) {
+        return const _TranscriptContext.empty();
+      }
+      final entries = await _db.getTranscript();
+      if (entries.isEmpty) return const _TranscriptContext.empty();
+      return _TranscriptContext(
+        byCode: AcademicAnalyticsService.instance.latestByCode(entries),
+        profile: AcademicAnalyticsService.instance.analyze(entries, graph),
+      );
+    } catch (_) {
+      // Chưa có bảng điểm hoặc dữ liệu hỏng — vẫn trả lời được bằng phần
+      // đồ thị, không để cả câu hỏi chết vì phần phụ này.
+      return const _TranscriptContext.empty();
+    }
+  }
+
+  /// Một câu mô tả tình hình học môn này, nối vào cuối dòng của môn đó.
+  ///
+  /// Môn chưa học cũng phải có câu của nó: im lặng thì AI không phân biệt được
+  /// "chưa học" với "không có dữ liệu" và sẽ suy diễn bừa về năng lực.
+  String _gradeSentence(TranscriptEntry? entry) {
+    if (entry == null) return ' Sinh viên chưa học.';
+    switch (entry.status) {
+      case SubjectStatus.passed:
+        final when = entry.semesterLabel.isEmpty
+            ? ''
+            : ' (${entry.semesterLabel})';
+        return entry.hasGrade
+            ? ' Điểm của sinh viên: ${entry.displayGrade} — Đã qua$when.'
+            : ' Sinh viên đã qua môn này, môn không chấm điểm$when.';
+      case SubjectStatus.notPassed:
+        return entry.hasGrade
+            ? ' Sinh viên chưa qua môn này (điểm ${entry.displayGrade}).'
+            : ' Sinh viên chưa qua môn này.';
+      case SubjectStatus.studying:
+        return ' Sinh viên đang học.';
+      case SubjectStatus.notStarted:
+      case SubjectStatus.unknown:
+        return ' Sinh viên chưa học.';
+    }
+  }
+
   String _renderPrompt(
     List<Subject> nodes,
     List<Prerequisite> edges,
     Map<int, Subject> byId,
     bool isFallback,
     List<FapSyllabusImport> syllabi,
+    Map<String, TranscriptEntry> gradeByCode,
+    AcademicProfile? profile,
   ) {
     if (nodes.isEmpty) {
       return 'Không tìm thấy môn học nào liên quan trực tiếp đến câu hỏi trong CSDL.';
     }
-    final sb = StringBuffer(isFallback
+    final sb = StringBuffer();
+    if (profile != null) {
+      sb
+        ..writeln(profile.summaryLine)
+        ..writeln();
+    }
+    sb.write(isFallback
         ? 'Câu hỏi hướng tới cả chương trình, đây là toàn bộ danh sách môn '
             'học và quan hệ tiên quyết hiện có:\n'
         : 'Các môn học liên quan trực tiếp đến câu hỏi và quan hệ tiên '
@@ -351,7 +436,12 @@ class GraphRagService {
           ? ', không có môn tiên quyết'
           : ', tiên quyết: ${prereqCodes.join(", ")}');
       final description = _shorten(s.description);
-      sb.writeln(description.isEmpty ? '.' : '. Nội dung: $description');
+      sb.write(description.isEmpty ? '.' : '. Nội dung: $description');
+      sb.writeln(
+        gradeByCode.isEmpty
+            ? ''
+            : _gradeSentence(gradeByCode[s.code.toUpperCase()]),
+      );
     }
 
     for (final syl in syllabi) {
@@ -522,4 +612,17 @@ class GraphRagService {
     'mang': ['network', 'mang may tinh'],
     'toan': ['mathematics'],
   };
+}
+
+/// Bảng điểm đã nạp sẵn cho một lần dựng ngữ cảnh.
+class _TranscriptContext {
+  final Map<String, TranscriptEntry> byCode;
+  final AcademicProfile? profile;
+
+  const _TranscriptContext({required this.byCode, required this.profile});
+
+  const _TranscriptContext.empty() : byCode = const {}, profile = null;
+
+  bool get isEmpty => byCode.isEmpty;
+  bool get isNotEmpty => byCode.isNotEmpty;
 }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../models/transcript_entry.dart';
+
 /// Bảng màu dùng chung hỗ trợ chuyển đổi giao diện Dark / Light.
 /// Mặc định là giao diện đen (Obsidian Dark Theme) đồng bộ toàn bộ app.
 class AppColors {
@@ -120,5 +122,68 @@ class AppColors {
   static Color forSemester(int semester) {
     if (semester < 1) return semesterPalette.first;
     return semesterPalette[(semester - 1) % semesterPalette.length];
+  }
+
+  // ------------------------------------------------------------------
+  // THANG MÀU THEO ĐIỂM
+  // ------------------------------------------------------------------
+
+  /// Màu đại diện cho một môn theo điểm và trạng thái học.
+  ///
+  /// Định nghĩa **một chỗ duy nhất** ở đây vì thang màu này xuất hiện ở ba
+  /// nơi: node đồ thị, chip trong panel chi tiết và bảng điểm ở tab Học lực.
+  /// Ba chỗ lệch màu nhau thì người dùng không đọc được thang nữa.
+  ///
+  /// Bản Sáng dùng tông đậm hơn: mấy màu vừa mắt trên nền đen (vàng, xanh lá)
+  /// nhạt thếch trên nền trắng.
+  static Color gradeColor(double? grade, SubjectStatus status) {
+    switch (status) {
+      case SubjectStatus.notPassed:
+        return isDark ? const Color(0xFFE2445C) : const Color(0xFFC62842);
+      case SubjectStatus.studying:
+        return isDark ? const Color(0xFFB388FF) : const Color(0xFF6D3FD1);
+      case SubjectStatus.notStarted:
+      case SubjectStatus.unknown:
+        return isDark ? const Color(0xFF6E6E82) : const Color(0xFF9195A6);
+      case SubjectStatus.passed:
+        break;
+    }
+
+    // Đã qua môn nhưng không được chấm điểm (TRS601, LAB211) — không xếp được
+    // vào thang nào nên dùng màu trung tính của trạng thái "đã học xong".
+    if (grade == null) {
+      return isDark ? const Color(0xFF7E8894) : const Color(0xFF6B7280);
+    }
+    if (grade >= 9.0) {
+      return isDark ? const Color(0xFF3DD68C) : const Color(0xFF15803D);
+    }
+    if (grade >= 8.0) {
+      return isDark ? const Color(0xFF4C9AFF) : const Color(0xFF1D4ED8);
+    }
+    if (grade >= 7.0) {
+      return isDark ? const Color(0xFFF2C94C) : const Color(0xFF9A6700);
+    }
+    return isDark ? const Color(0xFFFF9F1C) : const Color(0xFFC2410C);
+  }
+
+  /// Nhãn xếp loại đi kèm [gradeColor], để phần chú giải không chỉ có màu —
+  /// chỉ dùng màu thì người mù màu không đọc được thang.
+  static String gradeRankLabel(double? grade, SubjectStatus status) {
+    switch (status) {
+      case SubjectStatus.notPassed:
+        return 'Chưa qua';
+      case SubjectStatus.studying:
+        return 'Đang học';
+      case SubjectStatus.notStarted:
+      case SubjectStatus.unknown:
+        return 'Chưa học';
+      case SubjectStatus.passed:
+        break;
+    }
+    if (grade == null) return 'Đã qua (không chấm điểm)';
+    if (grade >= 9.0) return 'Xuất sắc';
+    if (grade >= 8.0) return 'Giỏi';
+    if (grade >= 7.0) return 'Khá';
+    return 'Cần cải thiện';
   }
 }

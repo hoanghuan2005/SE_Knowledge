@@ -7,6 +7,7 @@ import '../services/chat_session_service.dart';
 import '../state/app_state.dart';
 import '../utils/app_colors.dart';
 import '../utils/ui_helpers.dart';
+import 'academic/academic_page.dart';
 import 'chat/ai_chat_page.dart';
 import 'curriculum/curriculum_form_dialog.dart';
 import 'graph/graph_page.dart';
@@ -58,6 +59,7 @@ class _AppShellState extends State<AppShell> {
     'Danh sách môn học',
     'Obsidian Vault',
     'Trợ lý học tập AI',
+    'Học lực',
     'Cài đặt hệ thống',
   ];
 
@@ -66,6 +68,7 @@ class _AppShellState extends State<AppShell> {
     Icons.article_outlined,
     Icons.folder_copy_outlined,
     Icons.auto_awesome,
+    Icons.insights,
     Icons.settings_outlined,
   ];
 
@@ -239,12 +242,20 @@ class _AppShellState extends State<AppShell> {
                                     )
                                   : IndexedStack(
                                       index: _index,
-                                      children: const [
-                                        GraphPage(),
-                                        SubjectsPage(),
-                                        VaultPage(),
-                                        AiChatPage(),
-                                        SettingsPage(),
+                                      children: [
+                                        const GraphPage(),
+                                        const SubjectsPage(),
+                                        const VaultPage(),
+                                        // Nút "Xem trên đồ thị" trong câu trả
+                                        // lời của AI và trong khối cảnh báo
+                                        // rủi ro cần shell chuyển tab hộ.
+                                        AiChatPage(
+                                          onOpenGraph: () => _switchTab(0),
+                                        ),
+                                        AcademicPage(
+                                          onOpenGraph: () => _switchTab(0),
+                                        ),
+                                        const SettingsPage(),
                                       ],
                                     ),
                             ),
@@ -341,6 +352,13 @@ class _ObsidianRibbon extends StatelessWidget {
             isSelected: currentIndex == 3,
             onTap: () => onSelectTab(3),
           ),
+          const SizedBox(height: 6),
+          _RibbonIconButton(
+            icon: currentIndex == 4 ? Icons.insights : Icons.insights_outlined,
+            tooltip: 'Học lực (bảng điểm & phân tích)',
+            isSelected: currentIndex == 4,
+            onTap: () => onSelectTab(4),
+          ),
 
           const Spacer(),
 
@@ -364,10 +382,10 @@ class _ObsidianRibbon extends StatelessWidget {
 
           // Cài đặt
           _RibbonIconButton(
-            icon: currentIndex == 4 ? Icons.settings : Icons.settings_outlined,
+            icon: currentIndex == 5 ? Icons.settings : Icons.settings_outlined,
             tooltip: 'Cài đặt',
-            isSelected: currentIndex == 4,
-            onTap: () => onSelectTab(4),
+            isSelected: currentIndex == 5,
+            onTap: () => onSelectTab(5),
           ),
           const SizedBox(height: 12),
         ],
@@ -500,14 +518,16 @@ class _ObsidianSidebarPanel extends StatelessWidget {
       );
     }
 
-    // 3. Khi đang ở tab Cài đặt (index 4) -> Hiển thị Sidebar mục cài đặt
-    if (mainIndex == 4) {
+    // 3. Khi đang ở tab Cài đặt (index 5) -> Hiển thị Sidebar mục cài đặt
+    if (mainIndex == 5) {
       return _SettingsSidebarContent(
         onCloseSidebar: onCloseSidebar,
       );
     }
 
-    // 4. Mặc định (Đồ thị & Môn học - index 0, 1) -> Hiển thị Cây thư mục môn học theo kỳ
+    // 4. Mặc định (Đồ thị, Môn học, Học lực - index 0, 1, 4) -> Hiển thị Cây
+    //    thư mục môn học theo kỳ. Tab Học lực dùng chung cây này để bấm một
+    //    môn trong cây là nhảy thẳng sang node đó trên đồ thị.
     return _FilesSidebarContent(
       activeTabIndex: activeTabIndex,
       searchQuery: searchQuery,

@@ -155,5 +155,16 @@ class SettingsService {
 
   Future<void> setAutoSaveFapNotes(bool value) async =>
       (await _p).setBool('auto_save_fap_notes', value);
+
+  // --- Bảng điểm cá nhân ---
+
+  /// Có gửi bảng điểm kèm câu hỏi cho AI không. Mặc định bật vì đó là điều
+  /// làm câu trả lời có ích, nhưng vẫn phải tắt được: điểm số sẽ rời khỏi máy
+  /// và đi tới nhà cung cấp AI bên ngoài, người dùng có quyền quyết định.
+  Future<bool> getSendTranscriptToAi() async =>
+      (await _p).getBool('send_transcript_to_ai') ?? true;
+
+  Future<void> setSendTranscriptToAi(bool value) async =>
+      (await _p).setBool('send_transcript_to_ai', value);
 }
 

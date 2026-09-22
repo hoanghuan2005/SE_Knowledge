@@ -4,6 +4,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../../models/graph_data.dart';
 import '../../models/subject.dart';
+import '../../models/transcript_entry.dart';
 import '../../models/curriculum.dart';
 import '../../models/graph_settings.dart';
 import '../../services/db_service.dart';
@@ -237,6 +238,12 @@ class _GraphPageState extends State<GraphPage> {
                             viewer: _viewer,
                           ),
                   ),
+                  if (state.graphSettings.colorMode == 'grade')
+                    const Positioned(
+                      left: 12,
+                      bottom: 12,
+                      child: _GradeLegend(),
+                    ),
                   if (_showSettings)
                     Positioned(
                       top: 12,
@@ -666,8 +673,23 @@ class _DraggableNodeItemState extends State<_DraggableNodeItem> {
     final outDeg = widget.data.outDegree(s.id!);
     final totalDeg = inDeg + outDeg;
 
+    // Điểm của môn này trong bảng điểm cá nhân, null nghĩa là chưa học.
+    final gradeEntry = widget.settings.colorMode == 'grade'
+        ? AppState.instance.gradeOf(s.code)
+        : null;
+
+    // Dòng điểm trong tooltip, rỗng khi môn chưa có trong bảng điểm.
+    final gradeLine = gradeEntry == null
+        ? ''
+        : 'Điểm: ${gradeEntry.displayGrade} — ${gradeEntry.statusLabel}\n';
+
     final Color color;
-    if (widget.settings.colorMode == 'degree') {
+    if (widget.settings.colorMode == 'grade') {
+      color = AppColors.gradeColor(
+        gradeEntry?.grade,
+        gradeEntry?.status ?? SubjectStatus.notStarted,
+      );
+    } else if (widget.settings.colorMode == 'degree') {
       if (totalDeg >= 6) {
         color = const Color(0xFFEF4444);
       } else if (totalDeg >= 4) {
@@ -720,6 +742,7 @@ class _DraggableNodeItemState extends State<_DraggableNodeItem> {
               '${s.code} — ${s.name}\n'
               'Học kỳ ${s.semester} • ${s.credits} tín chỉ\n'
               '$inDeg môn tiên quyết • mở ra $outDeg môn\n'
+              '$gradeLine'
               '(Nhấp để chọn • Nhấp đúp mở ghi chú .md)',
           waitDuration: const Duration(milliseconds: 350),
           child: Container(
@@ -770,6 +793,19 @@ class _DraggableNodeItemState extends State<_DraggableNodeItem> {
                     ),
                   ),
                 ),
+                // Chỉ dùng màu thì người mù màu không đọc được thang điểm,
+                // nên ở chế độ này con số luôn được in thẳng lên thẻ.
+                if (gradeEntry?.hasGrade == true) ...[
+                  Text(
+                    gradeEntry!.displayGrade,
+                    style: TextStyle(
+                      fontSize: tagFontSize,
+                      fontWeight: FontWeight.w800,
+                      color: widget.isSelected ? Colors.white : color,
+                    ),
+                  ),
+                  SizedBox(width: 4 * scale),
+                ],
                 if (widget.settings.showCredits) ...[
                   Text(
                     '${s.credits}TC',
@@ -1042,6 +1078,77 @@ class _CurriculumFilter extends StatelessWidget {
           ],
           onChanged: onChanged,
         ),
+      ),
+    );
+  }
+}
+
+/// Chú giải thang màu theo điểm, hiện ở góc canvas khi đang tô màu theo điểm.
+///
+/// Mỗi mức có cả ô màu lẫn khoảng điểm bằng chữ, để đọc được mà không cần
+/// phân biệt được màu.
+class _GradeLegend extends StatelessWidget {
+  const _GradeLegend();
+
+  static const List<(String, double?, SubjectStatus)> _levels = [
+    ('≥ 9.0 Xuất sắc', 9.5, SubjectStatus.passed),
+    ('8.0 – 8.9 Giỏi', 8.5, SubjectStatus.passed),
+    ('7.0 – 7.9 Khá', 7.5, SubjectStatus.passed),
+    ('< 7.0 Cần cải thiện', 6.0, SubjectStatus.passed),
+    ('Chưa qua', null, SubjectStatus.notPassed),
+    ('Đang học', null, SubjectStatus.studying),
+    ('Chưa học', null, SubjectStatus.notStarted),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.surface.withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Màu theo điểm',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.4,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 6),
+          for (final (label, grade, status) in _levels)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 11,
+                    height: 11,
+                    decoration: BoxDecoration(
+                      color: AppColors.gradeColor(grade, status),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }

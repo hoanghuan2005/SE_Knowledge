@@ -57,6 +57,10 @@ class AiService {
     /// khác với chat chung ở tab "Trợ lý AI" vốn dùng Graph RAG trên toàn
     /// đồ thị.
     String? extraContext,
+    /// Bật khi [extraContext] có kèm điểm của sinh viên, để prompt hệ thống
+    /// thêm bộ quy tắc nhận xét năng lực. Đường Graph RAG tự suy ra được nên
+    /// không cần truyền.
+    bool extraContextHasGrades = false,
     void Function(GraphRagSummary summary)? onContext,
     void Function(String delta)? onDelta,
   }) async {
@@ -76,7 +80,12 @@ class AiService {
       onContext?.call(ragContext.summary);
     }
 
-    final systemPrompt = _systemPrompt(extraContext ?? ragContext?.promptText ?? '');
+    final systemPrompt = _systemPrompt(
+      extraContext ?? ragContext?.promptText ?? '',
+      hasGrades: extraContext != null
+          ? extraContextHasGrades
+          : (ragContext?.summary.includesTranscript ?? false),
+    );
     final recent = _recentHistory(history);
 
     try {
@@ -123,7 +132,7 @@ class AiService {
   /// Quy tắc viết mã môn trong `[[...]]` là điều kiện để Citation Linker ở
   /// tầng UI biến chúng thành link bấm được — bỏ dòng đó thì AI trả về chữ
   /// thường và không còn link nào để bóc.
-  String _systemPrompt(String context) {
+  String _systemPrompt(String context, {bool hasGrades = false}) {
     final sb = StringBuffer()
       ..writeln(
         'Bạn là gia sư học tập trong ứng dụng SE Knowledge, giúp sinh viên '
@@ -150,6 +159,38 @@ class AiService {
         '- Nếu dữ liệu không đủ để trả lời, nói thẳng là chưa có thông tin '
         'trong cơ sở dữ liệu thay vì suy đoán.',
       );
+
+    // Bộ quy tắc riêng cho lúc ngữ cảnh có điểm. Không có điểm mà vẫn nhét
+    // mấy dòng này vào thì AI đi tìm số liệu không tồn tại rồi bịa ra.
+    if (hasGrades) {
+      sb
+        ..writeln()
+        ..writeln('Quy tắc khi nhận xét về năng lực học tập:')
+        ..writeln(
+          '- Phải dẫn số liệu cụ thể: mã môn kèm điểm. Không nói chung chung '
+          'kiểu "bạn khá tốt".',
+        )
+        ..writeln(
+          '- Chỉ kết luận mạnh/yếu khi một nhóm có ít nhất 3 môn đã có điểm. '
+          'Ít hơn thì nói rõ là chưa đủ dữ liệu để kết luận.',
+        )
+        ..writeln(
+          '- Không suy diễn về năng lực từ môn chưa học hoặc môn không có '
+          'điểm.',
+        )
+        ..writeln(
+          '- Khi đề xuất cải thiện, gắn với môn sắp học trong đồ thị tiên '
+          'quyết, nêu rõ vì sao môn nền yếu ảnh hưởng tới môn nào phía sau.',
+        )
+        ..writeln(
+          '- Đề xuất phải hành động được và có thể kiểm chứng trong một kỳ '
+          'học, không đưa lời khuyên chung chung kiểu "hãy chăm chỉ hơn".',
+        )
+        ..writeln(
+          '- Giữ giọng xây dựng. Điểm thấp là dữ liệu để lập kế hoạch, không '
+          'phải để phán xét người học.',
+        );
+    }
     if (context.isNotEmpty) {
       sb
         ..writeln()

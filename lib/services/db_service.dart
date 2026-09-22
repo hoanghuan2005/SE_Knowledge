@@ -8,6 +8,7 @@ import '../models/curriculum.dart';
 import '../models/graph_data.dart';
 import '../models/prerequisite.dart';
 import '../models/subject.dart';
+import '../models/transcript_entry.dart';
 import 'fap_markdown_parser.dart';
 import 'settings_service.dart';
 
@@ -24,7 +25,7 @@ class DbService {
   static final DbService instance = DbService._();
 
   static const String dbFileName = 'se_knowledge.db';
-  static const int dbVersion = 5;
+  static const int dbVersion = 6;
 
   Database? _db;
   String? _dbPath;
@@ -56,8 +57,26 @@ class DbService {
         },
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
+        onOpen: _onOpen,
       ),
     );
+  }
+
+  /// Chạy sau `_onCreate` / `_onUpgrade`, mỗi lần mở file `.db`.
+  ///
+  /// `_onUpgrade` chỉ chạy khi số version ghi trong file nhỏ hơn [dbVersion].
+  /// Một file đã bị đánh dấu là v6 nhưng chưa có bảng điểm vì thế sẽ **không
+  /// bao giờ** được vá, và mọi thao tác chạm tới bảng điểm ném một lỗi SQLite
+  /// thô lên giao diện. Ca hay gặp nhất là lúc phát triển: `flutter run` giữ
+  /// kết nối CSDL mở suốt phiên, nên `hot reload` nạp code mới mà không hề mở
+  /// lại file — migration không có cơ hội chạy.
+  ///
+  /// Câu `CREATE TABLE IF NOT EXISTS` ở đây rẻ và chạy lại được bao nhiêu lần
+  /// cũng không sao, đổi lại tính năng tự lành ở lần mở kế tiếp thay vì hỏng
+  /// vĩnh viễn. Chỉ áp dụng cho bảng thuần cộng thêm — các bảng lõi vẫn để
+  /// nguyên cho migration lo, vì ở đó im lặng tạo bù sẽ giấu mất lỗi thật.
+  Future<void> _onOpen(Database db) async {
+    await _createTranscriptTable(db);
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -139,6 +158,7 @@ class DbService {
     await db.execute('CREATE INDEX idx_curr_code ON curriculums (code)');
 
     await _createFapTables(db);
+    await _createTranscriptTable(db);
 
     await _seed(db);
   }
@@ -205,6 +225,10 @@ class DbService {
         WHERE id IN (SELECT subject_id FROM syllabi)
           AND id NOT IN (SELECT subject_id FROM curriculum_subjects)
       ''');
+    }
+
+    if (oldVersion < 6) {
+      await _createTranscriptTable(db);
     }
   }
 
@@ -410,6 +434,65 @@ class DbService {
         FOREIGN KEY (clo_id)        REFERENCES learning_outcomes (id) ON DELETE CASCADE
       )
     ''');
+  }
+
+  /// Bảng điểm cá nhân nhập từ file transcript của FAP (migration v6).
+  ///
+  /// Ba quyết định quan trọng nằm hết trong đoạn SQL này:
+  ///
+  /// - **`ON DELETE SET NULL`, không phải CASCADE.** Xoá một môn khỏi đồ thị
+  ///   không được xoá luôn điểm đã học: đó là dữ liệu lịch sử không tái tạo
+  ///   được. Dòng điểm ở lại và khớp lại được bằng `subject_code` nếu môn được
+  ///   tạo lại sau này.
+  /// - **`UNIQUE (subject_code, semester_label, term)`** làm cho việc nhập trở
+  ///   nên idempotent: nhập lại đúng một file hai lần không sinh dòng trùng.
+  /// - Bảng điểm **không** đụng tới `prerequisites`. Cột `raw_prerequisite`
+  ///   chỉ lưu nguyên văn để hiển thị; việc dựng cạnh đã có
+  ///   [syncPrerequisitesFromFap] lo.
+  Future<void> _createTranscriptTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS transcript_entries (
+        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+        subject_id              INTEGER,
+        subject_code            TEXT    NOT NULL,
+        subject_name            TEXT    NOT NULL DEFAULT '',
+        term                    INTEGER,
+        semester_label          TEXT    NOT NULL DEFAULT '',
+        semester_year           INTEGER,
+        semester_season         TEXT,
+        semester_order          INTEGER NOT NULL DEFAULT 0,
+        credits                 INTEGER NOT NULL DEFAULT 0,
+        grade                   REAL,
+        status                  TEXT    NOT NULL DEFAULT 'UNKNOWN',
+        is_graduation_condition INTEGER NOT NULL DEFAULT 0,
+        counts_toward_gpa       INTEGER NOT NULL DEFAULT 1,
+        raw_prerequisite        TEXT    NOT NULL DEFAULT '',
+        replaced_subject        TEXT    NOT NULL DEFAULT '',
+        source                  TEXT    NOT NULL DEFAULT 'transcript_xls',
+        imported_at             TEXT    NOT NULL,
+        UNIQUE (subject_code, semester_label, term),
+        FOREIGN KEY (subject_id) REFERENCES subjects (id) ON DELETE SET NULL
+      )
+    ''');
+
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_transcript_code ON transcript_entries (subject_code)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_transcript_subject ON transcript_entries (subject_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_transcript_order ON transcript_entries (semester_order)',
+    );
+
+    // SQLite coi mọi giá trị NULL là khác nhau trong ràng buộc UNIQUE, nên
+    // riêng bảng môn tiếng Anh dự bị (không có cột `Term` -> `term` NULL) sẽ
+    // lọt qua UNIQUE ở trên và nhân bản mỗi lần nhập lại. Index phụ này quy
+    // NULL về -1 để những dòng đó cũng idempotent như phần còn lại.
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_transcript_key '
+      'ON transcript_entries (subject_code, semester_label, IFNULL(term, -1))',
+    );
   }
 
   /// Dữ liệu mẫu để mở app lên là có đồ thị xem ngay (an toàn khi demo).
@@ -1453,9 +1536,205 @@ class DbService {
   }
 
   /// Xoá toàn bộ dữ liệu (dùng trong Cài đặt khi muốn làm lại demo).
+  // ------------------------------------------------------------------
+  // BẢNG ĐIỂM CÁ NHÂN (transcript_entries)
+  // ------------------------------------------------------------------
+
+  /// Đối chiếu danh sách vừa bóc từ file với CSDL. **Chỉ đọc, chưa ghi gì.**
+  ///
+  /// Đi theo đúng mạch `planImport()` / `applyPlan()` của Vault: người dùng
+  /// phải nhìn thấy trước mình sắp ghi bao nhiêu dòng, đè lên bao nhiêu dòng
+  /// cũ và bao nhiêu môn chưa có trong đồ thị, rồi mới quyết định.
+  Future<TranscriptImportPlan> planTranscriptImport(
+    List<TranscriptEntry> entries, {
+    List<String> warnings = const [],
+  }) async {
+    final db = await database;
+
+    final codeToId = <String, int>{
+      for (final row in await db.query('subjects', columns: ['id', 'code']))
+        (row['code'] as String).trim().toUpperCase(): row['id'] as int,
+    };
+
+    final existingKeys = <String>{
+      for (final row in await db.query(
+        'transcript_entries',
+        columns: ['subject_code', 'semester_label', 'term'],
+      ))
+        _transcriptKey(
+          row['subject_code'] as String,
+          (row['semester_label'] as String?) ?? '',
+          row['term'] as int?,
+        ),
+    };
+
+    final missing = <String>{};
+    var matched = 0;
+    var willOverwrite = 0;
+
+    for (final e in entries) {
+      if (codeToId.containsKey(e.subjectCode)) {
+        matched++;
+      } else {
+        missing.add(e.subjectCode);
+      }
+      if (existingKeys.contains(
+        _transcriptKey(e.subjectCode, e.semesterLabel, e.term),
+      )) {
+        willOverwrite++;
+      }
+    }
+
+    return TranscriptImportPlan(
+      entries: entries,
+      matchedCount: matched,
+      missingSubjectCodes: missing.toList()..sort(),
+      willOverwriteCount: willOverwrite,
+      warnings: warnings,
+    );
+  }
+
+  /// Khoá nhận dạng một dòng điểm, khớp với ràng buộc UNIQUE của bảng.
+  String _transcriptKey(String code, String semesterLabel, int? term) =>
+      '${code.trim().toUpperCase()}|$semesterLabel|${term ?? -1}';
+
+  /// Ghi một kế hoạch đã được xác nhận xuống CSDL, trong **một transaction**.
+  ///
+  /// [createMissingSubjects] mặc định tắt: transcript có sẵn cả Vovinam, tiếng
+  /// Nhật và tiếng Anh dự bị — tự động đẩy chúng vào `subjects` là làm nhiễu
+  /// đồ thị tri thức ngành. Điểm của chúng vẫn được lưu đủ, chỉ là `subject_id`
+  /// để NULL.
+  Future<TranscriptImportResult> applyTranscriptPlan(
+    TranscriptImportPlan plan, {
+    bool createMissingSubjects = false,
+  }) async {
+    final db = await database;
+    var createdSubjects = 0;
+    var linked = 0;
+
+    await db.transaction((txn) async {
+      final codeToId = <String, int>{
+        for (final row in await txn.query('subjects', columns: ['id', 'code']))
+          (row['code'] as String).trim().toUpperCase(): row['id'] as int,
+      };
+
+      if (createMissingSubjects) {
+        final now = DateTime.now().toIso8601String();
+        for (final code in plan.missingSubjectCodes) {
+          final sample = plan.entries.firstWhere((e) => e.subjectCode == code);
+          final id = await txn.insert('subjects', {
+            'code': code,
+            'name': sample.subjectName.isEmpty ? code : sample.subjectName,
+            // Kỳ trong khung (`Term`) là thứ gần nhất với kỳ của đồ thị; môn
+            // ngoài khung không có Term nên xếp tạm vào kỳ 1.
+            'semester': (sample.term ?? 0) < 1 ? 1 : sample.term,
+            'credits': sample.credits,
+            'description': '',
+            'created_at': now,
+            'updated_at': now,
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+          if (id > 0) {
+            codeToId[code] = id;
+            createdSubjects++;
+          }
+        }
+      }
+
+      for (final e in plan.entries) {
+        final subjectId = codeToId[e.subjectCode];
+        if (subjectId != null) linked++;
+        await txn.insert(
+          'transcript_entries',
+          e.copyWith(subjectId: subjectId).toMap()..remove('id'),
+          // Nhập lại cùng một file không được sinh dòng trùng: REPLACE dọn
+          // dòng cũ có cùng (mã môn, kỳ, term) rồi ghi lại dòng mới.
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+
+    return TranscriptImportResult(
+      writtenCount: plan.entries.length,
+      replacedCount: plan.willOverwriteCount,
+      createdSubjects: createdSubjects,
+      linkedCount: linked,
+      unlinkedCount: plan.entries.length - linked,
+    );
+  }
+
+  /// Toàn bộ bảng điểm, kỳ mới nhất lên đầu.
+  Future<List<TranscriptEntry>> getTranscript() async {
+    final db = await database;
+    final rows = await db.query(
+      'transcript_entries',
+      orderBy: 'semester_order DESC, subject_code ASC',
+    );
+    return rows.map(TranscriptEntry.fromMap).toList();
+  }
+
+  /// Dòng tiêu biểu của mỗi mã môn: ưu tiên **lần qua môn mới nhất**, chưa qua
+  /// lần nào thì lấy dòng mới nhất.
+  ///
+  /// Đây là map mà đồ thị và panel chi tiết đọc để hiện điểm, nên nó phải trả
+  /// lời được cả câu "môn này đang học" chứ không chỉ "môn này được mấy điểm".
+  Future<Map<String, TranscriptEntry>> latestGradeByCode() async {
+    final db = await database;
+    // Sắp xếp sao cho dòng đáng giữ nhất nằm cuối, rồi ghi đè dần: dòng đã qua
+    // thắng dòng chưa qua, kỳ mới thắng kỳ cũ.
+    final rows = await db.query(
+      'transcript_entries',
+      orderBy:
+          "CASE status WHEN 'PASSED' THEN 1 ELSE 0 END ASC, "
+          'semester_order ASC, id ASC',
+    );
+    final result = <String, TranscriptEntry>{};
+    for (final row in rows) {
+      final entry = TranscriptEntry.fromMap(row);
+      result[entry.subjectCode] = entry;
+    }
+    return result;
+  }
+
+  Future<int> transcriptCount() async {
+    final db = await database;
+    final rows = await db.rawQuery(
+      'SELECT COUNT(*) AS c FROM transcript_entries',
+    );
+    return (rows.first['c'] as int?) ?? 0;
+  }
+
+  /// Lần nhập bảng điểm gần nhất, để màn hình Cài đặt hiện được trạng thái.
+  Future<DateTime?> lastTranscriptImportAt() async {
+    final db = await database;
+    final rows = await db.rawQuery(
+      'SELECT MAX(imported_at) AS t FROM transcript_entries',
+    );
+    return DateTime.tryParse((rows.first['t'] as String?) ?? '');
+  }
+
+  Future<void> clearTranscript() async {
+    final db = await database;
+    await db.delete('transcript_entries');
+  }
+
+  /// Người dùng tự bật/tắt việc tính một dòng vào GPA.
+  Future<void> setCountsTowardGpa(int id, bool value) async {
+    final db = await database;
+    await db.update(
+      'transcript_entries',
+      {'counts_toward_gpa': value ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   Future<void> resetAll() async {
     final db = await database;
     await db.transaction((txn) async {
+      // Bảng điểm là dữ liệu lịch sử nên xoá môn KHÔNG động tới nó
+      // (`ON DELETE SET NULL`), nhưng "xoá toàn bộ dữ liệu" thì có: nút đó để
+      // dọn sạch máy trước khi demo lại từ đầu.
+      await txn.delete('transcript_entries');
       await txn.delete('prerequisites');
       await txn.delete('curriculum_courses');
       await txn.delete('subjects');
@@ -2800,6 +3079,80 @@ class CurriculumCourseEntry {
     this.term = 1,
     this.credits = 3,
   });
+}
+
+/// Bản xem trước của một lần nhập bảng điểm. Chỉ là số liệu để dựng màn hình
+/// xác nhận — chưa có gì được ghi xuống CSDL.
+class TranscriptImportPlan {
+  final List<TranscriptEntry> entries;
+
+  /// Số dòng có mã môn khớp được một môn đang có trong `subjects`.
+  final int matchedCount;
+
+  /// Mã môn chưa có trong đồ thị (Vovinam, tiếng Nhật, tiếng Anh dự bị...).
+  final List<String> missingSubjectCodes;
+
+  /// Số dòng sẽ đè lên một dòng điểm đã lưu trước đó.
+  final int willOverwriteCount;
+
+  /// Các dòng bị bỏ qua lúc bóc file, kèm lý do.
+  final List<String> warnings;
+
+  const TranscriptImportPlan({
+    required this.entries,
+    required this.matchedCount,
+    required this.missingSubjectCodes,
+    required this.willOverwriteCount,
+    this.warnings = const [],
+  });
+
+  bool get isEmpty => entries.isEmpty;
+
+  int get totalCount => entries.length;
+
+  /// Số dòng lần đầu xuất hiện trong CSDL.
+  int get newCount => entries.length - willOverwriteCount;
+
+  @override
+  String toString() =>
+      'TranscriptImportPlan(${entries.length} dòng, $matchedCount khớp môn, '
+      '${missingSubjectCodes.length} môn chưa có, $willOverwriteCount ghi đè)';
+}
+
+/// Kết quả sau khi đã ghi bảng điểm xuống CSDL.
+class TranscriptImportResult {
+  final int writtenCount;
+  final int replacedCount;
+
+  /// Số môn được tạo mới trong `subjects` (chỉ khi người dùng bật tuỳ chọn đó).
+  final int createdSubjects;
+
+  /// Số dòng gắn được vào một môn trong đồ thị.
+  final int linkedCount;
+
+  /// Số dòng chưa gắn được môn nào — điểm vẫn lưu đủ, chỉ là `subject_id` NULL.
+  final int unlinkedCount;
+
+  const TranscriptImportResult({
+    required this.writtenCount,
+    required this.replacedCount,
+    required this.createdSubjects,
+    required this.linkedCount,
+    required this.unlinkedCount,
+  });
+
+  String get summary {
+    final sb = StringBuffer('Đã ghi $writtenCount dòng điểm');
+    if (replacedCount > 0) sb.write(', cập nhật $replacedCount dòng cũ');
+    if (createdSubjects > 0) sb.write(', tạo thêm $createdSubjects môn');
+    if (unlinkedCount > 0) {
+      sb.write(', $unlinkedCount dòng chưa gắn được môn trong đồ thị');
+    }
+    return '$sb.';
+  }
+
+  @override
+  String toString() => summary;
 }
 
 /// Lỗi nghiệp vụ từ tầng DB (trùng khoá, chu trình, ...) để UI hiển thị tử tế.

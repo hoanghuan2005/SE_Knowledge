@@ -1,18 +1,16 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../models/chat_message.dart';
 import '../../models/graph_rag_context.dart';
-import '../../models/subject.dart';
 import '../../services/ai_service.dart';
 import '../../services/chat_session_service.dart';
-import '../../services/obsidian_service.dart';
 import '../../services/settings_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_constants.dart';
 import '../../utils/ui_helpers.dart';
+import '../widgets/linked_answer_text.dart';
 
 /// Khung chat với trợ lý học tập.
 ///
@@ -514,7 +512,7 @@ class _Bubble extends StatelessWidget {
                       style: TextStyle(fontSize: 13.5, height: 1.6, color: fg),
                     )
                   else
-                    _LinkedAnswerText(
+                    LinkedAnswerText(
                       text: message.content,
                       style: TextStyle(fontSize: 13.5, height: 1.6, color: fg),
                     ),
@@ -533,84 +531,6 @@ class _Bubble extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// Bóc `[[MÃ MÔN]]` trong câu trả lời của AI thành liên kết bấm được, bấm
-/// vào là mở thẳng note của môn đó (giống wiki link trong Obsidian).
-///
-/// Mã nào không có trong CSDL thì để nguyên chữ thường, không tạo link chết.
-class _LinkedAnswerText extends StatefulWidget {
-  final String text;
-  final TextStyle style;
-
-  const _LinkedAnswerText({required this.text, required this.style});
-
-  @override
-  State<_LinkedAnswerText> createState() => _LinkedAnswerTextState();
-}
-
-class _LinkedAnswerTextState extends State<_LinkedAnswerText> {
-  /// Giữ theo mã môn và tái dùng qua các lần build. Tạo recognizer mới mỗi
-  /// lần build sẽ rò rỉ, vì TextSpan không tự huỷ recognizer của nó.
-  final Map<String, TapGestureRecognizer> _recognizers = {};
-
-  @override
-  void dispose() {
-    for (final r in _recognizers.values) {
-      r.dispose();
-    }
-    super.dispose();
-  }
-
-  TapGestureRecognizer _recognizerFor(Subject subject) {
-    return _recognizers.putIfAbsent(
-      subject.code,
-      () => TapGestureRecognizer()
-        ..onTap = () => AppState.instance.openNoteTab(subject),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final byCode = AppState.instance.graph.byCode;
-    final spans = <InlineSpan>[];
-    var cursor = 0;
-
-    for (final match in ObsidianService.wikiLinkPattern.allMatches(widget.text)) {
-      if (match.start > cursor) {
-        spans.add(TextSpan(text: widget.text.substring(cursor, match.start)));
-      }
-      cursor = match.end;
-
-      final raw = match.group(1) ?? '';
-      // Chấp nhận cả "[[CSD201|Cấu trúc dữ liệu]]" lẫn "[[CSD201#Mục]]".
-      final code = raw.split(RegExp(r'[|#]')).first.trim().toUpperCase();
-      final subject = byCode[code];
-
-      if (subject == null) {
-        spans.add(TextSpan(text: raw));
-        continue;
-      }
-      spans.add(
-        TextSpan(
-          text: subject.code,
-          style: TextStyle(
-            color: AppColors.primary,
-            fontWeight: FontWeight.w600,
-          ),
-          recognizer: _recognizerFor(subject),
-        ),
-      );
-    }
-
-    if (cursor < widget.text.length) {
-      spans.add(TextSpan(text: widget.text.substring(cursor)));
-    }
-
-    return SelectableText.rich(
-      TextSpan(style: widget.style, children: spans),
     );
   }
 }
@@ -812,6 +732,31 @@ class _RagContextPanelState extends State<_RagContextPanel> {
               '${summary.elapsedMs}ms',
               style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
             ),
+            // Nói thẳng khi điểm đã được gửi đi cùng câu hỏi: khung này vốn
+            // để người dùng biết chính xác app gửi gì ra ngoài.
+            if (summary.includesTranscript)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.insights_outlined,
+                      size: 13,
+                      color: AppColors.textSecondary,
+                    ),
+                    const SizedBox(width: 5),
+                    Expanded(
+                      child: Text(
+                        'Có gửi kèm bảng điểm của bạn (tắt được trong Cài đặt)',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ],
       ),

@@ -25,7 +25,18 @@ class SubjectDeleteChoice {
 class SubjectDeleteDialog extends StatefulWidget {
   final DeleteImpact impact;
 
-  const SubjectDeleteDialog({super.key, required this.impact});
+  /// Số dòng điểm của môn này đang nằm trong bảng điểm cá nhân.
+  ///
+  /// Truyền từ ngoài vào thay vì tự tra CSDL, để hộp thoại vẫn dựng được
+  /// trong widget test mà không cần mở SQLite — cùng lý do [DeleteImpact]
+  /// được tính sẵn ở `SubjectDeleteGuard` rồi mới đưa xuống đây.
+  final int transcriptEntryCount;
+
+  const SubjectDeleteDialog({
+    super.key,
+    required this.impact,
+    this.transcriptEntryCount = 0,
+  });
 
   @override
   State<SubjectDeleteDialog> createState() => _SubjectDeleteDialogState();
@@ -126,6 +137,17 @@ class _SubjectDeleteDialogState extends State<SubjectDeleteDialog> {
                 const SizedBox(height: 12),
                 for (final line in _impact.rewireBlocked)
                   _NoteLine(icon: Icons.block, text: line),
+              ],
+              if (widget.transcriptEntryCount > 0) ...[
+                const SizedBox(height: 12),
+                _NoteLine(
+                  icon: Icons.insights_outlined,
+                  text:
+                      'Điểm đã học của môn này vẫn được giữ lại trong bảng '
+                      'điểm (${widget.transcriptEntryCount} dòng). Bảng điểm '
+                      'là lịch sử học, không tái tạo được, nên xoá môn khỏi '
+                      'đồ thị không xoá nó theo.',
+                ),
               ],
               if (_impact.hasNoteFile) ...[
                 const SizedBox(height: 12),
