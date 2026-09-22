@@ -797,8 +797,8 @@ class DbService {
 
   /// Sắp xếp topo: gợi ý thứ tự học hợp lệ (thuật toán Kahn).
   /// Trả về null nếu đồ thị còn chu trình.
-  Future<List<Subject>?> suggestLearningOrder() async {
-    final graph = await loadGraph();
+  Future<List<Subject>?> suggestLearningOrder({GraphData? customGraph}) async {
+    final graph = customGraph ?? await loadGraph();
     final byId = graph.byId;
     final indegree = <int, int>{for (final id in byId.keys) id: 0};
     final children = <int, List<int>>{};

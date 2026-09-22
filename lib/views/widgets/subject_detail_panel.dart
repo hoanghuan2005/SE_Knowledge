@@ -28,11 +28,9 @@ class SubjectDetailPanel extends StatefulWidget {
 class _SubjectDetailPanelState extends State<SubjectDetailPanel> {
   int? _lastSubjectId;
 
-  /// true = tab "Hỏi AI", false = tab "Chi tiết". Mỗi lần người dùng bấm
-  /// CHỌN MỘT MÔN KHÁC trên đồ thị, panel tự quay lại tab "Hỏi AI" — đúng ý
-  /// "bấm vào node là AI gen câu hỏi ngay", còn chọn lại "Chi tiết" thì giữ
-  /// nguyên cho tới khi đổi môn khác.
-  bool _showChat = true;
+  /// true = tab "Hỏi AI", false = tab "Chi tiết". Mặc định mở tab "Chi tiết" trước
+  /// để xem nhanh thông tin môn, số tín chỉ, tiên quyết và môn mở ra.
+  bool _showChat = false;
 
   @override
   Widget build(BuildContext context) {
@@ -43,7 +41,7 @@ class _SubjectDetailPanelState extends State<SubjectDetailPanel> {
 
         if (subject?.id != _lastSubjectId) {
           _lastSubjectId = subject?.id;
-          _showChat = true;
+          _showChat = false;
         }
 
         return Container(
@@ -89,25 +87,104 @@ class _ModeToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      child: SegmentedButton<bool>(
-        showSelectedIcon: false,
-        style: const ButtonStyle(visualDensity: VisualDensity.compact),
-        segments: const [
-          ButtonSegment<bool>(
-            value: true,
-            icon: Icon(Icons.auto_awesome, size: 14),
-            label: Text('Hỏi AI', style: TextStyle(fontSize: 12)),
+    final isDark = AppColors.isDark;
+    return Container(
+      height: 36,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF141418) : const Color(0xFFEBE9F2),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: AppColors.border.withValues(alpha: 0.5),
+          width: 0.8,
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _ToggleItem(
+              icon: Icons.info_outline,
+              label: 'Chi tiết',
+              selected: !showChat,
+              onTap: () => onChanged(false),
+            ),
           ),
-          ButtonSegment<bool>(
-            value: false,
-            icon: Icon(Icons.info_outline, size: 14),
-            label: Text('Chi tiết', style: TextStyle(fontSize: 12)),
+          const SizedBox(width: 4),
+          Expanded(
+            child: _ToggleItem(
+              icon: Icons.auto_awesome,
+              label: 'Hỏi AI',
+              selected: showChat,
+              onTap: () => onChanged(true),
+            ),
           ),
         ],
-        selected: {showChat},
-        onSelectionChanged: (s) => onChanged(s.first),
+      ),
+    );
+  }
+}
+
+class _ToggleItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ToggleItem({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = AppColors.isDark;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected
+              ? (isDark ? const Color(0xFF262630) : Colors.white)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.06),
+                    blurRadius: 3,
+                    offset: const Offset(0, 1),
+                  ),
+                ]
+              : null,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 14,
+              color: selected
+                  ? AppColors.primary
+                  : AppColors.textSecondary,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                color: selected
+                    ? AppColors.textPrimary
+                    : AppColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

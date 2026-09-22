@@ -503,7 +503,8 @@ class AppState extends ChangeNotifier {
     return path;
   }
 
-  Future<List<Subject>?> suggestLearningOrder() => _db.suggestLearningOrder();
+  Future<List<Subject>?> suggestLearningOrder([GraphData? customGraph]) =>
+      _db.suggestLearningOrder(customGraph: customGraph ?? currentGraph);
 
   Future<void> resetAll() async {
     await _db.resetAll();

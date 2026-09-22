@@ -174,12 +174,12 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
             child: const Icon(Icons.auto_stories, color: AppColors.primary, size: 22),
           ),
           const SizedBox(width: 14),
-          const Text(
+          Text(
             'Đề cương môn học (Syllabus FLM)',
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
-              color: Colors.white,
+              color: AppColors.obsidianText,
             ),
           ),
           const SizedBox(width: 18),
@@ -203,18 +203,19 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                           : null,
                       isExpanded: true,
                       dropdownColor: AppColors.obsidianSidebar,
-                      hint: const Text(
+                      hint: Text(
                         'Chọn môn học đã có Syllabus...',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                        style: TextStyle(fontSize: 12, color: AppColors.obsidianTextMuted),
                       ),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12.5,
                         fontWeight: FontWeight.w600,
-                        color: Colors.white,
+                        color: AppColors.obsidianText,
                       ),
                       items: _availableList.map((s) {
                         final code = s['code'] as String;
                         final name = s['name'] as String? ?? '';
+                        final isDark = AppColors.isDark;
                         return DropdownMenuItem<String>(
                           value: code,
                           child: Row(
@@ -222,15 +223,15 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: AppColors.primary.withValues(alpha: 0.25),
+                                  color: AppColors.primary.withValues(alpha: isDark ? 0.25 : 0.15),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: Text(
                                   code,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 11,
                                     fontWeight: FontWeight.bold,
-                                    color: AppColors.primaryLight,
+                                    color: isDark ? AppColors.primaryLight : AppColors.primary,
                                   ),
                                 ),
                               ),
@@ -239,7 +240,7 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                                 child: Text(
                                   name,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 12),
+                                  style: TextStyle(fontSize: 12, color: AppColors.obsidianText),
                                 ),
                               ),
                             ],
@@ -325,7 +326,7 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
               isScrollable: true,
               tabAlignment: TabAlignment.start,
               indicatorColor: AppColors.primary,
-              labelColor: AppColors.primaryLight,
+              labelColor: AppColors.isDark ? AppColors.primaryLight : AppColors.primary,
               unselectedLabelColor: AppColors.obsidianTextMuted,
               labelStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
               unselectedLabelStyle: const TextStyle(fontSize: 12.5),
@@ -369,6 +370,9 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
   }
 
   Widget _buildSummaryBanner(FapSyllabusImport data) {
+    final isDark = AppColors.isDark;
+    final cleanName = data.displayName.replaceAll('**', '').trim();
+
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
       decoration: BoxDecoration(
@@ -399,11 +403,11 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  data.displayName,
-                  style: const TextStyle(
+                  cleanName,
+                  style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                    color: AppColors.obsidianText,
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -419,36 +423,38 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                 _ChipBadge(
                   icon: Icons.school_outlined,
                   label: data.degreeLevel,
-                  color: Colors.blueAccent,
+                  color: isDark ? Colors.blueAccent : const Color(0xFF1D4ED8),
                 ),
               if (data.timeAllocation.isNotEmpty)
                 _ChipBadge(
                   icon: Icons.timer_outlined,
                   label: data.timeAllocation.split('=').first.trim(),
-                  color: Colors.purpleAccent,
+                  color: isDark ? Colors.purpleAccent : const Color(0xFF7E22CE),
                 ),
               if (data.scoringScale != null)
                 _ChipBadge(
                   icon: Icons.military_tech_outlined,
                   label: 'Thang ${data.scoringScale}',
-                  color: Colors.tealAccent,
+                  color: isDark ? Colors.tealAccent : const Color(0xFF0F766E),
                 ),
               if (data.minAvgMarkToPass != null)
                 _ChipBadge(
                   icon: Icons.check_circle_outline,
                   label: 'Qua môn: ≥ ${data.minAvgMarkToPass}',
-                  color: Colors.greenAccent,
+                  color: isDark ? Colors.greenAccent : const Color(0xFF15803D),
                 ),
               if (data.decisionNo.isNotEmpty)
                 _ChipBadge(
                   icon: Icons.description_outlined,
                   label: data.decisionNo,
-                  color: Colors.amberAccent,
+                  color: isDark ? Colors.amberAccent : const Color(0xFFB45309),
                 ),
               _ChipBadge(
                 icon: data.isApproved ? Icons.verified_outlined : Icons.pending_outlined,
                 label: data.isApproved ? 'Đã duyệt' : 'Chưa duyệt',
-                color: data.isApproved ? Colors.green : Colors.orange,
+                color: isDark
+                    ? (data.isApproved ? Colors.green : Colors.orange)
+                    : (data.isApproved ? const Color(0xFF16A34A) : const Color(0xFFEA580C)),
               ),
             ],
           ),
@@ -501,10 +507,10 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
             icon: Icons.link,
             content: Text(
               data.rawPrerequisiteText,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.bold,
-                color: Colors.orangeAccent,
+                color: AppColors.isDark ? Colors.orangeAccent : const Color(0xFFC2410C),
               ),
             ),
           ),
@@ -541,21 +547,31 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
       return _emptyTabMessage('Không có thông tin giáo trình / tài liệu trong Syllabus này.');
     }
 
+    final isDark = AppColors.isDark;
+
     return ListView.separated(
       padding: const EdgeInsets.all(20),
       itemCount: data.materials.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      separatorBuilder: (_, _) => const SizedBox(height: 12),
       itemBuilder: (context, i) {
         final m = data.materials[i];
         return Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: AppColors.obsidianWorkspace,
+            color: AppColors.obsidianCard,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
               color: m.isMain ? AppColors.primary.withValues(alpha: 0.5) : AppColors.obsidianBorder,
               width: m.isMain ? 1.5 : 1.0,
             ),
+            boxShadow: [
+              if (!isDark)
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.03),
+                  blurRadius: 4,
+                  offset: const Offset(0, 1),
+                ),
+            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -566,23 +582,25 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
-                      color: m.isMain ? AppColors.primary : Colors.grey.shade800,
+                      color: m.isMain
+                          ? AppColors.primary
+                          : (isDark ? Colors.grey.shade800 : const Color(0xFFE2E8F0)),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
                       m.isMain ? 'GIÁO TRÌNH CHÍNH' : 'TÀI LIỆU #${m.seqNo}',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 10.5,
                         fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                        color: m.isMain || isDark ? Colors.white : AppColors.obsidianText,
                       ),
                     ),
                   ),
                   const SizedBox(width: 8),
                   if (m.isOnline)
-                    _MiniBadge(label: 'Online', color: Colors.cyanAccent),
+                    _MiniBadge(label: 'Online', color: isDark ? Colors.cyanAccent : const Color(0xFF0284C7)),
                   if (m.isHardCopy)
-                    _MiniBadge(label: 'Sách giấy', color: Colors.amberAccent),
+                    _MiniBadge(label: 'Sách giấy', color: isDark ? Colors.amberAccent : const Color(0xFFD97706)),
                   const Spacer(),
                   if (m.isbn.isNotEmpty)
                     Text(
@@ -594,7 +612,12 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
               const SizedBox(height: 8),
               Text(
                 m.description,
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, height: 1.3),
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  height: 1.3,
+                  color: AppColors.obsidianText,
+                ),
               ),
               if (m.author.isNotEmpty || m.publisher.isNotEmpty || m.publishedDate.isNotEmpty) ...[
                 const SizedBox(height: 6),
@@ -612,7 +635,11 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                 const SizedBox(height: 6),
                 Text(
                   'Ghi chú: ${m.note}',
-                  style: const TextStyle(fontSize: 11.5, fontStyle: FontStyle.italic, color: Colors.orangeAccent),
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontStyle: FontStyle.italic,
+                    color: isDark ? Colors.orangeAccent : const Color(0xFFC2410C),
+                  ),
                 ),
               ],
             ],
@@ -628,18 +655,28 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
       return _emptyTabMessage('Không có thông tin chuẩn đầu ra (CLO) trong Syllabus này.');
     }
 
+    final isDark = AppColors.isDark;
+
     return ListView.separated(
       padding: const EdgeInsets.all(20),
       itemCount: data.clos.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
+      separatorBuilder: (_, _) => const SizedBox(height: 10),
       itemBuilder: (context, i) {
         final clo = data.clos[i];
         return Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: AppColors.obsidianWorkspace,
+            color: AppColors.obsidianCard,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(color: AppColors.obsidianBorder),
+            boxShadow: [
+              if (!isDark)
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.03),
+                  blurRadius: 4,
+                  offset: const Offset(0, 1),
+                ),
+            ],
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -649,16 +686,16 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.2),
+                  color: AppColors.primary.withValues(alpha: isDark ? 0.2 : 0.12),
                   borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: AppColors.primary.withValues(alpha: 0.5)),
+                  border: Border.all(color: AppColors.primary.withValues(alpha: isDark ? 0.5 : 0.3)),
                 ),
                 child: Text(
                   clo.code,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
-                    color: AppColors.primaryLight,
+                    color: isDark ? AppColors.primaryLight : AppColors.primary,
                   ),
                 ),
               ),
@@ -666,7 +703,7 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
               Expanded(
                 child: Text(
                   clo.detail,
-                  style: const TextStyle(fontSize: 13, height: 1.45),
+                  style: TextStyle(fontSize: 13, height: 1.45, color: AppColors.obsidianText),
                 ),
               ),
             ],
@@ -693,6 +730,8 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                 s.cloCodes.any((c) => c.toLowerCase().contains(query));
           }).toList();
 
+    final isDark = AppColors.isDark;
+
     return Column(
       children: [
         // Ô tìm kiếm buổi học
@@ -700,21 +739,25 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
           padding: const EdgeInsets.fromLTRB(20, 14, 20, 10),
           child: TextField(
             onChanged: (val) => setState(() => _sessionSearchQuery = val),
-            style: const TextStyle(fontSize: 13),
+            style: TextStyle(fontSize: 13, color: AppColors.obsidianText),
             decoration: InputDecoration(
               hintText: 'Tìm kiếm theo số buổi, chủ đề, hình thức học, CLO...',
               hintStyle: TextStyle(fontSize: 12, color: AppColors.obsidianTextMuted),
-              prefixIcon: const Icon(Icons.search, size: 18),
+              prefixIcon: Icon(Icons.search, size: 18, color: AppColors.obsidianTextMuted),
               suffixIcon: query.isNotEmpty
                   ? IconButton(
-                      icon: const Icon(Icons.clear, size: 16),
+                      icon: Icon(Icons.clear, size: 16, color: AppColors.obsidianTextMuted),
                       onPressed: () => setState(() => _sessionSearchQuery = ''),
                     )
                   : null,
               contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               filled: true,
-              fillColor: AppColors.obsidianWorkspace,
+              fillColor: AppColors.obsidianCard,
               border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: AppColors.obsidianBorder),
+              ),
+              enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
                 borderSide: BorderSide(color: AppColors.obsidianBorder),
               ),
@@ -724,8 +767,8 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
         // Header bảng buổi học
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-          color: AppColors.obsidianWorkspace,
-          child: const Row(
+          color: isDark ? AppColors.obsidianWorkspace : const Color(0xFFEDEBF4),
+          child: Row(
             children: [
               SizedBox(width: 64, child: Text('BUỔI', style: _colHeaderStyle)),
               Expanded(flex: 4, child: Text('CHỦ ĐỀ (TOPIC)', style: _colHeaderStyle)),
@@ -747,14 +790,14 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                 )
               : ListView.separated(
                   itemCount: filteredSessions.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (context, i) {
                     final s = filteredSessions[i];
                     return Container(
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                       color: i.isEven
-                          ? AppColors.obsidianSidebar
-                          : AppColors.obsidianWorkspace.withValues(alpha: 0.5),
+                          ? AppColors.obsidianCard
+                          : (isDark ? AppColors.obsidianSidebar : const Color(0xFFF7F6FB)),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -764,16 +807,16 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(
-                                color: AppColors.obsidianBorder,
+                                color: isDark ? AppColors.obsidianBorder : const Color(0xFFE2E8F0),
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
                                 '#${s.sessionNo}',
                                 textAlign: TextAlign.center,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 11.5,
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.white,
+                                  color: AppColors.obsidianText,
                                 ),
                               ),
                             ),
@@ -785,7 +828,11 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                               padding: const EdgeInsets.only(right: 12),
                               child: Text(
                                 s.topic,
-                                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.obsidianText,
+                                ),
                               ),
                             ),
                           ),
@@ -797,7 +844,7 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                               style: TextStyle(
                                 fontSize: 11.5,
                                 color: s.teachingType.toLowerCase().contains('online')
-                                    ? Colors.cyanAccent
+                                    ? (isDark ? Colors.cyanAccent : const Color(0xFF0284C7))
                                     : AppColors.obsidianTextMuted,
                               ),
                             ),
@@ -828,13 +875,23 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                                       return Container(
                                         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                                         decoration: BoxDecoration(
-                                          color: Colors.teal.withValues(alpha: 0.25),
+                                          color: isDark
+                                              ? Colors.teal.withValues(alpha: 0.25)
+                                              : const Color(0xFFCCFBF1),
                                           borderRadius: BorderRadius.circular(3),
-                                          border: Border.all(color: Colors.teal.withValues(alpha: 0.5)),
+                                          border: Border.all(
+                                            color: isDark
+                                                ? Colors.teal.withValues(alpha: 0.5)
+                                                : const Color(0xFF5EEAD4),
+                                          ),
                                         ),
                                         child: Text(
                                           c,
-                                          style: const TextStyle(fontSize: 10, color: Colors.tealAccent),
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w600,
+                                            color: isDark ? Colors.tealAccent : const Color(0xFF0F766E),
+                                          ),
                                         ),
                                       );
                                     }).toList(),
@@ -858,6 +915,7 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
     }
 
     final totalWeight = data.assessments.fold<double>(0.0, (sum, a) => sum + a.weightPercent);
+    final isDark = AppColors.isDark;
 
     return ListView(
       padding: const EdgeInsets.all(20),
@@ -866,17 +924,29 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
-            color: AppColors.obsidianWorkspace,
+            color: AppColors.obsidianCard,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(color: AppColors.obsidianBorder),
+            boxShadow: [
+              if (!isDark)
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.03),
+                  blurRadius: 4,
+                  offset: const Offset(0, 1),
+                ),
+            ],
           ),
           child: Row(
             children: [
-              const Icon(Icons.pie_chart_outline, size: 18, color: AppColors.primaryLight),
+              const Icon(Icons.pie_chart_outline, size: 18, color: AppColors.primary),
               const SizedBox(width: 10),
-              const Text(
+              Text(
                 'Tổng trọng số các đầu điểm:',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.obsidianText,
+                ),
               ),
               const Spacer(),
               Text(
@@ -885,8 +955,8 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                   fontSize: 15,
                   fontWeight: FontWeight.bold,
                   color: (totalWeight >= 99.0 && totalWeight <= 101.0)
-                      ? Colors.greenAccent
-                      : Colors.orangeAccent,
+                      ? (isDark ? Colors.greenAccent : const Color(0xFF15803D))
+                      : (isDark ? Colors.orangeAccent : const Color(0xFFC2410C)),
                 ),
               ),
             ],
@@ -899,9 +969,17 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
             margin: const EdgeInsets.only(bottom: 12),
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: AppColors.obsidianWorkspace,
+              color: AppColors.obsidianCard,
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: AppColors.obsidianBorder),
+              boxShadow: [
+                if (!isDark)
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.03),
+                    blurRadius: 4,
+                    offset: const Offset(0, 1),
+                  ),
+              ],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -911,34 +989,48 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.25),
+                        color: AppColors.primary.withValues(alpha: isDark ? 0.25 : 0.12),
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
                         '#${a.seqNo}',
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primaryLight),
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: isDark ? AppColors.primaryLight : AppColors.primary,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
                         a.category,
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.obsidianText,
+                        ),
                       ),
                     ),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
-                        color: Colors.greenAccent.withValues(alpha: 0.15),
+                        color: isDark
+                            ? Colors.greenAccent.withValues(alpha: 0.15)
+                            : const Color(0xFFDCFCE7),
                         borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.4)),
+                        border: Border.all(
+                          color: isDark
+                              ? Colors.greenAccent.withValues(alpha: 0.4)
+                              : const Color(0xFF86EFAC),
+                        ),
                       ),
                       child: Text(
                         '${a.weightPercent}%',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.bold,
-                          color: Colors.greenAccent,
+                          color: isDark ? Colors.greenAccent : const Color(0xFF15803D),
                         ),
                       ),
                     ),
@@ -970,10 +1062,19 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                           return Container(
                             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                             decoration: BoxDecoration(
-                              color: Colors.teal.withValues(alpha: 0.2),
+                              color: isDark
+                                  ? Colors.teal.withValues(alpha: 0.2)
+                                  : const Color(0xFFCCFBF1),
                               borderRadius: BorderRadius.circular(3),
                             ),
-                            child: Text(c, style: const TextStyle(fontSize: 10.5, color: Colors.tealAccent)),
+                            child: Text(
+                              c,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                                color: isDark ? Colors.tealAccent : const Color(0xFF0F766E),
+                              ),
+                            ),
                           );
                         }).toList(),
                       ),
@@ -984,7 +1085,11 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
                   const SizedBox(height: 6),
                   Text(
                     'Ghi chú: ${a.note}',
-                    style: const TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: Colors.orangeAccent),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontStyle: FontStyle.italic,
+                      color: isDark ? Colors.orangeAccent : const Color(0xFFC2410C),
+                    ),
                   ),
                 ],
               ],
@@ -1008,10 +1113,10 @@ class _SyllabusDetailDialogState extends State<SyllabusDetailDialog> {
   }
 }
 
-const _colHeaderStyle = TextStyle(
+TextStyle get _colHeaderStyle => TextStyle(
   fontSize: 11,
   fontWeight: FontWeight.bold,
-  color: Colors.grey,
+  color: AppColors.obsidianTextMuted,
   letterSpacing: 0.5,
 );
 
@@ -1090,28 +1195,44 @@ class _SectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = AppColors.isDark;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.obsidianWorkspace,
+        color: AppColors.obsidianCard,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: AppColors.obsidianBorder),
+        boxShadow: [
+          if (!isDark)
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, size: 16, color: AppColors.primaryLight),
+              Icon(icon, size: 16, color: AppColors.primary),
               const SizedBox(width: 8),
               Text(
                 title,
-                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.obsidianText,
+                ),
               ),
             ],
           ),
           const SizedBox(height: 10),
-          content,
+          DefaultTextStyle.merge(
+            style: TextStyle(color: AppColors.obsidianText),
+            child: content,
+          ),
         ],
       ),
     );
@@ -1130,7 +1251,7 @@ class _AssessmentAttr extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text('$label: ', style: TextStyle(fontSize: 11.5, color: AppColors.obsidianTextMuted)),
-        Text(value, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
+        Text(value, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: AppColors.obsidianText)),
       ],
     );
   }
