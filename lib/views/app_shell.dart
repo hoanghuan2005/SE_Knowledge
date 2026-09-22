@@ -197,6 +197,7 @@ class _AppShellState extends State<AppShell> {
 
                 // 3. Vùng làm việc chính kèm Top Tab Bar kiểu Obsidian
                 Expanded(
+                  child: ClipRect(
                   child: Column(
                     children: [
                       _ObsidianWorkspaceTabBar(
@@ -253,6 +254,7 @@ class _AppShellState extends State<AppShell> {
                         ),
                       ),
                     ],
+                  ),
                   ),
                 ),
               ],
