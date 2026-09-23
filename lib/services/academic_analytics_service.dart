@@ -47,7 +47,8 @@ class AcademicAnalyticsService {
   static const Map<String, String> domainByPrefix = {
     // Lập trình
     'PRF': 'Lập trình', 'PRO': 'Lập trình', 'PRJ': 'Lập trình',
-    'PRM': 'Lập trình', 'LAB': 'Lập trình', 'CSD': 'Lập trình',
+    'PRM': 'Lập trình', 'PRN': 'Lập trình', 'LAB': 'Lập trình',
+    'CSD': 'Lập trình',
     'WED': 'Lập trình', 'WDU': 'Lập trình',
     // Toán & nền tảng
     'MAE': 'Toán & nền tảng', 'MAD': 'Toán & nền tảng',

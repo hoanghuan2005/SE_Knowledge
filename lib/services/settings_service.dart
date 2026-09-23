@@ -190,5 +190,12 @@ class SettingsService {
 
   Future<void> setSendTranscriptToAi(bool value) async =>
       (await _p).setBool('send_transcript_to_ai', value);
+
+  /// GPA tốt nghiệp người dùng đặt làm mục tiêu. 8.0 là mốc Giỏi của FPTU.
+  Future<double> getTargetGpa() async =>
+      (await _p).getDouble('target_gpa') ?? 8.0;
+
+  Future<void> setTargetGpa(double value) async =>
+      (await _p).setDouble('target_gpa', value);
 }
 

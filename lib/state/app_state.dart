@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:developer' as dev;
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../models/graph_data.dart';
+import '../models/knowledge.dart';
 import '../models/prerequisite.dart';
 import '../models/subject.dart';
 import '../models/curriculum.dart';
@@ -14,6 +16,9 @@ import '../models/transcript_entry.dart';
 import '../services/academic_analytics_service.dart';
 import '../services/db_service.dart';
 import '../services/fap_markdown_parser.dart';
+import '../services/goal_planner_service.dart';
+import '../services/kanban_board_builder.dart';
+import '../services/knowledge_extraction_service.dart';
 import '../services/md_intake_service.dart';
 import '../services/obsidian_service.dart';
 import '../services/settings_service.dart';
@@ -22,6 +27,19 @@ import '../services/subject_delete_guard.dart';
 import '../services/transcript_parser_service.dart';
 import '../services/window_theme_service.dart';
 import '../utils/app_colors.dart';
+
+/// Ba góc nhìn trên cùng một khung chương trình.
+enum CurriculumView {
+  /// Đồ thị môn học — quan hệ tiên quyết giữa các môn.
+  graph,
+
+  /// Bảng học kỳ HK1 → HK9 xếp ngang, mỗi môn một thẻ.
+  board,
+
+  /// Mạng tri thức — sâu hơn một cấp: khái niệm trích từ syllabus và các
+  /// môn dính nhau qua khái niệm nào.
+  knowledge,
+}
 
 /// Store trạng thái dùng chung, không cần package quản lý state bên ngoài.
 ///
@@ -129,7 +147,215 @@ class AppState extends ChangeNotifier {
   void setActiveCurriculum(String? code) {
     if (_activeCurriculumCode == code) return;
     _activeCurriculumCode = code;
+    // Kế hoạch GPA đếm cả môn trong khung đang lọc.
+    _goalPlan = null;
     notifyListeners();
+  }
+
+  /// Nhóm khung đang lọc, `null` khi đang xem toàn bộ môn.
+  CurriculumGroup? get activeCurriculumGroup {
+    for (final g in _curriculumGroups) {
+      if (g.code == _activeCurriculumCode) return g;
+    }
+    return null;
+  }
+
+  CurriculumView _curriculumView = CurriculumView.graph;
+
+  /// Góc nhìn đang mở trên màn hình khung chương trình. Nằm ở đây thay vì
+  /// trong state của trang, để màn hình tổng quan các khung mở thẳng được
+  /// một khung vào đúng góc nhìn cần xem.
+  CurriculumView get curriculumView => _curriculumView;
+
+  void setCurriculumView(CurriculumView view) {
+    if (_curriculumView == view) return;
+    _curriculumView = view;
+    notifyListeners();
+  }
+
+  /// Mở một khung ở đúng góc nhìn — một lần báo thay đổi thay vì hai.
+  void openCurriculum(String? code, {CurriculumView? view}) {
+    _activeCurriculumCode = code;
+    if (view != null) _curriculumView = view;
+    _goalPlan = null;
+    notifyListeners();
+  }
+
+  /// Quét `fap_inbox/` và Vault, nạp mọi trang Curriculum/Syllabus vào CSDL.
+  Future<Map<String, dynamic>> importFapInbox() async {
+    final result = await _db.batchImportFromInbox();
+    await refresh();
+    return result;
+  }
+
+  // ------------------------------------------------------------------
+  // ĐỘ PHỦ SYLLABUS
+  // ------------------------------------------------------------------
+
+  Set<int> _syllabusSubjectIds = const {};
+
+  /// Môn đã nạp syllabus chưa — màn hình tổng quan dùng để tính độ phủ.
+  bool hasSyllabusFor(int? subjectId) =>
+      subjectId != null && _syllabusSubjectIds.contains(subjectId);
+
+  // ------------------------------------------------------------------
+  // MỤC TIÊU GPA
+  // ------------------------------------------------------------------
+
+  double _targetGpa = GoalPlannerService.defaultTarget;
+  double get targetGpa => _targetGpa;
+
+  Future<void> setTargetGpa(double value) async {
+    final v = double.parse(value.clamp(5.0, 10.0).toStringAsFixed(1));
+    if (v == _targetGpa) return;
+    _targetGpa = v;
+    _goalPlan = null;
+    notifyListeners();
+    await _settings.setTargetGpa(v);
+  }
+
+  GoalPlan? _goalPlan;
+
+  /// Kế hoạch đạt [targetGpa], tính lười và giữ lại tới lần nạp sau.
+  GoalPlan get goalPlan {
+    if (_transcript.isEmpty) return GoalPlan.empty;
+    return _goalPlan ??= GoalPlannerService.instance.plan(
+      _transcript,
+      target: _targetGpa,
+      graph: _graph,
+      programmingCodes: programmingCodes,
+      curriculumSubjects: _plannedFromCurriculum(),
+    );
+  }
+
+  /// Môn của khung đang lọc (hoặc khung duy nhất), để kế hoạch tính cả những
+  /// môn bảng điểm FAP chưa liệt kê.
+  List<PlannedSubject> _plannedFromCurriculum() {
+    final group = activeCurriculumGroup ??
+        (_curriculumGroups.where((g) => !g.isUnassigned).length == 1
+            ? _curriculumGroups.firstWhere((g) => !g.isUnassigned)
+            : null);
+    if (group == null) return const [];
+    return [
+      for (final s in group.semesters.values.expand((l) => l))
+        PlannedSubject(code: s.code, name: s.name, credits: s.credits),
+    ];
+  }
+
+  /// Môn "liên quan tới lập trình": theo mã môn, hoặc theo nội dung syllabus
+  /// (IoT, Hệ điều hành cũng dạy lập trình dù không mang mã PRx).
+  Set<String> get programmingCodes {
+    final codes = <String>{
+      for (final s in _graph.subjects)
+        if (AcademicAnalyticsService.instance.domainOf(s.code) == 'Lập trình')
+          s.code.toUpperCase(),
+    };
+    final k = _knowledge;
+    if (k != null) {
+      for (final s in k.subjects.values) {
+        if (s.programmingScore >= programmingThreshold) codes.add(s.code);
+      }
+    }
+    return codes;
+  }
+
+  /// Ngưỡng [SubjectKnowledge.programmingScore] để coi là môn có lập trình.
+  static const double programmingThreshold = 0.5;
+
+  // ------------------------------------------------------------------
+  // TẦNG TRI THỨC (keyword / khái niệm trích từ syllabus)
+  // ------------------------------------------------------------------
+
+  KnowledgeIndex? _knowledge;
+  KnowledgeIndex? get knowledge => _knowledge;
+
+  bool _knowledgeBusy = false;
+  bool get knowledgeBusy => _knowledgeBusy;
+
+  String? _knowledgeError;
+  String? get knowledgeError => _knowledgeError;
+
+  /// Tăng mỗi lần [refresh]; chỉ mục tri thức dựng ở một phiên bản cũ hơn
+  /// thì coi là cũ và dựng lại khi có ai cần tới.
+  int _dataRevision = 0;
+  int _knowledgeRevision = -1;
+
+  bool get knowledgeStale => _knowledgeRevision != _dataRevision;
+
+  /// Dựng chỉ mục tri thức nếu chưa có hoặc đã cũ. Chạy trong isolate phụ:
+  /// quét vài chục syllabus mất cỡ trăm mili giây, đủ làm giật khung hình
+  /// nếu chạy thẳng trên luồng giao diện.
+  Future<void> ensureKnowledge() async {
+    if (_knowledgeBusy || !knowledgeStale) return;
+    _knowledgeBusy = true;
+    _knowledgeError = null;
+    notifyListeners();
+    final revision = _dataRevision;
+    try {
+      final sources = await _db.loadKnowledgeSources();
+      final byId = _graph.byId;
+      final edges = <String>{
+        for (final e in _graph.edges)
+          if (byId[e.subjectId] != null && byId[e.prerequisiteId] != null)
+            KnowledgeExtractionService.pairKey(
+              byId[e.subjectId]!.code.toUpperCase(),
+              byId[e.prerequisiteId]!.code.toUpperCase(),
+            ),
+      };
+      final index = await Isolate.run(
+        () => KnowledgeExtractionService.build(sources, directEdges: edges),
+      );
+      _knowledge = index;
+      _knowledgeRevision = revision;
+      // Danh sách môn lập trình đổi theo tri thức, kéo theo lý do gợi ý học
+      // cải thiện.
+      _goalPlan = null;
+    } catch (e) {
+      _knowledgeError = e.toString();
+      dev.log('Không dựng được chỉ mục tri thức: $e');
+    } finally {
+      _knowledgeBusy = false;
+      notifyListeners();
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // BẢNG HỌC KỲ -> FILE .MD DẠNG KANBAN
+  // ------------------------------------------------------------------
+
+  /// Nội dung file board của một khung, để xem trước hoặc chép.
+  String buildBoardMarkdown(
+    CurriculumGroup group, {
+    Set<int> collapsedSemesters = const {},
+  }) {
+    return KanbanBoardBuilder.build(
+      curriculumCode: group.isUnassigned ? 'NGOAI_KHUNG' : group.code,
+      curriculumName: group.name,
+      semesters: group.semesters,
+      gradeByCode: _gradeByCode,
+      targetGpa: hasTranscript ? _targetGpa : null,
+      collapsedSemesters: collapsedSemesters,
+    );
+  }
+
+  /// Ghi board ra Vault, cạnh các file môn học của lần ghi gần nhất để mọi
+  /// `[[MÃ MÔN]]` trong board mở đúng ghi chú. Trả về đường dẫn file.
+  Future<String> exportBoardToVault(
+    CurriculumGroup group, {
+    Set<int> collapsedSemesters = const {},
+  }) async {
+    final vault = _requireVault();
+    final sub = await lastExportSubFolder();
+    final folder = sub.isEmpty ? vault : p.join(vault, sub);
+    final path = p.join(
+      folder,
+      KanbanBoardBuilder.fileNameFor(group.isUnassigned ? 'NGOAI_KHUNG' : group.code),
+    );
+    await _vault.saveNote(
+      path,
+      buildBoardMarkdown(group, collapsedSemesters: collapsedSemesters),
+    );
+    return path;
   }
 
   /// Dữ liệu đồ thị lọc theo Khung CTĐT đang hoạt động (null = Toàn bộ môn trong DB)
@@ -165,6 +391,7 @@ class AppState extends ChangeNotifier {
 
     _vaultPath = await _settings.getVaultPath();
     _graphSettings = await _settings.getGraphSettings();
+    _targetGpa = await _settings.getTargetGpa();
 
     // Dọn dẹp các node PLO rác cũ nếu có trong CSDL
     await _db.cleanInvalidPloSubjects();
@@ -181,6 +408,15 @@ class AppState extends ChangeNotifier {
       _curriculums = await _db.getCurriculumsWithStats();
       _curriculumGroups = await _db.getCurriculumTreeData();
       await _loadTranscript();
+      try {
+        _syllabusSubjectIds = await _db.syllabusSubjectIds();
+      } catch (e) {
+        // Chỉ là số liệu độ phủ ở màn hình tổng quan, hỏng thì để trống.
+        _syllabusSubjectIds = const {};
+        dev.log('Không đọc được danh sách syllabus: $e');
+      }
+      _dataRevision++;
+      _goalPlan = null;
 
       if (_selectedSubjectId != null &&
           !_graph.byId.containsKey(_selectedSubjectId)) {
@@ -762,8 +998,8 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     }
   }
-}
-
+}
+
 /// Lỗi nghiệp vụ của luồng nhập bảng điểm, để giao diện hiện một câu tử tế
 /// thay vì stack trace.
 class TranscriptImportException implements Exception {

@@ -408,10 +408,19 @@ class FapMarkdownParser {
       if (row != null) subjects.add(row);
     }
 
+    // Thanh tiêu đề FLM có một dòng "Name: <email> Email: ..." của người đang
+    // đăng nhập, nằm TRƯỚC bảng chi tiết. Tìm "Name:" từ đầu trang là lấy
+    // nhầm email làm tên chương trình — phải tìm từ dòng mã khung trở đi.
+    final detailsStart = lines.indexWhere(
+      (l) => l.toLowerCase().startsWith('curriculumcode:'),
+    );
+
     return FapCurriculumImport(
       fapCurriculumId: int.tryParse(_curId.firstMatch(sourceUrl)?.group(1) ?? ''),
       code: unescapeTurndown(_valueAfterLabel(lines, 'CurriculumCode:')),
-      name: unescapeTurndown(_valueAfterLabel(lines, 'Name:')),
+      name: unescapeTurndown(
+        _valueAfterLabel(lines, 'Name:', from: detailsStart < 0 ? 0 : detailsStart),
+      ),
       decisionNo: unescapeTurndown(_valueAfterLabel(lines, 'DecisionNo')),
       sourceUrl: sourceUrl,
       totalCredits: _totalCredits(lines),
@@ -1109,10 +1118,15 @@ class FapMarkdownParser {
   }
 
   /// Lấy giá trị đi kèm một nhãn: ưu tiên phần nằm ngay sau dấu hai chấm trên
-  /// cùng dòng, không có thì lấy trọn dòng kế tiếp.
-  static String _valueAfterLabel(List<String> lines, String label) {
+  /// cùng dòng, không có thì lấy trọn dòng kế tiếp. [from] là dòng bắt đầu
+  /// tìm, cho những nhãn trùng tên xuất hiện ở nhiều chỗ trên trang.
+  static String _valueAfterLabel(
+    List<String> lines,
+    String label, {
+    int from = 0,
+  }) {
     final needle = label.toLowerCase();
-    for (var i = 0; i < lines.length; i++) {
+    for (var i = from; i < lines.length; i++) {
       final line = lines[i];
       if (!line.toLowerCase().startsWith(needle)) continue;
       final colon = line.indexOf(':');
@@ -1120,10 +1134,25 @@ class FapMarkdownParser {
         final inline = line.substring(colon + 1).trim();
         if (inline.isNotEmpty) return inline;
       }
-      if (i + 1 < lines.length) return lines[i + 1];
+      if (i + 1 < lines.length) {
+        final next = lines[i + 1];
+        // Ô giá trị trống bị bỏ hẳn khi làm phẳng bảng, nên dòng kế tiếp có
+        // thể đã là nhãn của ô sau ("Course Name English:" rồi tới ngay
+        // "Subject Code:"). Nhận nó làm giá trị thì tên môn thành "Subject
+        // Code:".
+        return _looksLikeLabel(next) ? '' : next;
+      }
       return '';
     }
     return '';
+  }
+
+  /// Một dòng ngắn kết thúc bằng dấu hai chấm là nhãn của bảng chi tiết.
+  static bool _looksLikeLabel(String line) {
+    final t = line.trim();
+    return t.endsWith(':') &&
+        t.length <= 32 &&
+        t.split(RegExp(r'\s+')).length <= 3;
   }
 
   /// FLM in đậm vài ô của bảng đầu trang (`**PRO192c**`). Dấu `**` là trang
