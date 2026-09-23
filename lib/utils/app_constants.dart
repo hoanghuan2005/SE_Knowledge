@@ -55,6 +55,26 @@ class AppConstants {
   static List<({String id, String label})> lightModelsOf(String provider) =>
       provider == providerOpenAi ? openAiLightModels : geminiLightModels;
 
+  /// Model dùng khi model chính quá tải, thử theo đúng thứ tự này.
+  ///
+  /// Khác với [geminiLightModels] ở mục đích nên cũng khác ở tiêu chí chọn:
+  /// danh sách kia tối ưu cho rẻ và nhanh vì chỉ sinh câu hỏi gợi ý, còn
+  /// danh sách này phải **thay thế model chính để trả lời người dùng**, nên
+  /// ưu tiên bản Flash đầy đủ trước bản Lite.
+  ///
+  /// Có sẵn danh sách này để tính năng chạy được mà không cần người dùng cấu
+  /// hình gì — 503 ập tới giữa buổi demo thì không kịp vào Cài đặt.
+  static const List<String> geminiFallbackModels = [
+    'gemini-3.5-flash',
+    'gemini-2.5-flash',
+    'gemini-3.5-flash-lite',
+  ];
+
+  static const List<String> openAiFallbackModels = [];
+
+  static List<String> fallbackModelsOf(String provider) =>
+      provider == providerOpenAi ? openAiFallbackModels : geminiFallbackModels;
+
   // --- Kích thước cửa sổ desktop ---
   static const double minWindowWidth = 1000;
   static const double minWindowHeight = 640;

@@ -177,6 +177,63 @@ void main() {
     });
   });
 
+  group('fallbackModelOrder', () {
+    const candidates = ['gemini-3.5-flash', 'gemini-2.5-flash'];
+
+    test('giữ đủ ứng viên để còn đường đi tiếp khi cái đầu hỏng', () {
+      // Ứng viên đầu có thể 404 vì key không được cấp model đó. Trả về cả
+      // danh sách để còn thử tiếp, thay vì bỏ cuộc ngay.
+      expect(
+        fallbackModelOrder(
+          mainModel: 'gemini-3.6-flash',
+          candidates: candidates,
+        ),
+        ['gemini-3.5-flash', 'gemini-2.5-flash'],
+      );
+    });
+
+    test('giữ nguyên thứ tự đã xếp theo độ mạnh', () {
+      // Danh sách phải giữ đúng thứ tự: model mạnh thử trước, vì nó đang
+      // thay model chính trả lời người dùng.
+      expect(
+        fallbackModelOrder(
+          mainModel: 'gemini-3.6-flash',
+          candidates: const ['a', 'b', 'c'],
+        ),
+        ['a', 'b', 'c'],
+      );
+    });
+
+    test('loại model trùng model chính', () {
+      // Gọi lại đúng model vừa báo quá tải chỉ là thử lại lần nữa, mà việc đó
+      // tầng dưới đã làm rồi.
+      expect(
+        fallbackModelOrder(
+          mainModel: 'gemini-3.5-flash',
+          candidates: candidates,
+        ),
+        ['gemini-2.5-flash'],
+      );
+    });
+
+    test('không lặp lại model trùng nhau trong danh sách', () {
+      expect(
+        fallbackModelOrder(
+          mainModel: 'gemini-3.6-flash',
+          candidates: const ['a', 'a', 'b'],
+        ),
+        ['a', 'b'],
+      );
+    });
+
+    test('hết ứng viên thì rỗng, để lỗi gốc nổi lên bình thường', () {
+      expect(
+        fallbackModelOrder(mainModel: 'gpt-4o-mini', candidates: const []),
+        isEmpty,
+      );
+    });
+  });
+
   group('geminiFinishReason', () {
     test('đọc được lý do dừng', () {
       expect(

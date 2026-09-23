@@ -65,6 +65,31 @@ Stream<String> sseEventPayloads(Stream<String> lines) async* {
 /// sao.
 bool isModelUnavailableStatus(int? status) => status == 404 || status == 400;
 
+/// Thứ tự các model sẽ thử khi model chính quá tải.
+///
+/// Trả về **danh sách** chứ không phải một model: ứng viên đầu có thể không
+/// dùng được với API key của người dùng (Google cấp quyền khác nhau theo tài
+/// khoản), và lúc đó phải còn đường đi tiếp thay vì báo lỗi ngay.
+///
+/// Hoàn toàn tự động, không lấy cấu hình nào của người dùng: đây là đường
+/// thoát hiểm chạy vào lúc không ai kịp vào Cài đặt, và người dùng cũng không
+/// có cơ sở nào để biết model nào mạnh hơn model nào. [candidates] đã được
+/// xếp sẵn theo độ mạnh.
+///
+/// Luôn loại model trùng [mainModel]: gọi lại đúng model vừa báo quá tải chỉ
+/// là thử lại lần nữa, mà việc đó tầng dưới đã làm rồi.
+List<String> fallbackModelOrder({
+  required String mainModel,
+  required List<String> candidates,
+}) {
+  final order = <String>[];
+  for (final model in candidates) {
+    if (model.isEmpty || model == mainModel || order.contains(model)) continue;
+    order.add(model);
+  }
+  return order;
+}
+
 bool isTransientAiStatus(int status) =>
     status == 429 || (status >= 500 && status <= 599);
 
@@ -254,18 +279,63 @@ class AiService {
 
     try {
       String text;
+      String? answeredByFallback;
+
       try {
         text = await dispatch(usingLight ? lightModel : mainModel);
       } on AiException catch (e) {
-        // Model phụ không dùng được (Google đổi tên, khai tử, hoặc key không
-        // có quyền). Lùi về model chính để người dùng không mất tính năng, và
-        // ngừng thử model phụ trong phiên này để khỏi tốn thêm lượt gọi hỏng
-        // nào nữa.
-        if (!usingLight || !_isModelUnavailable(e.statusCode)) rethrow;
-        _lightModelUnavailable = true;
-        text = await dispatch(mainModel);
+        if (usingLight) {
+          // Việc phụ hỏng thì lùi về model chính — có gợi ý muộn còn hơn mất
+          // hẳn khối gợi ý.
+          if (_isModelUnavailable(e.statusCode)) {
+            // Sai tên model là lỗi cấu hình, không tự hết: ngừng thử model
+            // phụ cả phiên để khỏi tốn thêm lượt gọi hỏng nào nữa.
+            _lightModelUnavailable = true;
+          } else if (!isTransientAiStatus(e.statusCode ?? 0)) {
+            rethrow;
+          }
+          text = await dispatch(mainModel);
+        } else {
+          // Việc chính chỉ đổi model khi nhà cung cấp quá tải. Sai key hay
+          // request hỏng thì đổi model cũng vẫn hỏng, chỉ tổ chờ thêm.
+          if (!isTransientAiStatus(e.statusCode ?? 0)) rethrow;
+
+          // Cố tình KHÔNG dùng model tác vụ phụ làm ứng viên dự phòng: ô đó
+          // được chọn theo tiêu chí rẻ và nhanh vì chỉ sinh câu hỏi gợi ý,
+          // còn chỗ này phải thay model chính trả lời người dùng nên cần
+          // model mạnh. Danh sách mặc định đã xếp sẵn theo độ mạnh.
+          final order = fallbackModelOrder(
+            mainModel: mainModel,
+            candidates: AppConstants.fallbackModelsOf(provider),
+          );
+
+          String? succeeded;
+          String? recovered;
+          for (final backup in order) {
+            try {
+              recovered = await dispatch(backup);
+              succeeded = backup;
+              break;
+            } on AiException {
+              // Ứng viên này không xong (key không có quyền, hoặc cũng đang
+              // nghẽn) — đi tiếp. Ca thường gặp nhất là 404 vì tài khoản
+              // không được cấp model đó, và 404 trả về ngay nên bước sang
+              // ứng viên sau gần như không tốn thêm thời gian.
+              continue;
+            }
+          }
+          // Hết ứng viên: ném lại đúng lỗi gốc của model chính, vì đó mới là
+          // thứ người dùng cần biết.
+          if (succeeded == null || recovered == null) rethrow;
+          text = recovered;
+          answeredByFallback = succeeded;
+        }
       }
-      return AiAnswer(text: text, ragSummary: ragContext?.summary);
+
+      return AiAnswer(
+        text: _appendFallbackNotice(text, answeredByFallback),
+        ragSummary: ragContext?.summary,
+      );
     } on AiException {
       rethrow;
     } on TimeoutException {
@@ -514,6 +584,21 @@ class AiService {
     return _appendFinishNotice(text, finishReason);
   }
 
+  /// Nói rõ khi câu trả lời không phải do model chính viết.
+  ///
+  /// Im lặng ở đây còn tệ hơn báo lỗi: người dùng sẽ tưởng model mình chọn
+  /// trả lời dở, trong khi thật ra nó đang quá tải và một model khác đã trả
+  /// lời thay.
+  ///
+  /// Ghi chú được nhét thẳng vào nội dung tin nhắn chứ không để riêng ngoài
+  /// UI, nhờ vậy cả ba màn hình dùng AI đều hiện được mà không phải sửa gì,
+  /// và nó còn theo tin nhắn khi lưu lại phiên chat.
+  String _appendFallbackNotice(String text, String? fallbackModel) {
+    if (fallbackModel == null) return text;
+    return '$text\n\n_(Model chính đang quá tải nên câu trả lời này do '
+        '$fallbackModel viết. Hỏi lại sau ít phút để dùng model chính.)_';
+  }
+
   /// Nói thẳng khi câu trả lời bị cắt giữa chừng.
   ///
   /// Không có dòng này thì người dùng chỉ thấy câu văn đứt ngang và tưởng app
@@ -560,7 +645,9 @@ class AiService {
           onDelta: onDelta,
         );
       } on _TransientFailure catch (failure) {
-        if (attempt >= maxRetryAttempts) throw AiException(failure.message);
+        if (attempt >= maxRetryAttempts) {
+          throw AiException(failure.message, statusCode: failure.statusCode);
+        }
         await Future<void>.delayed(retryDelays[attempt]);
       }
     }
@@ -587,7 +674,7 @@ class AiService {
         // Sai key, sai tên model, request hỏng... thì thử lại bao nhiêu lần
         // cũng vậy — chỉ tổ tốn thêm quota và bắt người dùng chờ.
         if (isTransientAiStatus(response.statusCode)) {
-          throw _TransientFailure(message);
+          throw _TransientFailure(message, response.statusCode);
         }
         throw AiException(message, statusCode: response.statusCode);
       }
@@ -667,7 +754,13 @@ class AiException implements Exception {
 /// thành công, hoặc hết lượt thử thì chuyển thành [AiException] cho UI.
 class _TransientFailure implements Exception {
   final String message;
-  _TransientFailure(this.message);
+
+  /// Giữ lại mã HTTP để khi hết lượt thử lại còn chuyển tiếp lên
+  /// [AiException] — tầng trên cần biết đây là quá tải thì mới quyết định
+  /// được có nên đổi sang model khác hay không.
+  final int statusCode;
+
+  _TransientFailure(this.message, this.statusCode);
   @override
   String toString() => message;
 }
