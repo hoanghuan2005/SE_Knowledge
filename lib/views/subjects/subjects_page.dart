@@ -5,6 +5,7 @@ import '../../models/subject.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
+import '../academic/transcript_import_dialog.dart';
 import '../curriculum/syllabus_detail_dialog.dart';
 import '../widgets/subject_detail_panel.dart';
 import 'roadmap_dialog.dart';
@@ -13,7 +14,9 @@ import 'subject_form_dialog.dart';
 /// Bảng dữ liệu môn học — hiển thị danh sách môn theo Khung chương trình (Curriculum)
 /// và gom nhóm trực quan theo Học kỳ.
 class SubjectsPage extends StatefulWidget {
-  const SubjectsPage({super.key});
+  final bool showHeader;
+
+  const SubjectsPage({super.key, this.showHeader = true});
 
   @override
   State<SubjectsPage> createState() => _SubjectsPageState();
@@ -65,6 +68,109 @@ class _SubjectsPageState extends State<SubjectsPage> {
           ..sort();
 
         final totalCredits = rows.fold<int>(0, (sum, s) => sum + s.credits);
+
+        if (!widget.showHeader) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        border: Border(bottom: BorderSide(color: AppColors.divider)),
+                      ),
+                      child: Row(
+                        children: [
+                          _SemesterFilter(
+                            semesters: availableSemesters,
+                            value: _semesterFilter,
+                            onChanged: (sem) => setState(() => _semesterFilter = sem),
+                          ),
+                          const SizedBox(width: 12),
+                          SizedBox(
+                            width: 260,
+                            height: 32,
+                            child: TextField(
+                              controller: _search,
+                              style: const TextStyle(fontSize: 12.5),
+                              decoration: InputDecoration(
+                                hintText: 'Tìm mã hoặc tên môn...',
+                                hintStyle: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.textSecondary.withValues(alpha: 0.7),
+                                ),
+                                prefixIcon: Icon(
+                                  Icons.search,
+                                  size: 16,
+                                  color: AppColors.textSecondary,
+                                ),
+                                prefixIconConstraints: const BoxConstraints(
+                                  minWidth: 32,
+                                  minHeight: 32,
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 0,
+                                ),
+                                isDense: true,
+                                filled: true,
+                                fillColor: AppColors.surface,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(6),
+                                  borderSide: BorderSide(
+                                    color: AppColors.border.withValues(alpha: 0.5),
+                                    width: 0.8,
+                                  ),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(6),
+                                  borderSide: BorderSide(
+                                    color: AppColors.border.withValues(alpha: 0.5),
+                                    width: 0.8,
+                                  ),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(6),
+                                  borderSide: BorderSide(color: AppColors.primary, width: 1.2),
+                                ),
+                              ),
+                              onChanged: (v) => setState(() => _keyword = v),
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${rows.length} môn · $totalCredits tín chỉ',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: rows.isEmpty
+                          ? EmptyState(
+                              icon: Icons.inbox_outlined,
+                              title: currentGraph.isEmpty
+                                  ? 'Chưa có môn học nào trong khung này'
+                                  : 'Không tìm thấy môn khớp bộ lọc',
+                              message: currentGraph.isEmpty
+                                  ? 'Chọn khung chương trình khác hoặc thêm môn mới.'
+                                  : 'Thử xoá bộ lọc hoặc nhập từ khoá khác.',
+                            )
+                          : _Table(rows: rows),
+                    ),
+                  ],
+                ),
+              ),
+              const SubjectDetailPanel(),
+            ],
+          );
+        }
 
         return Column(
           children: [
@@ -172,7 +278,31 @@ class _SubjectsPageState extends State<SubjectsPage> {
                 ),
                 const SizedBox(width: 8),
 
-                // Nút Thêm môn
+                // Nút Nhập điểm chuyển từ FAB nổi lên thanh công cụ
+                SizedBox(
+                  height: 32,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.upload_file_outlined, size: 16),
+                    label: const Text(
+                      'Nhập điểm',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(
+                        color: AppColors.primary.withValues(alpha: 0.5),
+                      ),
+                      foregroundColor: AppColors.primary,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                    onPressed: () => TranscriptImportDialog.pickAndShow(context),
+                  ),
+                ),
+                const SizedBox(width: 8),
+
+                // Nút Thêm môn học
                 SizedBox(
                   height: 32,
                   child: ElevatedButton.icon(
@@ -182,7 +312,6 @@ class _SubjectsPageState extends State<SubjectsPage> {
                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                     ),
                     style: ElevatedButton.styleFrom(
-                      elevation: 0,
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(6),
@@ -278,6 +407,7 @@ class _Table extends StatelessWidget {
               SizedBox(width: 90, child: _Th('TÍN CHỈ', textAlign: TextAlign.center)),
               SizedBox(width: 100, child: _Th('TIÊN QUYẾT', textAlign: TextAlign.center)),
               SizedBox(width: 90, child: _Th('MỞ RA', textAlign: TextAlign.center)),
+              SizedBox(width: 65, child: _Th('ĐIỂM', textAlign: TextAlign.center)),
               SizedBox(width: 48),
             ],
           ),
@@ -337,7 +467,7 @@ class _Table extends StatelessWidget {
                               ),
                               const SizedBox(width: 6),
                               Text(
-                                sem == 0 ? 'Chưa phân kỳ' : 'Học kỳ $sem',
+                                sem == 0 ? 'Kỳ 0' : 'Học kỳ $sem',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w700,
@@ -365,6 +495,7 @@ class _Table extends StatelessWidget {
                     final selected = state.selectedSubjectId == s.id;
                     final inDeg = state.graph.inDegree(s.id!);
                     final outDeg = state.graph.outDegree(s.id!);
+                    final gradeEntry = state.gradeOf(s.code);
 
                     return Material(
                       key: ValueKey(s.id),
@@ -374,7 +505,7 @@ class _Table extends StatelessWidget {
                             )
                           : Colors.transparent,
                       child: InkWell(
-                        onTap: () => state.select(s.id),
+                        onTap: () => state.select(selected ? null : s.id),
                         onDoubleTap: () =>
                             SubjectFormDialog.show(context, subject: s),
                         child: Container(
@@ -436,7 +567,7 @@ class _Table extends StatelessWidget {
                                       borderRadius: BorderRadius.circular(4),
                                     ),
                                     child: Text(
-                                      s.semester == 0 ? 'N/A' : 'Kỳ ${s.semester}',
+                                      s.semester == 0 ? 'Kỳ 0' : 'Kỳ ${s.semester}',
                                       textAlign: TextAlign.center,
                                       style: TextStyle(
                                         fontSize: 11,
@@ -479,6 +610,26 @@ class _Table extends StatelessWidget {
                                             fontSize: 12.5,
                                             fontWeight: FontWeight.w600,
                                             color: AppColors.primary,
+                                          ),
+                                        )
+                                      : _Td('—', textAlign: TextAlign.center),
+                                ),
+                              ),
+                              // Điểm (Căn giữa)
+                              SizedBox(
+                                width: 65,
+                                child: Center(
+                                  child: gradeEntry != null && gradeEntry.hasGrade
+                                      ? Text(
+                                          gradeEntry.displayGrade,
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w700,
+                                            color: AppColors.gradeColor(
+                                              gradeEntry.grade,
+                                              gradeEntry.status,
+                                            ),
                                           ),
                                         )
                                       : _Td('—', textAlign: TextAlign.center),
@@ -540,6 +691,7 @@ class _SemesterFilter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = AppColors.isDark;
+    final validValue = (value == null || semesters.contains(value)) ? value : null;
     return Container(
       height: 32,
       width: 105,
@@ -554,7 +706,7 @@ class _SemesterFilter extends StatelessWidget {
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<int?>(
-          value: value,
+          value: validValue,
           isDense: true,
           isExpanded: true,
           icon: Icon(
@@ -584,7 +736,7 @@ class _SemesterFilter extends StatelessWidget {
               DropdownMenuItem<int?>(
                 value: s,
                 child: Text(
-                  s == 0 ? 'N/A' : 'Kỳ $s',
+                  s == 0 ? 'Kỳ 0' : 'Kỳ $s',
                   style: TextStyle(
                     fontSize: 12,
                     color: AppColors.textPrimary,
@@ -613,6 +765,7 @@ class _CurriculumFilter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = AppColors.isDark;
+    final validValue = (value == null || groups.any((g) => g.code == value)) ? value : null;
     return Container(
       height: 32,
       constraints: const BoxConstraints(minWidth: 110, maxWidth: 160),
@@ -621,15 +774,15 @@ class _CurriculumFilter extends StatelessWidget {
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
-          color: value != null
+          color: validValue != null
               ? AppColors.primary.withValues(alpha: 0.8)
               : AppColors.border.withValues(alpha: 0.5),
-          width: value != null ? 1.2 : 0.8,
+          width: validValue != null ? 1.2 : 0.8,
         ),
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String?>(
-          value: value,
+          value: validValue,
           isDense: true,
           isExpanded: true,
           icon: Icon(
@@ -640,7 +793,7 @@ class _CurriculumFilter extends StatelessWidget {
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
-            color: value != null ? AppColors.primary : AppColors.textPrimary,
+            color: validValue != null ? AppColors.primary : AppColors.textPrimary,
           ),
           dropdownColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
           borderRadius: BorderRadius.circular(8),

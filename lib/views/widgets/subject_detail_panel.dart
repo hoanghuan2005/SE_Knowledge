@@ -1,11 +1,8 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import '../../models/subject.dart';
 import '../../models/transcript_entry.dart';
 import '../../services/db_service.dart';
-import '../../services/obsidian_launcher.dart';
 import '../../services/obsidian_service.dart';
 import '../../services/subject_delete_guard.dart';
 import '../../state/app_state.dart';
@@ -55,15 +52,34 @@ class _SubjectDetailPanelState extends State<SubjectDetailPanel> {
               ? const _NoSelection()
               : Column(
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                      child: _ModeToggle(
-                        showChat: _showChat,
-                        onChanged: (v) => setState(() => _showChat = v),
+                    Container(
+                      height: 52,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        border: Border(bottom: BorderSide(color: AppColors.divider)),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _ModeToggle(
+                              showChat: _showChat,
+                              onChanged: (v) => setState(() => _showChat = v),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            tooltip: 'Đóng chi tiết',
+                            icon: const Icon(Icons.close, size: 16),
+                            splashRadius: 14,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                            color: AppColors.textSecondary,
+                            onPressed: () => AppState.instance.select(null),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    const Divider(height: 1),
                     Expanded(
                       child: _showChat
                           ? SubjectChatPanel(
@@ -90,8 +106,8 @@ class _ModeToggle extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = AppColors.isDark;
     return Container(
-      height: 36,
-      padding: const EdgeInsets.all(3),
+      height: 32,
+      padding: const EdgeInsets.all(2.5),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF141418) : const Color(0xFFEBE9F2),
         borderRadius: BorderRadius.circular(8),
@@ -168,16 +184,16 @@ class _ToggleItem extends StatelessWidget {
           children: [
             Icon(
               icon,
-              size: 14,
+              size: 13,
               color: selected
                   ? AppColors.primary
                   : AppColors.textSecondary,
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 5),
             Text(
               label,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: 11.5,
                 fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                 color: selected
                     ? AppColors.textPrimary
@@ -221,152 +237,169 @@ class _Detail extends StatelessWidget {
     final unlocks = state.unlockedBy(subject.id!);
     final color = AppColors.forSemester(subject.semester);
 
-    return ListView(
-      padding: const EdgeInsets.all(20),
+    return Column(
       children: [
-        Row(
-          children: [
-            Flexible(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(6),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+            children: [
+              Row(
+                children: [
+                  Container(
+                    constraints: const BoxConstraints(maxWidth: 160),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      subject.code,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: 'Sửa môn',
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    splashRadius: 16,
+                    padding: const EdgeInsets.all(4),
+                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                    color: AppColors.textSecondary,
+                    onPressed: () => SubjectFormDialog.show(context, subject: subject),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    tooltip: 'Xoá môn',
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      size: 18,
+                      color: AppColors.error,
+                    ),
+                    splashRadius: 16,
+                    padding: const EdgeInsets.all(4),
+                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                    onPressed: () => _confirmDelete(context),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                subject.name,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                  height: 1.3,
                 ),
-                child: Text(
-                  subject.code,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Kỳ ${subject.semester}  ·  ${subject.credits} tín chỉ',
+                style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              ),
+              _GradeChips(subject: subject),
+              _buildSyllabusButton(context, subject),
+              if (subject.description.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Text(
+                  subject.description,
+                  style: TextStyle(
                     fontSize: 13,
+                    height: 1.55,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 20),
+              const Divider(),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Môn tiên quyết',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => AddEdgeDialog.show(context, subject),
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('Thêm'),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: const Size(0, 32),
+                    ),
+                  ),
+                ],
+              ),
+              if (prereqs.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    'Không có — đây là môn nền tảng.',
+                    style: TextStyle(fontSize: 12.5, color: AppColors.textHint),
+                  ),
+                )
+              else
+                for (final p in prereqs)
+                  _EdgeTile(
+                    subject: p,
+                    onRemove: () async {
+                      try {
+                        await AppState.instance.removeEdge(
+                          subjectId: subject.id!,
+                          prerequisiteId: p.id!,
+                        );
+                      } catch (e) {
+                        if (context.mounted) Ui.error(context, e);
+                      }
+                    },
+                    onOpen: () => AppState.instance.select(p.id),
+                  ),
+              const SizedBox(height: 20),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  'Mở ra các môn',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
                   ),
                 ),
               ),
-            ),
-            const Spacer(),
-            IconButton(
-              tooltip: 'Sửa môn',
-              icon: const Icon(Icons.edit_outlined, size: 20),
-              onPressed: () => SubjectFormDialog.show(context, subject: subject),
-            ),
-            IconButton(
-              tooltip: 'Xoá môn',
-              icon: const Icon(
-                Icons.delete_outline,
-                size: 20,
-                color: AppColors.error,
-              ),
-              onPressed: () => _confirmDelete(context),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Text(
-          subject.name,
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
-            height: 1.3,
+              if (unlocks.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    'Chưa có môn nào phụ thuộc vào môn này.',
+                    style: TextStyle(fontSize: 12.5, color: AppColors.textHint),
+                  ),
+                )
+              else
+                for (final u in unlocks)
+                  _EdgeTile(subject: u, onOpen: () => AppState.instance.select(u.id)),
+            ],
           ),
         ),
-        const SizedBox(height: 8),
-        Text(
-          'Kỳ ${subject.semester}  ·  ${subject.credits} tín chỉ',
-          style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
-        ),
-        _GradeChips(subject: subject),
-        _buildSyllabusButton(context, subject),
-        if (subject.description.isNotEmpty) ...[
-          const SizedBox(height: 14),
-          Text(
-            subject.description,
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.55,
-              color: AppColors.textPrimary,
-            ),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            border: Border(top: BorderSide(color: AppColors.divider)),
           ),
-        ],
-        const SizedBox(height: 20),
-        const Divider(),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                'Môn tiên quyết',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-            ),
-            TextButton.icon(
-              onPressed: () => AddEdgeDialog.show(context, subject),
-              icon: const Icon(Icons.add, size: 16),
-              label: const Text('Thêm'),
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                minimumSize: const Size(0, 32),
-              ),
-            ),
-          ],
+          padding: const EdgeInsets.all(20),
+          child: _NoteSection(subject: subject),
         ),
-        if (prereqs.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text(
-              'Không có — đây là môn nền tảng.',
-              style: TextStyle(fontSize: 12.5, color: AppColors.textHint),
-            ),
-          )
-        else
-          for (final p in prereqs)
-            _EdgeTile(
-              subject: p,
-              onRemove: () async {
-                try {
-                  await AppState.instance.removeEdge(
-                    subjectId: subject.id!,
-                    prerequisiteId: p.id!,
-                  );
-                } catch (e) {
-                  if (context.mounted) Ui.error(context, e);
-                }
-              },
-              onOpen: () => AppState.instance.select(p.id),
-            ),
-        const SizedBox(height: 20),
-       Padding(
-  padding: const EdgeInsets.only(bottom: 4),
-  child: Text(
-    'Mở ra các môn',
-    style: TextStyle(
-      fontSize: 13,
-      fontWeight: FontWeight.w700,
-      color: AppColors.textPrimary,
-    ),
-  ),
-),
-        if (unlocks.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text(
-              'Chưa có môn nào phụ thuộc vào môn này.',
-              style: TextStyle(fontSize: 12.5, color: AppColors.textHint),
-            ),
-          )
-        else
-          for (final u in unlocks)
-            _EdgeTile(subject: u, onOpen: () => AppState.instance.select(u.id)),
-        const SizedBox(height: 20),
-        const Divider(),
-        const SizedBox(height: 12),
-        _NoteSection(subject: subject),
       ],
     );
   }
@@ -533,40 +566,6 @@ class _NoteSection extends StatelessWidget {
 
   const _NoteSection({required this.subject});
 
-  /// Mở file `.md` của môn này bằng app Obsidian ngoài.
-  ///
-  /// Khác hẳn nút "Mở ghi chú Obsidian (.md)" phía trên — nút đó mở trình
-  /// soạn thảo NGAY TRONG app qua `openNoteTab`.
-  Future<void> _openInObsidian(BuildContext context) async {
-    final state = AppState.instance;
-    final notePath = subject.notePath!;
-
-    // File có thể đã bị xoá/đổi tên ngoài app, lúc đó Obsidian mở ra tab
-    // trống chứ không báo gì — chặn trước cho rõ nguyên nhân.
-    if (!await File(notePath).exists()) {
-      if (!context.mounted) return;
-      Ui.error(
-        context,
-        'Không thấy file $notePath nữa. Bấm "Xuất lại file .md" trước đã.',
-      );
-      return;
-    }
-
-    final ok = await ObsidianLauncher.openNote(
-      vaultPath: state.vaultPath!,
-      notePath: notePath,
-    );
-    if (ok || !context.mounted) return;
-
-    Ui.error(
-      context,
-      'Không mở được bằng Obsidian. Thường do một trong hai: máy chưa cài '
-      'Obsidian, hoặc thư mục Vault này chưa từng được mở như một Vault '
-      'trong Obsidian. Cũng có thể file nằm ngoài Vault đang chọn — thử '
-      '"Xuất lại file .md".',
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final state = AppState.instance;
@@ -574,9 +573,10 @@ class _NoteSection extends StatelessWidget {
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          'Ghi chú Obsidian',
+          'Ghi chú',
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w700,
@@ -586,6 +586,8 @@ class _NoteSection extends StatelessWidget {
         const SizedBox(height: 6),
         Text(
           hasNote ? subject.notePath! : 'Chưa xuất ra file .md nào.',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
           style: TextStyle(
             fontSize: 11.5,
             color: AppColors.textSecondary,
@@ -599,7 +601,7 @@ class _NoteSection extends StatelessWidget {
           child: ElevatedButton.icon(
             icon: const Icon(Icons.edit_note, size: 18),
             label: const Text(
-              'Mở ghi chú Obsidian (.md)',
+              'Mở ghi chú (.md)',
               style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
             ),
             style: ElevatedButton.styleFrom(
@@ -641,26 +643,6 @@ class _NoteSection extends StatelessWidget {
                       if (context.mounted) Ui.error(context, e);
                     }
                   },
-          ),
-        ),
-        const SizedBox(height: 8),
-        SizedBox(
-          width: double.infinity,
-          height: 32,
-          child: OutlinedButton.icon(
-            icon: const Icon(Icons.launch, size: 15),
-            label: const Text(
-              'Mở trong Obsidian',
-              style: TextStyle(fontSize: 11.5),
-            ),
-            style: OutlinedButton.styleFrom(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            onPressed: !state.hasVault || !hasNote
-                ? null
-                : () => _openInObsidian(context),
           ),
         ),
         if (!state.hasVault)

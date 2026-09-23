@@ -26,7 +26,15 @@ class AcademicPage extends StatefulWidget {
   /// mục tiêu GPA.
   final VoidCallback? onOpenBoard;
 
-  const AcademicPage({super.key, this.onOpenGraph, this.onOpenBoard});
+  /// Khi nhúng vào SubjectsPage thì ẩn PageHeader riêng, để trang cha quản lý.
+  final bool showHeader;
+
+  const AcademicPage({
+    super.key,
+    this.onOpenGraph,
+    this.onOpenBoard,
+    this.showHeader = true,
+  });
 
   @override
   State<AcademicPage> createState() => _AcademicPageState();
@@ -62,21 +70,22 @@ class _AcademicPageState extends State<AcademicPage> {
         final state = AppState.instance;
         return Column(
           children: [
-            PageHeader(
-              title: 'Học lực',
-              subtitle: state.hasTranscript
-                  ? 'GPA tích luỹ ${state.academicProfileOrEmpty.gpaLabel} · '
-                        '${state.transcript.length} dòng điểm đã nhập'
-                  : 'Chưa nhập bảng điểm',
-              actions: [
-                if (state.hasTranscript)
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.upload_file, size: 16),
-                    label: const Text('Nhập lại'),
-                    onPressed: _import,
-                  ),
-              ],
-            ),
+            if (widget.showHeader)
+              PageHeader(
+                title: 'Học lực',
+                subtitle: state.hasTranscript
+                    ? 'GPA tích luỹ ${state.academicProfileOrEmpty.gpaLabel} · '
+                          '${state.transcript.length} dòng điểm đã nhập'
+                    : 'Chưa nhập bảng điểm',
+                actions: [
+                  if (state.hasTranscript)
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.upload_file, size: 16),
+                      label: const Text('Nhập lại'),
+                      onPressed: _import,
+                    ),
+                ],
+              ),
             Expanded(
               child: state.hasTranscript
                   ? _content(state.academicProfileOrEmpty)

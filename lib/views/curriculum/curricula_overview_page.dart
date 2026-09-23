@@ -7,20 +7,22 @@ import '../../services/academic_analytics_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
+import '../academic/transcript_import_dialog.dart';
 import 'curriculum_form_dialog.dart';
 import 'fap_inbox_import.dart';
 import 'grade_status.dart';
 
-/// Màn hình "đầu" của mọi khung chương trình: liệt kê tất cả các khung dưới
-/// dạng **danh sách** hoặc **biểu đồ**, bấm vào một khung thì mở màn hình của
-/// khung đó (sơ đồ môn / bảng học kỳ / mạng tri thức).
-///
-/// Đứng ngoài cùng vì nó trả lời câu hỏi ở tầng trên cả môn học: "trong CSDL
-/// đang có những chương trình nào, mỗi chương trình nặng về mảng gì, và mình
-/// đã đi được bao xa trong chương trình của mình".
+import 'curriculum_detail_page.dart';
+import '../subjects/subjects_page.dart';
+
+enum OverviewViewMode { curricula, allSubjects, chart }
+
+/// Màn hình trung tâm của Khung chương trình & Môn học:
+/// - Danh sách các khung chương trình (bấm Bảng học kỳ để mở Trang A chi tiết khung).
+/// - Danh sách toàn bộ môn học trong CSDL (tìm kiếm & lọc kỳ).
+/// - Biểu đồ so sánh phân bổ tín chỉ giữa các khung.
 class CurriculaOverviewPage extends StatefulWidget {
-  /// Chuyển sang màn hình khung (tab Bản đồ) sau khi đã chọn khung và góc
-  /// nhìn.
+  /// Chuyển sang màn hình Sơ đồ (GraphPage).
   final VoidCallback onOpenCurriculum;
 
   const CurriculaOverviewPage({super.key, required this.onOpenCurriculum});
@@ -30,11 +32,18 @@ class CurriculaOverviewPage extends StatefulWidget {
 }
 
 class _CurriculaOverviewPageState extends State<CurriculaOverviewPage> {
-  bool _chart = false;
+  OverviewViewMode _mode = OverviewViewMode.curricula;
+  CurriculumGroup? _detailGroup;
 
   void _open(CurriculumGroup group, CurriculumView view) {
-    AppState.instance.openCurriculum(group.code, view: view);
-    widget.onOpenCurriculum();
+    if (view == CurriculumView.board) {
+      AppState.instance.setActiveCurriculum(group.code);
+      AppState.instance.setCurriculumView(CurriculumView.board);
+      setState(() => _detailGroup = group);
+    } else {
+      AppState.instance.openCurriculum(group.code, view: view);
+      widget.onOpenCurriculum();
+    }
   }
 
   Future<void> _createCurriculum() async {
@@ -62,6 +71,25 @@ class _CurriculaOverviewPageState extends State<CurriculaOverviewPage> {
       listenable: AppState.instance,
       builder: (context, _) {
         final state = AppState.instance;
+
+        // Nếu người dùng đang mở Trang A chi tiết một khung cụ thể
+        if (_detailGroup != null) {
+          final group = state.curriculumGroups.cast<CurriculumGroup?>().firstWhere(
+                (g) => g?.code == _detailGroup!.code,
+                orElse: () => _detailGroup,
+              );
+          if (group != null) {
+            return CurriculumDetailPage(
+              group: group,
+              onBack: () => setState(() => _detailGroup = null),
+              onOpenGraph: () {
+                AppState.instance.openCurriculum(group.code, view: CurriculumView.graph);
+                widget.onOpenCurriculum();
+              },
+            );
+          }
+        }
+
         final summaries = [
           for (final g in state.curriculumGroups) _Summary.of(g, state),
         ];
@@ -71,37 +99,39 @@ class _CurriculaOverviewPageState extends State<CurriculaOverviewPage> {
         return Column(
           children: [
             PageHeader(
-              title: 'Khung chương trình',
+              title: 'Khung chương trình & Môn học',
               subtitle:
                   '$real khung · ${state.stats['subjects'] ?? 0} môn trong CSDL '
                   '· $syllabi môn đã có syllabus',
               actions: [
                 _ModeToggle(
-                  chart: _chart,
-                  onChanged: (v) => setState(() => _chart = v),
-                ),
-                const SizedBox(width: 12),
-                SizedBox(
-                  height: 30,
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.cloud_download_outlined, size: 15),
-                    label: const Text('Nhập từ fap_inbox'),
-                    onPressed: () => FapInboxImport.run(context),
-                  ),
+                  mode: _mode,
+                  onChanged: (v) => setState(() => _mode = v),
                 ),
                 const SizedBox(width: 8),
                 SizedBox(
-                  height: 30,
+                  height: 32,
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.add, size: 15),
-                    label: const Text('Tạo khung'),
+                    label: const Text(
+                      'Tạo khung',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
                     onPressed: _createCurriculum,
                   ),
                 ),
               ],
             ),
             Expanded(
-              child: summaries.isEmpty
+              child: _mode == OverviewViewMode.allSubjects
+                  ? const SubjectsPage(showHeader: false)
+                  : summaries.isEmpty
                   ? EmptyState(
                       icon: Icons.dashboard_outlined,
                       title: 'Chưa có khung chương trình nào',
@@ -114,7 +144,7 @@ class _CurriculaOverviewPageState extends State<CurriculaOverviewPage> {
                         onPressed: () => FapInboxImport.run(context),
                       ),
                     )
-                  : _chart
+                  : _mode == OverviewViewMode.chart
                   ? _ChartView(summaries: summaries, onOpen: _open)
                   : _ListView(summaries: summaries, onOpen: _open),
             ),
@@ -312,13 +342,27 @@ class _CurriculumCard extends StatefulWidget {
 class _CurriculumCardState extends State<_CurriculumCard> {
   bool _hovered = false;
 
+  String _cleanDisplayName(CurriculumGroup g) {
+    if (g.isUnassigned) {
+      return 'Các môn chưa gắn vào khung chương trình nào';
+    }
+    final raw = g.name.trim();
+    if (raw.contains('@') ||
+        raw.toLowerCase().contains("user's role") ||
+        raw.toLowerCase().contains('student education')) {
+      if (g.major.isNotEmpty && !g.major.contains('@')) {
+        return g.major;
+      }
+      return 'Chương trình đào tạo ${g.code}';
+    }
+    return raw.isNotEmpty ? raw : (g.major.isNotEmpty ? g.major : 'Khung chương trình');
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = widget.summary;
     final g = s.group;
-    final name = g.isUnassigned
-        ? 'Các môn chưa gắn vào khung chương trình nào'
-        : (g.name.isNotEmpty ? g.name : g.major);
+    final name = _cleanDisplayName(g);
 
     final facts = <String>[
       '${s.subjects.length} môn',
@@ -332,132 +376,182 @@ class _CurriculumCardState extends State<_CurriculumCard> {
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      child: InkWell(
-        onTap: () => widget.onOpen(g, CurriculumView.board),
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: _hovered
-                  ? AppColors.primary.withValues(alpha: 0.6)
-                  : AppColors.border,
-            ),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: _hovered
+                ? AppColors.primary.withValues(alpha: 0.5)
+                : AppColors.border,
+            width: 1,
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color:
-                      (g.isUnassigned ? AppColors.textHint : AppColors.primary)
-                          .withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(8),
+          boxShadow: _hovered
+              ? [
+                  BoxShadow(
+                    color: AppColors.primary.withValues(alpha: 0.05),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ]
+              : null,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Hàng đầu: Icon + Thông tin tiêu đề + Cụm nút hành động
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Icon khung chương trình
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: (g.isUnassigned ? AppColors.textHint : AppColors.primary)
+                        .withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    g.isUnassigned
+                        ? Icons.folder_special_outlined
+                        : Icons.school_outlined,
+                    size: 22,
+                    color: g.isUnassigned
+                        ? AppColors.textHint
+                        : AppColors.primary,
+                  ),
                 ),
-                child: Icon(
-                  g.isUnassigned
-                      ? Icons.folder_special_outlined
-                      : Icons.school_outlined,
-                  size: 20,
-                  color: g.isUnassigned
-                      ? AppColors.textHint
-                      : AppColors.primary,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            s.title,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                              color: AppColors.textPrimary,
+                const SizedBox(width: 14),
+
+                // Nội dung tóm tắt khung
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              s.title,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 16.5,
+                                fontWeight: FontWeight.w800,
+                                color: AppColors.textPrimary,
+                              ),
                             ),
                           ),
-                        ),
-                        if (s.gpa != null) ...[
-                          const SizedBox(width: 10),
-                          _Pill(
-                            text: 'GPA ${s.gpa!.toStringAsFixed(2)}',
-                            color: AppColors.primary,
-                          ),
+                          if (s.gpa != null) ...[
+                            const SizedBox(width: 8),
+                            _Pill(
+                              text: 'GPA ${s.gpa!.toStringAsFixed(2)}',
+                              color: AppColors.primary,
+                            ),
+                          ],
+                          if (s.hasGrades) ...[
+                            const SizedBox(width: 8),
+                            _Pill(
+                              text: 'Đã đạt ${s.passedCredits}/${s.credits} TC',
+                              color: AppColors.statusGood,
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        facts.join('  ·  '),
+                        style: TextStyle(fontSize: 12, color: AppColors.textHint),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 14),
+
+                // Các nút điều hướng nhanh ở từng khung: [ Sơ đồ ] [ Nhập điểm ] [ Bảng học kỳ (CTA ngoài cùng) ]
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _SmallAction(
+                      icon: Icons.hub_outlined,
+                      tooltip: 'Sơ đồ môn học (tiên quyết)',
+                      onTap: () => widget.onOpen(g, CurriculumView.graph),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: AppColors.textSecondary,
+                    const SizedBox(width: 6),
+                    SizedBox(
+                      height: 32,
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.upload_file_outlined, size: 15),
+                        label: const Text(
+                          'Nhập điểm',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(
+                            color: AppColors.border.withValues(alpha: 0.8),
+                            width: 1.0,
+                          ),
+                          foregroundColor: AppColors.textPrimary,
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                        onPressed: () => TranscriptImportDialog.pickAndShow(context),
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      facts.join('  ·  '),
-                      style: TextStyle(fontSize: 12, color: AppColors.textHint),
+                    const SizedBox(width: 6),
+                    SizedBox(
+                      height: 32,
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.view_week_outlined, size: 15),
+                        label: const Text(
+                          'Bảng học kỳ',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                        onPressed: () => widget.onOpen(g, CurriculumView.board),
+                      ),
                     ),
-                    const SizedBox(height: 12),
-                    _SemesterStrip(summary: s),
-                    const SizedBox(height: 10),
-                    _DomainBar(summary: s, height: 10),
-                    if (s.hasGrades) ...[
-                      const SizedBox(height: 12),
-                      _ProgressLine(summary: s),
-                    ],
                   ],
                 ),
-              ),
-              const SizedBox(width: 16),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  SizedBox(
-                    height: 32,
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.view_week_outlined, size: 16),
-                      label: const Text('Bảng học kỳ'),
-                      onPressed: () => widget.onOpen(g, CurriculumView.board),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _SmallAction(
-                        icon: Icons.hub_outlined,
-                        tooltip: 'Sơ đồ môn học (tiên quyết)',
-                        onTap: () => widget.onOpen(g, CurriculumView.graph),
-                      ),
-                      _SmallAction(
-                        icon: Icons.psychology_outlined,
-                        tooltip: 'Mạng tri thức (khái niệm trích từ syllabus)',
-                        onTap: () => widget.onOpen(g, CurriculumView.knowledge),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+              ],
+            ),
+
+            // Các dải phân bổ trải rộng đều toàn bộ chiều ngang của card
+            const SizedBox(height: 14),
+            _SemesterStrip(summary: s),
+            const SizedBox(height: 8),
+            _DomainBar(summary: s, height: 8),
+            if (s.hasGrades) ...[
+              const SizedBox(height: 10),
+              _ProgressLine(summary: s),
             ],
-          ),
+          ],
         ),
       ),
     );
   }
 }
+
+
 
 /// Dải học kỳ: mỗi ô rộng theo số tín chỉ của kỳ; khi đã có bảng điểm, phần
 /// tô đậm trong ô là tín chỉ đã qua — nhìn một lượt là thấy mình đang ở đâu.
@@ -1082,48 +1176,48 @@ class _DataTableView extends StatelessWidget {
 // ============================================================================
 
 class _ModeToggle extends StatelessWidget {
-  final bool chart;
-  final ValueChanged<bool> onChanged;
+  final OverviewViewMode mode;
+  final ValueChanged<OverviewViewMode> onChanged;
 
-  const _ModeToggle({required this.chart, required this.onChanged});
+  const _ModeToggle({required this.mode, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
-    Widget item(bool value, IconData icon, String label) {
-      final selected = chart == value;
+    Widget item(OverviewViewMode value, IconData icon, String label) {
+      final selected = mode == value;
       return InkWell(
         onTap: () => onChanged(value),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(4),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           decoration: BoxDecoration(
-            color: selected
-                ? AppColors.primary.withValues(alpha: 0.16)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: selected
-                  ? AppColors.primary.withValues(alpha: 0.55)
-                  : AppColors.border,
-            ),
+            color: selected ? AppColors.surface : Colors.transparent,
+            borderRadius: BorderRadius.circular(4),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 2,
+                      offset: const Offset(0, 1),
+                    ),
+                  ]
+                : null,
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
                 icon,
-                size: 15,
+                size: 14,
                 color: selected ? AppColors.primary : AppColors.textSecondary,
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 5),
               Text(
                 label,
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: selected
-                      ? AppColors.textPrimary
-                      : AppColors.textSecondary,
+                  color: selected ? AppColors.textPrimary : AppColors.textSecondary,
                 ),
               ),
             ],
@@ -1132,13 +1226,22 @@ class _ModeToggle extends StatelessWidget {
       );
     }
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        item(false, Icons.view_agenda_outlined, 'Danh sách'),
-        const SizedBox(width: 6),
-        item(true, Icons.bar_chart, 'Biểu đồ'),
-      ],
+    return Container(
+      height: 32,
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          item(OverviewViewMode.curricula, Icons.view_agenda_outlined, 'Khung CT'),
+          item(OverviewViewMode.allSubjects, Icons.table_rows_outlined, 'Danh sách môn'),
+          item(OverviewViewMode.chart, Icons.bar_chart, 'Biểu đồ'),
+        ],
+      ),
     );
   }
 }
@@ -1182,12 +1285,25 @@ class _SmallAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return IconButton(
-      tooltip: tooltip,
-      icon: Icon(icon, size: 18),
-      color: AppColors.textSecondary,
-      splashRadius: 16,
-      onPressed: onTap,
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          width: 32,
+          height: 32,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: AppColors.primary.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: AppColors.primary.withValues(alpha: 0.3),
+            ),
+          ),
+          child: Icon(icon, size: 16, color: AppColors.primary),
+        ),
+      ),
     );
   }
 }

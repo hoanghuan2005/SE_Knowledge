@@ -299,7 +299,7 @@ class _KnowledgeMapViewState extends State<KnowledgeMapView> {
               ),
             ),
             SizedBox(
-              width: 360,
+              width: 320,
               child: _KnowledgePanel(
                 index: index,
                 scope: scope,
@@ -798,6 +798,90 @@ class _EdgePainter extends CustomPainter {
 // ============================================================================
 // BẢNG CHI TIẾT BÊN PHẢI
 // ============================================================================
+// BẢNG CHI TIẾT BÊN PHẢI (Có thể dùng độc lập hoặc trong KnowledgeMapView)
+// ============================================================================
+
+class KnowledgeSidebarPanel extends StatefulWidget {
+  final KnowledgeIndex index;
+  final Map<String, SubjectKnowledge> scope;
+  final Map<String, int> semesterOf;
+  final String? initialConceptId;
+  final String? initialSubjectCode;
+  final ValueChanged<String>? onSelectConcept;
+  final ValueChanged<String>? onSelectSubject;
+  final VoidCallback? onClose;
+  final VoidCallback? onShowSubjectGraph;
+
+  const KnowledgeSidebarPanel({
+    super.key,
+    required this.index,
+    required this.scope,
+    required this.semesterOf,
+    this.initialConceptId,
+    this.initialSubjectCode,
+    this.onSelectConcept,
+    this.onSelectSubject,
+    this.onClose,
+    this.onShowSubjectGraph,
+  });
+
+  @override
+  State<KnowledgeSidebarPanel> createState() => _KnowledgeSidebarPanelState();
+}
+
+class _KnowledgeSidebarPanelState extends State<KnowledgeSidebarPanel> {
+  late _Focus _focus;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialConceptId != null) {
+      _focus = _ConceptFocus(widget.initialConceptId!);
+    } else if (widget.initialSubjectCode != null) {
+      _focus = _SubjectFocus(widget.initialSubjectCode!);
+    } else {
+      _focus = const _NoFocus();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant KnowledgeSidebarPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialConceptId != null &&
+        widget.initialConceptId != oldWidget.initialConceptId) {
+      setState(() {
+        _focus = _ConceptFocus(widget.initialConceptId!);
+      });
+    } else if (widget.initialSubjectCode != null &&
+        widget.initialSubjectCode != oldWidget.initialSubjectCode) {
+      setState(() {
+        _focus = _SubjectFocus(widget.initialSubjectCode!);
+      });
+    }
+  }
+
+  void _handleFocusChanged(_Focus f) {
+    setState(() => _focus = f);
+    if (f is _ConceptFocus) {
+      widget.onSelectConcept?.call(f.id);
+    } else if (f is _SubjectFocus) {
+      widget.onSelectSubject?.call(f.code);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _KnowledgePanel(
+      index: widget.index,
+      scope: widget.scope,
+      semesterOf: widget.semesterOf,
+      focus: _focus,
+      onFocus: _handleFocusChanged,
+      onClose: widget.onClose,
+      onShowSubjectGraph: widget.onShowSubjectGraph,
+    );
+  }
+}
 
 class _KnowledgePanel extends StatelessWidget {
   final KnowledgeIndex index;
@@ -805,6 +889,7 @@ class _KnowledgePanel extends StatelessWidget {
   final Map<String, int> semesterOf;
   final _Focus focus;
   final ValueChanged<_Focus> onFocus;
+  final VoidCallback? onClose;
   final VoidCallback? onShowSubjectGraph;
 
   const _KnowledgePanel({
@@ -813,6 +898,7 @@ class _KnowledgePanel extends StatelessWidget {
     required this.semesterOf,
     required this.focus,
     required this.onFocus,
+    this.onClose,
     this.onShowSubjectGraph,
   });
 
@@ -840,26 +926,63 @@ class _KnowledgePanel extends StatelessWidget {
       ),
       child: Column(
         children: [
-          if (focus is! _NoFocus)
-            Container(
-              height: 40,
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: AppColors.divider)),
-              ),
-              child: Row(
-                children: [
+          Container(
+            height: 52,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              border: Border(bottom: BorderSide(color: AppColors.divider)),
+            ),
+            child: Row(
+              children: [
+                if (focus is! _NoFocus)
                   TextButton.icon(
-                    icon: const Icon(Icons.arrow_back, size: 16),
-                    label: const Text('Tổng quan tri thức'),
+                    icon: const Icon(Icons.arrow_back, size: 15),
+                    label: const Text('Tổng quan tri thức', style: TextStyle(fontSize: 12)),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
                     onPressed: () => onFocus(const _NoFocus()),
+                  )
+                else ...[
+                  Container(
+                    padding: const EdgeInsets.all(5),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Icon(Icons.psychology_outlined, size: 16, color: AppColors.primary),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'TRI THỨC CHƯƠNG TRÌNH',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                      letterSpacing: 0.5,
+                    ),
                   ),
                 ],
-              ),
+                const Spacer(),
+                if (onClose != null)
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 16),
+                    color: AppColors.textSecondary,
+                    tooltip: 'Đóng bảng tri thức',
+                    splashRadius: 14,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    onPressed: onClose,
+                  ),
+              ],
             ),
+          ),
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
               children: [body],
             ),
           ),
