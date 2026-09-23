@@ -6,10 +6,12 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../models/curriculum.dart';
 import '../models/graph_data.dart';
+import '../models/knowledge.dart';
 import '../models/prerequisite.dart';
 import '../models/subject.dart';
 import '../models/transcript_entry.dart';
 import 'fap_markdown_parser.dart';
+import 'knowledge_extraction_service.dart';
 import 'settings_service.dart';
 
 /// Tầng truy cập dữ liệu duy nhất của ứng dụng.
@@ -2686,6 +2688,110 @@ class DbService {
       limit: 1,
     );
     return rows.isNotEmpty;
+  }
+
+  /// Id của mọi môn đã có Syllabus, để màn hình tổng quan khung tính độ phủ
+  /// syllabus mà không phải hỏi từng môn một.
+  Future<Set<int>> syllabusSubjectIds() async {
+    final db = await database;
+    final rows = await db.rawQuery('SELECT DISTINCT subject_id FROM syllabi');
+    return {for (final r in rows) r['subject_id'] as int};
+  }
+
+  /// Nguyên liệu cho tầng tri thức: tên, mô tả, CLO và chủ đề từng buổi của
+  /// mọi môn — ba câu truy vấn gộp thay vì gọi [getSyllabusDetail] cho từng
+  /// môn.
+  ///
+  /// Môn chưa có syllabus riêng nhưng có **mã biến thể** đã có syllabus
+  /// (khung ghi `PRO192`, FLM chỉ có trang của `PRO192c`) thì mượn syllabus
+  /// đó: hai mã là một môn, để trống thì môn nền tảng nhất của chương trình
+  /// lại không có tri thức nào trên bản đồ.
+  Future<List<KnowledgeSource>> loadKnowledgeSources() async {
+    final db = await database;
+    final subjectRows = await db.query(
+      'subjects',
+      columns: ['id', 'code', 'name', 'semester', 'description'],
+    );
+    final syllabusRows = await db.query(
+      'syllabi',
+      columns: ['id', 'subject_id', 'description'],
+    );
+    final cloRows = await db.query(
+      'learning_outcomes',
+      columns: ['syllabus_id', 'code', 'detail'],
+      orderBy: 'id ASC',
+    );
+    final sessionRows = await db.query(
+      'sessions',
+      columns: ['syllabus_id', 'session_no', 'topic'],
+      orderBy: 'session_no ASC, id ASC',
+    );
+
+    final clos = <int, List<KnowledgeText>>{};
+    for (final r in cloRows) {
+      clos.putIfAbsent(r['syllabus_id'] as int, () => []).add(
+        KnowledgeText(
+          (r['code'] as String?) ?? 'CLO',
+          (r['detail'] as String?) ?? '',
+        ),
+      );
+    }
+    final sessions = <int, List<KnowledgeText>>{};
+    for (final r in sessionRows) {
+      sessions.putIfAbsent(r['syllabus_id'] as int, () => []).add(
+        KnowledgeText(
+          'Buổi ${r['session_no']}',
+          (r['topic'] as String?) ?? '',
+        ),
+      );
+    }
+    // Một môn có thể có nhiều bản syllabus; giữ bản mới nạp sau cùng.
+    final syllabusOf = <int, Map<String, Object?>>{};
+    for (final r in syllabusRows) {
+      syllabusOf[r['subject_id'] as int] = r;
+    }
+
+    final codeOfId = {
+      for (final r in subjectRows) r['id'] as int: (r['code'] as String?) ?? '',
+    };
+    final withSyllabusByCode = {
+      for (final id in syllabusOf.keys)
+        if (codeOfId[id] != null) codeOfId[id]!.toUpperCase(): id,
+    };
+
+    final sources = <KnowledgeSource>[];
+    for (final r in subjectRows) {
+      final id = r['id'] as int;
+      final code = ((r['code'] as String?) ?? '').toUpperCase();
+      var syllabus = syllabusOf[id];
+      if (syllabus == null) {
+        final variants = [
+          for (final entry in withSyllabusByCode.entries)
+            if (KnowledgeExtractionService.isCodeVariant(code, entry.key))
+              entry.value,
+        ];
+        if (variants.length == 1) syllabus = syllabusOf[variants.first];
+      }
+      final syllabusId = syllabus?['id'] as int?;
+      final description = [
+        (r['description'] as String?) ?? '',
+        (syllabus?['description'] as String?) ?? '',
+      ].where((t) => t.trim().isNotEmpty).join('\n');
+
+      sources.add(
+        KnowledgeSource(
+          code: code,
+          name: (r['name'] as String?) ?? code,
+          semester: (r['semester'] as int?) ?? 0,
+          description: description,
+          clos: syllabusId == null ? const [] : (clos[syllabusId] ?? const []),
+          sessions: syllabusId == null
+              ? const []
+              : (sessions[syllabusId] ?? const []),
+        ),
+      );
+    }
+    return sources;
   }
 
   /// Kiểm tra xem mã môn học đã có Syllabus trong CSDL chưa

@@ -41,6 +41,9 @@ class TreeContextMenu {
 
     final action = await _show(context, position, [
       _item('open_graph', Icons.hub_outlined, 'Xem trên Bản đồ tri thức'),
+      _item('open_board', Icons.view_week_outlined, 'Mở bảng học kỳ (HK1 → HK9)'),
+      _item('open_knowledge', Icons.psychology_outlined, 'Mở mạng tri thức'),
+      const PopupMenuDivider(),
       _item('new_subject', Icons.note_add_outlined, 'Tạo môn học mới ở đây'),
       if (!isOther)
         _item(
@@ -78,7 +81,15 @@ class TreeContextMenu {
         // Nhóm "ngoài khung" cũng là một mã hợp lệ ('OTHER') trong
         // `curriculumGroups`, nên lọc theo nó cho ra đúng tập môn chưa xếp —
         // truyền null vào đây thì hoá ra hiện cả đồ thị.
-        state.setActiveCurriculum(group.code);
+        state.openCurriculum(group.code, view: CurriculumView.graph);
+        onNavigate(0);
+
+      case 'open_board':
+        state.openCurriculum(group.code, view: CurriculumView.board);
+        onNavigate(0);
+
+      case 'open_knowledge':
+        state.openCurriculum(group.code, view: CurriculumView.knowledge);
         onNavigate(0);
 
       case 'new_subject':
@@ -261,6 +272,7 @@ class TreeContextMenu {
       case 'open_graph':
         state.select(subject.id);
         state.setActiveNote(null);
+        state.setCurriculumView(CurriculumView.graph);
         onNavigate(0);
 
       case 'edit':

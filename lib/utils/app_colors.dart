@@ -125,6 +125,74 @@ class AppColors {
   }
 
   // ------------------------------------------------------------------
+  // BẢNG MÀU PHÂN LOẠI CHO BIỂU ĐỒ
+  // ------------------------------------------------------------------
+
+  /// Bảng màu phân loại 7 ô đã chạy qua bộ kiểm tra mù màu, **đúng thứ tự
+  /// này**: hai ô liền nhau trong danh sách phân biệt được cả với người mù
+  /// màu đỏ-lục, trên cả nền sáng lẫn nền tối. Đổi thứ tự là mất bảo đảm đó,
+  /// nên biểu đồ cột chồng luôn xếp đoạn theo đúng thứ tự ô.
+  static const List<Color> _categoricalLight = [
+    Color(0xFF2A78D6), // xanh dương
+    Color(0xFFEB6834), // cam
+    Color(0xFF1BAF7A), // xanh ngọc
+    Color(0xFFEDA100), // vàng
+    Color(0xFFE87BA4), // hồng
+    Color(0xFF008300), // xanh lá
+    Color(0xFF4A3AA7), // tím
+  ];
+
+  static const List<Color> _categoricalDark = [
+    Color(0xFF3987E5),
+    Color(0xFFD95926),
+    Color(0xFF199E70),
+    Color(0xFFC98500),
+    Color(0xFFD55181),
+    Color(0xFF008300),
+    Color(0xFF9085E9),
+  ];
+
+  /// Xám "phần còn lại" cho nhóm Khác — không bao giờ là một màu thứ tám.
+  static Color get categoricalOther =>
+      isDark ? const Color(0xFF6E6E7A) : const Color(0xFFA3A1AE);
+
+  static Color categorical(int slot) {
+    final list = isDark ? _categoricalDark : _categoricalLight;
+    if (slot < 0 || slot >= list.length) return categoricalOther;
+    return list[slot];
+  }
+
+  /// Thứ tự nhóm năng lực (theo tiền tố mã môn) trên mọi biểu đồ — cũng là
+  /// thứ tự xếp đoạn trong cột chồng.
+  static const List<String> domainOrder = [
+    'Lập trình',
+    'Toán & nền tảng',
+    'Kỹ nghệ phần mềm',
+    'Cơ sở dữ liệu',
+    'Kỹ năng & ngoại ngữ',
+    'Chính trị & đạo đức',
+  ];
+
+  /// Màu đi theo **tên nhóm**, không theo thứ hạng: lọc bớt nhóm nào thì các
+  /// nhóm còn lại vẫn giữ nguyên màu.
+  static Color domainColor(String domain) =>
+      categorical(domainOrder.indexOf(domain));
+
+  // ------------------------------------------------------------------
+  // MÀU TRẠNG THÁI (luôn đi kèm biểu tượng + nhãn, không đứng một mình)
+  // ------------------------------------------------------------------
+
+  static const Color statusGood = Color(0xFF0CA30C);
+  static const Color statusWarning = Color(0xFFFAB219);
+  static const Color statusSerious = Color(0xFFEC835A);
+  static const Color statusCritical = Color(0xFFD03B3B);
+
+  /// Chữ màu "đạt" đọc được trên nền sáng (xanh trạng thái quá nhạt để làm
+  /// chữ trên nền trắng).
+  static Color get statusGoodText =>
+      isDark ? statusGood : const Color(0xFF006300);
+
+  // ------------------------------------------------------------------
   // THANG MÀU THEO ĐIỂM
   // ------------------------------------------------------------------
 

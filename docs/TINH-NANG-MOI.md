@@ -7,6 +7,7 @@ Mốc so sánh: từ commit `9a4aa22` (add note) tới `b56c90e`.
 
 - [Phần A — Đã commit: AI Chat + Graph RAG](#phần-a--đã-commit-ai-chat--graph-rag)
 - [Phần B — Đang làm dở: Backend Obsidian + Ràng buộc xoá](#phần-b--đang-làm-dở-backend-obsidian--ràng-buộc-xoá)
+- [Phần C — Góp ý của thầy: Khung chương trình, Bảng học kỳ, Mục tiêu GPA, Mạng tri thức](#phần-c--góp-ý-của-thầy-khung-chương-trình-bảng-học-kỳ-mục-tiêu-gpa-mạng-tri-thức)
 - [Trạng thái kiểm thử](#trạng-thái-kiểm-thử)
 - [Việc còn lại](#việc-còn-lại)
 
@@ -273,6 +274,106 @@ giữa chuỗi `A → B → C` là cắt đôi lộ trình học, và không có
 - **Cảnh báo file `.md` còn lại** — nếu không xoá file trong Vault, lần "Nạp vào
   CSDL" kế tiếp sẽ **dựng lại đúng môn vừa xoá**. Cảnh báo này được đưa vào
   `DeleteResult.warnings`.
+
+---
+
+## Phần C — Góp ý của thầy: Khung chương trình, Bảng học kỳ, Mục tiêu GPA, Mạng tri thức
+
+Bốn ý góp ý, mỗi ý thành một phần của app:
+
+| Góp ý | Làm thành | File chính |
+| --- | --- | --- |
+| "View head curriculum, nằm ở ngoài, hiển thị nhiều curriculum dạng danh sách / dạng chart" | Tab **Khung chương trình** (màn hình mở đầu của app) | `lib/views/curriculum/curricula_overview_page.dart` |
+| "Bấm vào một curriculum ra màn hình em đang có, thêm view theo HK1 → HK9 xếp ngang, tab giấu được" | Màn hình khung có 3 góc nhìn **Sơ đồ · Học kỳ · Tri thức** | `lib/views/graph/graph_page.dart`, `lib/views/curriculum/semester_board_view.dart` |
+| "md file format dưới dạng board" | Nút **Xuất .md dạng board** — file theo định dạng plugin Obsidian Kanban | `lib/services/kanban_board_builder.dart` |
+| "Upload sổ điểm FAP, thấy tiến trình, target 8.0, nên đăng ký học cải thiện, xanh đỏ, môn lập trình, hỏi combo, AI" | Thẻ **Mục tiêu GPA** + 4 câu hỏi AI dựng sẵn ở tab Học lực; bảng học kỳ tô màu theo mục tiêu | `lib/services/goal_planner_service.dart`, `lib/views/academic/goal_planner_card.dart` |
+| "Cần extract keyword; second brain nằm ở tri thức chứ không ở môn; thể hiện sâu một cấp: tri thức môn này tương quan gì với tri thức môn kia" | Góc nhìn **Mạng tri thức**: khái niệm trích từ syllabus, so sánh tri thức hai môn kèm câu trích dẫn | `lib/services/knowledge_extraction_service.dart`, `lib/views/knowledge/knowledge_map_view.dart` |
+
+### 1. Khung chương trình (danh sách / biểu đồ)
+
+- **Danh sách**: mỗi khung một thẻ — mã, tên, số môn, tín chỉ, độ phủ syllabus,
+  số môn có lập trình, dải học kỳ (ô rộng theo tín chỉ, phần đậm là tín chỉ đã
+  qua) và thanh cơ cấu tín chỉ theo nhóm kiến thức.
+- **Biểu đồ**: cột chồng tín chỉ theo nhóm kiến thức cho mọi khung, biểu đồ cột
+  tín chỉ theo học kỳ (cùng một thang để so sánh), và bảng số liệu đọc được không
+  cần màu.
+- Bấm một khung là mở thẳng **Bảng học kỳ** của khung đó; hai nút nhỏ mở Sơ đồ
+  hoặc Tri thức.
+- Bảng màu 7 ô đã qua bộ kiểm tra mù màu theo đúng thứ tự
+  (`AppColors.categorical`); màu đi theo tên nhóm, không theo thứ hạng.
+
+### 2. Bảng học kỳ HK0/HK1 → HK9
+
+- Các kỳ xếp **ngang**, mỗi môn một thẻ (mã, tên, tín chỉ, điểm). Mỗi cột có nút
+  thu gọn thành một dải dọc — "muốn giấu tab này thì giấu"; trạng thái thu gọn
+  giữ theo từng khung.
+- 4 cách tô màu: **Học kỳ**, **Mục tiêu** (xanh đạt / cam nên cải thiện / đỏ chưa
+  qua), **Điểm** (thang 5 mức sẵn có), **Nhóm KT**. Màu trạng thái luôn đi kèm biểu
+  tượng và chữ.
+- Bấm một môn: môn **cần học trước** viền xanh, môn **được mở ra** viền cam — thể
+  hiện quan hệ tiên quyết ngay trên bảng mà không cần vẽ mũi tên.
+- Lọc **Lập trình**: làm nổi các môn liên quan tới lập trình, theo mã môn và cả
+  theo nội dung syllabus (IoT102, OSG202 cũng có lập trình).
+- **Xuất .md dạng board**: sinh `<MÃ KHUNG>_Board.md` với front matter
+  `kanban-plugin: board`; mỗi kỳ là một cột `##`, mỗi môn một thẻ
+  `- [x] [[PRF192]] …`, môn đã qua được tích, `list-collapse` giữ đúng các cột đang
+  thu gọn, `tag-colors` tô thẻ theo mục tiêu. Chép hoặc ghi thẳng ra Vault.
+
+### 3. Mục tiêu GPA (tab Học lực)
+
+- Chọn mục tiêu 7.0 / 7.5 / **8.0** / 8.5 / 9.0 (lưu lại qua `SettingsService`).
+- Tính **điểm trung bình cần đạt** cho các môn còn lại (kể cả môn trong khung mà
+  bảng điểm chưa liệt kê, bỏ môn điều kiện tốt nghiệp), GPA cao nhất có thể, và
+  xếp loại mục tiêu: nắm chắc / đúng hướng / cần cố hơn / phải học cải thiện.
+- **Nên đăng ký học cải thiện**: môn đã qua dưới mục tiêu, xếp theo GPA được thêm
+  (`tín chỉ × khoảng cách`), kèm lý do: môn lập trình, nền của N môn phía sau,
+  dưới mức Khá. Tích môn nào thì phần mô phỏng GPA tốt nghiệp cộng môn đó; có cả
+  gợi ý "ít nhất k môn là chạm mục tiêu".
+- 4 câu hỏi AI: **Phân tích tổng quan**, **Học cải thiện để đạt mục tiêu**, **Nên
+  chọn combo nào?** (gửi kèm các ô combo `SE_COM*` của khung và các môn ngoài
+  khung cùng tri thức của chúng), **Các môn lập trình**.
+
+### 4. Mạng tri thức — trích keyword từ syllabus
+
+Hai lớp trích trên cùng một bộ chuẩn hoá (bỏ dấu, hạ chữ, bỏ số nhiều, giữ
+`c++`, `c#`, `.net`, `i/o`…):
+
+1. **Từ điển ~110 khái niệm** (`knowledge_concepts.dart`), 8 nhóm, cụm dài thắng
+   cụm ngắn (`binary search tree` là Cây, `widget tree` là Flutter). Đây là xương
+   sống để nối các môn.
+2. **RAKE + TF-IDF** cho cụm từ ngoài từ điển (`state dependent objects`,
+   `content negotiation`…). Cụm có mặt ở từ hai môn trở thành khái niệm "tự
+   trích". Chỉ lấy phần tiếng Anh — tiếng Việt bỏ dấu thì "câu/cầu/cấu" trùng nhau.
+
+Tương quan hai môn là cosine giữa hai vector khái niệm (nhân IDF); kỹ năng chung
+(làm việc nhóm, dùng công cụ AI…) không dùng để nối. Cặp môn nào dùng chung tri
+thức mà **chưa có cạnh tiên quyết** được đánh dấu **tương quan ẩn** — ví dụ
+MAD101 ↔ CSD201 chung Đồ thị, Cây, Đệ quy, Độ phức tạp nhưng khung K18C chỉ đặt
+PRO192 làm tiên quyết của CSD201.
+
+Trên màn hình: bấm một khái niệm để xem **lộ trình** của nó qua các kỳ (môn nào
+dạy lần đầu, môn nào dùng lại), bấm một môn để xem khái niệm + từ khoá đặc trưng
++ các môn tương quan, bấm một cặp để **so sánh**: tri thức chung kèm câu trích từ
+CLO/buổi học của cả hai syllabus, phần chỉ môn này có, phần chỉ môn kia có.
+
+Chạy trong isolate phụ; 46 syllabus thật trong `fap_inbox` mất khoảng 120 ms.
+
+### 5. Hai lỗi đọc trang FLM được sửa kèm
+
+- Tên khung lấy nhầm dòng `Name: <email>` trên thanh tiêu đề FLM → giờ chỉ tìm
+  `Name:` từ dòng `CurriculumCode:` trở đi.
+- Ô giá trị trống (ví dụ `Course Name English:`) nuốt nhãn kế tiếp làm giá trị,
+  nên nhiều môn mang tên "Subject Code:" → nhãn kế tiếp không còn bị nhận làm giá
+  trị.
+
+### Kiểm thử
+
+| File test | Phạm vi |
+| --- | --- |
+| `test/knowledge_extraction_test.dart` | Tách từ, cụm dài thắng, tiếng Việt/NFD, liên kết & tương quan ẩn, kỹ năng chung, mã biến thể, cụm tự trích |
+| `test/goal_planner_test.dart` | TB cần đạt, xếp loại mục tiêu, môn trong khung chưa có điểm, xếp hạng học cải thiện, mô phỏng, số môn tối thiểu |
+| `test/kanban_board_builder_test.dart` | Front matter, cột theo kỳ, thẻ tích/tag, khối cài đặt, link cho mã có ký tự cấm |
+| `test/fap_markdown_parser_labels_test.dart` | Hai lỗi đọc nhãn ở trên |
 
 ---
 

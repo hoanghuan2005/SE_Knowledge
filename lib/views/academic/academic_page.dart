@@ -8,6 +8,7 @@ import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
 import '../widgets/linked_answer_text.dart';
+import 'goal_planner_card.dart';
 import 'transcript_import_dialog.dart';
 
 /// Tab "Học lực": tổng hợp bảng điểm cá nhân và soi nó trên đồ thị tiên quyết.
@@ -21,7 +22,11 @@ class AcademicPage extends StatefulWidget {
   /// nút "Xem trên đồ thị" ở tab Trợ lý AI.
   final VoidCallback? onOpenGraph;
 
-  const AcademicPage({super.key, this.onOpenGraph});
+  /// Mở bảng học kỳ của khung đang xem, nơi các môn được tô xanh/đỏ theo
+  /// mục tiêu GPA.
+  final VoidCallback? onOpenBoard;
+
+  const AcademicPage({super.key, this.onOpenGraph, this.onOpenBoard});
 
   @override
   State<AcademicPage> createState() => _AcademicPageState();
@@ -39,6 +44,9 @@ class _AcademicPageState extends State<AcademicPage> {
   String _aiAnswer = '';
   bool _aiRunning = false;
   String? _aiError;
+
+  /// Tiêu đề của câu hỏi vừa gửi, hiện trên khung trả lời.
+  String _aiTopic = '';
 
   @override
   void dispose() {
@@ -117,6 +125,8 @@ class _AcademicPageState extends State<AcademicPage> {
           _aiPanel(),
           const SizedBox(height: 16),
         ],
+        GoalPlannerCard(onOpenBoard: widget.onOpenBoard),
+        const SizedBox(height: 16),
         _SectionCard(
           icon: Icons.show_chart,
           title: 'GPA theo từng kỳ',
@@ -367,37 +377,142 @@ class _AcademicPageState extends State<AcademicPage> {
       '3. Những môn sắp học có rủi ro vì môn nền điểm thấp.\n'
       '4. Kế hoạch cải thiện cho kỳ tới, gắn với các môn cụ thể.';
 
+  /// Bốn câu hỏi dựng sẵn cho AI. Câu đầu là phân tích tổng quan (toàn bộ
+  /// môn), ba câu sau đi thẳng vào ba việc sinh viên hay phải quyết định: học
+  /// cải thiện môn nào, chọn combo nào, và lập trình đang ở mức nào.
+  List<(String, IconData, String)> get _quickQuestions {
+    final target = AppState.instance.targetGpa.toStringAsFixed(1);
+    return [
+      ('Phân tích tổng quan', Icons.auto_awesome, _analysisQuestion),
+      (
+        'Học cải thiện để đạt $target',
+        Icons.trending_up,
+        'Mục tiêu của tôi là GPA $target khi tốt nghiệp. Dựa trên kế hoạch mục '
+            'tiêu và bảng điểm, tôi nên đăng ký học cải thiện những môn nào, '
+            'theo thứ tự ưu tiên nào, và các môn còn lại cần đạt bao nhiêu? '
+            'Giải thích ngắn gọn lý do cho từng môn.',
+      ),
+      (
+        'Nên chọn combo nào?',
+        Icons.alt_route,
+        'Dựa trên điểm mạnh/yếu theo nhóm năng lực và tri thức của những môn '
+            'tôi học tốt, tôi nên chọn combo (chuyên ngành hẹp) nào cho các vị '
+            'trí tự chọn trong khung? Chỉ dựa trên các môn có trong dữ liệu; '
+            'nếu dữ liệu chưa đủ để kết luận thì nói rõ cần nạp thêm syllabus '
+            'của môn nào.',
+      ),
+      (
+        'Các môn lập trình',
+        Icons.code,
+        'Đánh giá năng lực lập trình của tôi qua các môn liên quan tới lập '
+            'trình: môn nào đang kéo điểm xuống, kiến thức nào cần củng cố '
+            'trước khi học các môn lập trình còn lại?',
+      ),
+    ];
+  }
+
   Widget _aiButtonRow() {
-    return Row(
+    final enabled = !_aiRunning && AppState.instance.hasTranscript;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ElevatedButton.icon(
-          icon: _aiRunning
-              ? const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.auto_awesome, size: 18),
-          label: Text(
-            _aiRunning ? 'Đang phân tích...' : 'Phân tích với AI',
-          ),
-          onPressed: _aiRunning || !AppState.instance.hasTranscript
-              ? null
-              : _askAi,
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            for (final (label, icon, question) in _quickQuestions)
+              ElevatedButton.icon(
+                icon: _aiRunning && _aiTopic == label
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(icon, size: 17),
+                label: Text(label),
+                onPressed: enabled ? () => _askAi(label, question) : null,
+              ),
+          ],
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            'Gửi toàn bộ số liệu học lực ở trang này kèm câu hỏi tới nhà cung '
-            'cấp AI đã cấu hình trong Cài đặt.',
-            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-          ),
+        const SizedBox(height: 6),
+        Text(
+          'Hỏi AI (nhà cung cấp trong Cài đặt) kèm số liệu học lực, kế hoạch '
+          'mục tiêu GPA, danh sách môn lập trình và các vị trí combo của khung.',
+          style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
         ),
       ],
     );
   }
 
-  Future<void> _askAi() async {
+  /// Toàn bộ ngữ cảnh gửi kèm câu hỏi. Chỉ là số liệu — phần kết luận để AI
+  /// tự làm, đúng nguyên tắc của `AcademicProfile.renderForPrompt`.
+  String _aiContext() {
+    final state = AppState.instance;
+    final sb = StringBuffer()
+      ..writeln(state.academicProfileOrEmpty.renderForPrompt())
+      ..writeln()
+      ..writeln(state.goalPlan.renderForPrompt());
+
+    final programming = state.programmingCodes;
+    final progRows = [
+      for (final e in state.gradeByCode.values)
+        if (programming.contains(e.subjectCode.toUpperCase())) e,
+    ]..sort((a, b) => a.semesterOrder.compareTo(b.semesterOrder));
+    if (progRows.isNotEmpty) {
+      sb.writeln(
+        'Các môn liên quan tới lập trình (theo mã môn và theo nội dung '
+        'syllabus):',
+      );
+      for (final e in progRows) {
+        sb.writeln(
+          '- ${e.subjectCode} (${e.subjectName}): ${e.statusLabel}'
+          '${e.hasGrade ? ', điểm ${e.displayGrade}' : ''}',
+        );
+      }
+      sb.writeln();
+    }
+
+    // Combo: các ô tự chọn của khung và các môn trong CSDL nằm ngoài khung —
+    // chỉ những môn này mới có thể là môn combo.
+    final knowledge = state.knowledge;
+    String topicsOf(String code) {
+      final s = knowledge?.subjects[code.toUpperCase()];
+      if (s == null || s.concepts.isEmpty) return '';
+      return ' — tri thức: ${s.concepts.take(5).map((c) => knowledge!.concepts[c.conceptId]?.label ?? c.conceptId).join(', ')}';
+    }
+
+    final slots = <String>[];
+    final outside = <String>[];
+    for (final g in state.curriculumGroups) {
+      for (final s in g.semesters.values.expand((l) => l)) {
+        if (g.isUnassigned) {
+          outside.add('- ${s.code} (${s.name})${topicsOf(s.code)}');
+        } else if (s.code.contains('COM') || s.code.endsWith('_ELE')) {
+          slots.add('- ${g.code}: ${s.code} — ${s.name}, kỳ ${s.semester}');
+        }
+      }
+    }
+    if (slots.isNotEmpty) {
+      sb
+        ..writeln('Các vị trí tự chọn/combo trong khung:')
+        ..writeAll(slots, '\n')
+        ..writeln()
+        ..writeln();
+    }
+    if (outside.isNotEmpty) {
+      sb
+        ..writeln(
+          'Các môn có trong CSDL nhưng không thuộc khung chính (ứng viên '
+          'combo/tự chọn):',
+        )
+        ..writeAll(outside.take(30), '\n')
+        ..writeln();
+    }
+    return sb.toString();
+  }
+
+  Future<void> _askAi(String topic, String question) async {
     // Người dùng đã tắt việc gửi điểm ra ngoài thì không lách qua nút này.
     if (!await SettingsService.instance.getSendTranscriptToAi()) {
       if (!mounted) return;
@@ -413,16 +528,16 @@ class _AcademicPageState extends State<AcademicPage> {
       _aiRunning = true;
       _aiAnswer = '';
       _aiError = null;
+      _aiTopic = topic;
     });
 
     try {
       final answer = await AiService.instance.ask(
-        question: _analysisQuestion,
+        question: question,
         // Truyền thẳng hồ sơ học lực làm ngữ cảnh thay vì đi đường Graph RAG:
         // câu hỏi này không nhắm vào môn nào cụ thể, cái cần là toàn bộ số
         // liệu điểm — giống cách `SubjectChatService` truyền `extraContext`.
-        extraContext: AppState.instance.academicProfileOrEmpty
-            .renderForPrompt(),
+        extraContext: _aiContext(),
         extraContextHasGrades: true,
         includeKnowledgeContext: false,
         onDelta: (delta) {
@@ -443,7 +558,7 @@ class _AcademicPageState extends State<AcademicPage> {
   Widget _aiPanel() {
     return _SectionCard(
       icon: Icons.auto_awesome,
-      title: 'Nhận xét của AI',
+      title: _aiTopic.isEmpty ? 'Nhận xét của AI' : 'AI · $_aiTopic',
       subtitle:
           'Dựa trên số liệu ở trang này. Mã môn trong câu trả lời bấm được.',
       child: _aiError != null
