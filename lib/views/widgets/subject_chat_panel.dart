@@ -111,7 +111,7 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
     if (subject.id != null) {
       SubjectChatService.instance.ensureSuggestions(
         subject.id!,
-        _buildContext(),
+        _buildSuggestionContext(),
       );
     }
   }
@@ -124,7 +124,16 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
   /// theo system prompt là "chưa có thông tin", dù CSDL có đủ cạnh. Dựng lại
   /// mỗi lần còn để người dùng vừa sửa tiên quyết ở tab "Chi tiết" xong hỏi
   /// ngay là thấy số liệu mới.
-  String _buildContext() {
+  String _buildContext() => _composeContext(detailed: true);
+
+  /// Ngữ cảnh rút gọn, chỉ dùng cho lần gọi sinh 4 câu hỏi gợi ý.
+  ///
+  /// Lần gọi đó chỉ cần xin về 4 dòng chữ, không cần đọc trọn đề cương 45
+  /// buổi lẫn ghi chú cá nhân. Giữ nguyên phần quan hệ tiên quyết vì đó là
+  /// nguồn ra những câu hỏi hay nhất ("cần học trước môn nào").
+  String _buildSuggestionContext() => _composeContext(detailed: false);
+
+  String _composeContext({required bool detailed}) {
     final s = widget.subject;
     final id = s.id;
     final prereqs = id == null ? const <Subject>[] : _edgesTo(id, hard: true);
@@ -176,10 +185,13 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
 
     final syllabus = _syllabus;
     if (syllabus != null) {
+      final rag = GraphRagService.instance;
       sb
         ..writeln()
         ..writeln('===== ĐỀ CƯƠNG CHÍNH THỨC TỪ FAP/FLM =====')
-        ..writeln(GraphRagService.instance.renderSyllabusForPrompt(syllabus));
+        ..writeln(detailed
+            ? rag.renderSyllabusForPrompt(syllabus)
+            : rag.renderSyllabusOutlineForPrompt(syllabus));
     } else {
       sb
         ..writeln()
@@ -189,7 +201,9 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
         );
     }
 
-    final note = _noteContent;
+    // Ghi chú cá nhân dài không giới hạn, mà để nghĩ ra 4 câu hỏi thì không
+    // cần tới nó — bỏ hẳn khỏi ngữ cảnh rút gọn.
+    final note = detailed ? _noteContent : null;
     if (note != null) {
       sb
         ..writeln()
@@ -356,8 +370,10 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
                   icon: const Icon(Icons.refresh, size: 15),
                   visualDensity: VisualDensity.compact,
                   color: AppColors.textSecondary,
-                  onPressed: () =>
-                      service.regenerateSuggestions(subjectId, _buildContext()),
+                  onPressed: () => service.regenerateSuggestions(
+                    subjectId,
+                    _buildSuggestionContext(),
+                  ),
                 ),
             ],
           ),

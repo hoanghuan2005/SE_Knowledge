@@ -76,6 +76,9 @@ class GraphRagService {
   static const int maxSyllabusSessions = 45;
   static const int maxSyllabusMaterials = 8;
 
+  /// Chặn trên cho phần mô tả trong bản đề cương rút gọn.
+  static const int maxOutlineDescriptionChars = 400;
+
   /// Từ khoá khớp quá tỉ lệ này trong danh mục thì bị bỏ, vì nó không chỉ ra
   /// được môn nào cả.
   ///
@@ -585,6 +588,43 @@ class GraphRagService {
   /// Chỉ lấy phần sinh viên thật sự hỏi tới (mô tả, CLO, tài liệu, lịch trình,
   /// đầu điểm) và bỏ hết phần hành chính (số quyết định, ngày duyệt, trạng
   /// thái active...) — những thứ đó chỉ tốn token chứ không giúp trả lời.
+  /// Bản rút gọn của [renderSyllabusForPrompt], dùng cho việc sinh câu hỏi
+  /// gợi ý chứ không phải để trả lời.
+  ///
+  /// Để đặt được 4 câu hỏi sát nội dung thì chỉ cần biết môn dạy gì và có
+  /// những loại đánh giá nào — không cần đọc trọn 45 buổi học, từng chuẩn đầu
+  /// ra hay từng tiêu chí chấm. Giữ đúng phần gợi được câu hỏi, bỏ phần còn
+  /// lại, nên nhẹ hơn bản đầy đủ khoảng một bậc.
+  ///
+  /// Vẫn nêu *số lượng* buổi học và chuẩn đầu ra, vì chính những con số đó
+  /// giúp AI đặt câu hỏi cụ thể thay vì hỏi chung chung.
+  String renderSyllabusOutlineForPrompt(FapSyllabusImport syl) {
+    final sb = StringBuffer();
+
+    final description = syl.description.trim();
+    if (description.isNotEmpty) {
+      // Mô tả là trường hữu ích nhất ở đây, nhưng vẫn chặn trên phòng khi
+      // trường này dài bất thường, kẻo mất luôn ý nghĩa của bản rút gọn.
+      sb.writeln(
+        'Mô tả môn học: '
+        '${description.length <= maxOutlineDescriptionChars ? description : '${description.substring(0, maxOutlineDescriptionChars)}…'}',
+      );
+    }
+    if (syl.clos.isNotEmpty) {
+      sb.writeln('Môn có ${syl.clos.length} chuẩn đầu ra (CLO).');
+    }
+    if (syl.assessments.isNotEmpty) {
+      final parts = syl.assessments
+          .map((a) => '${a.category} ${a.weightPercent}%')
+          .join(', ');
+      sb.writeln('Các đầu điểm đánh giá: $parts.');
+    }
+    if (syl.sessions.isNotEmpty) {
+      sb.writeln('Lịch trình gồm ${syl.sessions.length} buổi học.');
+    }
+    return sb.toString();
+  }
+
   String renderSyllabusForPrompt(FapSyllabusImport syl) {
     final sb = StringBuffer();
 

@@ -130,12 +130,32 @@ class SubjectChatService extends ChangeNotifier {
 
   /// Bóc câu trả lời (mỗi dòng một câu hỏi) thành danh sách gợi ý sạch, bỏ
   /// gạch đầu dòng / số thứ tự AI có thể tự thêm dù đã dặn không cần.
-  List<String> _splitLines(String text) {
-    return text
-        .split('\n')
-        .map((l) => l.replaceFirst(RegExp(r'^[\s\-•*\d\.\)]+'), '').trim())
-        .where((l) => l.isNotEmpty)
-        .take(4)
-        .toList();
-  }
+  List<String> _splitLines(String text) => cleanSuggestionLines(text);
+}
+
+/// Bóc câu trả lời của AI thành danh sách câu hỏi gợi ý sạch.
+///
+/// Làm hai việc, đều vì AI không chịu nghe dặn hoàn toàn:
+///
+/// 1. Bỏ gạch đầu dòng / số thứ tự AI tự thêm dù prompt đã dặn không cần.
+/// 2. Gỡ cặp ngoặc `[[...]]` quanh mã môn. Prompt hệ thống bắt AI bọc mã môn
+///    như vậy để tầng hiển thị biến chúng thành link bấm được, nhưng gợi ý là
+///    nhãn nút chữ thuần, không đi qua bộ bóc link đó — để nguyên thì người
+///    dùng thấy `[[JPD113]]` lù lù trên nút. Gỡ tại đây thay vì dặn AI đừng
+///    viết, vì cách này chắc chắn còn lời dặn thì không.
+///
+/// Hàm thuần, tách khỏi service để test được mà không cần gọi mạng.
+List<String> cleanSuggestionLines(String text) {
+  final wikiLink = RegExp(r'\[\[([^\[\]]+?)\]\]');
+
+  return text
+      .split('\n')
+      .map((l) => l.replaceFirst(RegExp(r'^[\s\-•*\d\.\)]+'), '').trim())
+      .map((l) => l.replaceAllMapped(
+            wikiLink,
+            (m) => m.group(1)!.split(RegExp(r'[|#]')).first.trim(),
+          ))
+      .where((l) => l.isNotEmpty)
+      .take(4)
+      .toList();
 }

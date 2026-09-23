@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:se_knowledge/models/subject.dart';
+import 'package:se_knowledge/services/fap_markdown_parser.dart';
 import 'package:se_knowledge/services/graph_rag_service.dart';
 
 /// Kiểm thử phần chọn môn "hạt giống" cho Graph RAG — logic thuần Dart,
@@ -210,4 +211,81 @@ void main() {
       expect(matches.first.confident, isFalse);
     });
   });
+
+  group('renderSyllabusOutlineForPrompt', () {
+    test('giữ đúng phần gợi được câu hỏi, bỏ phần dài', () {
+      final outline = GraphRagService.instance
+          .renderSyllabusOutlineForPrompt(_syllabus());
+
+      // Đủ cụ thể để hỏi "Progress test chiếm bao nhiêu %" hay "60 buổi học
+      // những gì" — đó là lý do vẫn nêu số lượng thay vì bỏ trắng.
+      expect(outline, contains('Mô tả môn học: Cấu trúc dữ liệu'));
+      expect(outline, contains('2 chuẩn đầu ra'));
+      expect(outline, contains('Progress test 20.0%'));
+      expect(outline, contains('3 buổi học'));
+
+      // Nhưng không kéo theo nội dung dài của từng buổi, từng CLO, tài liệu.
+      expect(outline, isNot(contains('Chi tiết CLO')));
+      expect(outline, isNot(contains('Buổi 1:')));
+      expect(outline, isNot(contains('Giáo trình')));
+    });
+
+    test('nhẹ hơn hẳn bản đầy đủ', () {
+      final rag = GraphRagService.instance;
+      final syl = _syllabus();
+      expect(
+        rag.renderSyllabusOutlineForPrompt(syl).length,
+        lessThan(rag.renderSyllabusForPrompt(syl).length),
+      );
+    });
+
+    test('mô tả dài bất thường vẫn bị chặn trên', () {
+      final outline = GraphRagService.instance.renderSyllabusOutlineForPrompt(
+        _syllabus(description: 'x' * 5000),
+      );
+      expect(outline.length, lessThan(1000));
+      expect(outline, contains('…'));
+    });
+  });
+}
+
+FapSyllabusImport _syllabus({String description = 'Cấu trúc dữ liệu và giải thuật.'}) {
+  return FapSyllabusImport(
+    fapSyllabusId: 1,
+    subjectCode: 'CSD201',
+    nameEn: 'Data Structures and Algorithms',
+    nameNative: 'Cấu trúc dữ liệu và giải thuật',
+    degreeLevel: 'Bachelor',
+    learningTeachingMethod: 'In-class',
+    timeAllocation: '45h',
+    description: description,
+    studentTasks: 'Làm bài tập',
+    tools: 'JDK',
+    scoringScale: 10,
+    decisionNo: '',
+    decisionDate: '',
+    isApproved: true,
+    isScored: true,
+    minAvgMarkToPass: 5.0,
+    isActive: true,
+    approvedDate: '',
+    rawPrerequisiteText: 'PRF192',
+    sourceUrl: '',
+    materials: const [
+      FapMaterialRow(seqNo: 1, description: 'Giáo trình chính', isMain: true),
+    ],
+    clos: const [
+      FapCloRow(code: 'CLO1', detail: 'Chi tiết CLO 1'),
+      FapCloRow(code: 'CLO2', detail: 'Chi tiết CLO 2'),
+    ],
+    sessions: const [
+      FapSessionRow(sessionNo: 1, topic: 'Giới thiệu'),
+      FapSessionRow(sessionNo: 2, topic: 'Mảng và danh sách'),
+      FapSessionRow(sessionNo: 3, topic: 'Cây nhị phân'),
+    ],
+    assessments: const [
+      FapAssessmentRow(seqNo: 1, category: 'Progress test', weightPercent: 20),
+      FapAssessmentRow(seqNo: 2, category: 'Final exam', weightPercent: 60),
+    ],
+  );
 }
