@@ -7,16 +7,31 @@ import '../../models/subject.dart';
 import '../../models/transcript_entry.dart';
 import '../../models/curriculum.dart';
 import '../../models/graph_settings.dart';
-import '../../services/db_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
+import '../curriculum/fap_inbox_import.dart';
+import '../curriculum/semester_board_view.dart';
+import '../knowledge/knowledge_map_view.dart';
 import '../subjects/subject_form_dialog.dart';
 import 'graph_settings_panel.dart';
 
-/// Màn hình trực quan hoá bản đồ tri thức.
+/// Màn hình của một khung chương trình, với ba góc nhìn trên cùng dữ liệu:
+///
+/// - **Sơ đồ**: đồ thị tiên quyết giữa các môn (kéo thả được).
+/// - **Học kỳ**: bảng HK0/HK1 → HK9 xếp ngang, mỗi môn một thẻ.
+/// - **Tri thức**: khái niệm trích từ syllabus và cách các môn dính nhau.
+///
+/// Góc nhìn đang chọn nằm trong [AppState.curriculumView] để màn hình tổng
+/// quan các khung mở thẳng được vào đúng góc nhìn.
 class GraphPage extends StatefulWidget {
-  const GraphPage({super.key});
+  /// Nhảy sang tab Học lực (kế hoạch mục tiêu GPA đầy đủ).
+  final VoidCallback? onOpenAcademic;
+
+  /// Quay về màn hình tổng quan mọi khung chương trình.
+  final VoidCallback? onOpenOverview;
+
+  const GraphPage({super.key, this.onOpenAcademic, this.onOpenOverview});
 
   @override
   State<GraphPage> createState() => _GraphPageState();
@@ -30,48 +45,14 @@ class _GraphPageState extends State<GraphPage> {
   bool _showSettings = false;
   int? _semesterFilter;
 
-  Future<void> _batchImportInbox(BuildContext context) async {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => const Center(
-        child: Card(
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2.5),
-                ),
-                SizedBox(width: 16),
-                Text('Đang quét và tự động nạp fap_inbox...', style: TextStyle(fontSize: 14)),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
+  Future<void> _batchImportInbox(BuildContext context) =>
+      FapInboxImport.run(context);
 
-    try {
-      final res = await DbService.instance.batchImportFromInbox();
-      await AppState.instance.refresh();
-      if (!context.mounted) return;
-      Navigator.pop(context);
-      Ui.success(
-        context,
-        'Đã nạp ${res['totalFiles']} files '
-        '(${res['curricula']} khung CTĐT, ${res['syllabi']} syllabus, '
-        '${res['edges']} cạnh tiên quyết).',
-      );
-    } catch (e) {
-      if (!context.mounted) return;
-      Navigator.pop(context);
-      Ui.error(context, e);
-    }
-  }
+  static String _viewTitle(CurriculumView view) => switch (view) {
+    CurriculumView.graph => 'Sơ đồ môn học',
+    CurriculumView.board => 'Bảng học kỳ',
+    CurriculumView.knowledge => 'Mạng tri thức',
+  };
 
   @override
   void initState() {
@@ -108,25 +89,20 @@ class _GraphPageState extends State<GraphPage> {
         final semesters =
             currentGraph.subjects.map((s) => s.semester).toSet().toList()
               ..sort();
+        final view = state.curriculumView;
+        final isGraph = view == CurriculumView.graph;
 
         return Column(
           children: [
             PageHeader(
               title: activeGroup != null
-                  ? 'Bản đồ: ${activeGroup.code}'
-                  : 'Bản đồ tri thức',
+                  ? '${_viewTitle(view)} · ${activeGroup.isUnassigned ? 'Môn ngoài khung' : activeGroup.code}'
+                  : '${_viewTitle(view)} · Tất cả khung',
               subtitle: activeGroup != null
                   ? '${currentGraph.subjects.length} môn · ${currentGraph.edges.length} liên kết'
                   : '${state.stats['subjects'] ?? 0} môn học · ${state.stats['edges'] ?? 0} liên kết tiên quyết',
               actions: [
-                if (state.curriculumGroups.isNotEmpty) ...[
-                  _CurriculumFilter(
-                    groups: state.curriculumGroups,
-                    value: state.activeCurriculumCode,
-                    onChanged: (v) => state.setActiveCurriculum(v),
-                  ),
-                  const SizedBox(width: 14),
-                ],
+                if (isGraph) ...[
                 _SemesterFilter(
                   semesters: semesters,
                   value: _semesterFilter,
@@ -183,6 +159,7 @@ class _GraphPageState extends State<GraphPage> {
                   onPressed: () => setState(() => _showSettings = !_showSettings),
                 ),
                 const SizedBox(width: 8),
+                ],
                 SizedBox(
                   height: 28,
                   child: OutlinedButton.icon(
@@ -220,8 +197,57 @@ class _GraphPageState extends State<GraphPage> {
                 ),
               ],
             ),
+            _ViewTabsBar(
+              view: view,
+              onChanged: state.setCurriculumView,
+              onOpenOverview: widget.onOpenOverview,
+              filter: state.curriculumGroups.isEmpty
+                  ? null
+                  : _CurriculumFilter(
+                      groups: state.curriculumGroups,
+                      value: state.activeCurriculumCode,
+                      onChanged: (v) => state.setActiveCurriculum(v),
+                    ),
+            ),
             Expanded(
               child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Sơ đồ được giữ sống (nhưng tắt ticker) khi chuyển sang
+                  // góc nhìn khác, để vị trí các node đã kéo thả không bị xếp
+                  // lại từ đầu mỗi lần quay về.
+                  Visibility(
+                    visible: isGraph,
+                    maintainState: true,
+                    child: _graphBody(context, state, currentGraph),
+                  ),
+                  if (view == CurriculumView.board)
+                    SemesterBoardView(
+                      data: currentGraph,
+                      onOpenAcademic: widget.onOpenAcademic,
+                    ),
+                  if (view == CurriculumView.knowledge)
+                    KnowledgeMapView(
+                      data: currentGraph,
+                      onShowSubjectGraph: () =>
+                          state.setCurriculumView(CurriculumView.graph),
+                    ),
+                ],
+              ),
+            ),
+            if (isGraph) _Legend(isDark: state.isDark),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _graphBody(
+    BuildContext context,
+    AppState state,
+    GraphData currentGraph,
+  ) {
+    return Stack(
                 children: [
                   Positioned.fill(
                     child: state.loading && currentGraph.isEmpty
@@ -258,12 +284,6 @@ class _GraphPageState extends State<GraphPage> {
                       ),
                     ),
                 ],
-              ),
-            ),
-            _Legend(isDark: state.isDark),
-          ],
-        );
-      },
     );
   }
 
@@ -1218,6 +1238,137 @@ class _LegendLine extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Thanh tab ngay dưới tiêu đề: chọn góc nhìn của khung và đổi khung.
+///
+/// Tách khỏi `PageHeader` vì hàng tiêu đề đã chật các nút riêng của sơ đồ
+/// (lọc kỳ, zoom, cài đặt vật lý); dồn thêm vào đó thì màn hình nhỏ tràn.
+class _ViewTabsBar extends StatelessWidget {
+  final CurriculumView view;
+  final ValueChanged<CurriculumView> onChanged;
+  final VoidCallback? onOpenOverview;
+  final Widget? filter;
+
+  const _ViewTabsBar({
+    required this.view,
+    required this.onChanged,
+    this.onOpenOverview,
+    this.filter,
+  });
+
+  static const List<(CurriculumView, IconData, String, String)> _tabs = [
+    (
+      CurriculumView.graph,
+      Icons.hub_outlined,
+      'Sơ đồ',
+      'Đồ thị tiên quyết giữa các môn',
+    ),
+    (
+      CurriculumView.board,
+      Icons.view_week_outlined,
+      'Học kỳ',
+      'Bảng HK1 → HK9 xếp ngang, tô màu theo điểm / mục tiêu',
+    ),
+    (
+      CurriculumView.knowledge,
+      Icons.psychology_outlined,
+      'Tri thức',
+      'Khái niệm trích từ syllabus và tương quan tri thức giữa các môn',
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 42,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        border: Border(bottom: BorderSide(color: AppColors.divider)),
+      ),
+      child: Row(
+        children: [
+          if (onOpenOverview != null) ...[
+            TextButton.icon(
+              icon: const Icon(Icons.dashboard_outlined, size: 16),
+              label: const Text('Tất cả khung'),
+              onPressed: onOpenOverview,
+            ),
+            Container(
+              width: 1,
+              height: 20,
+              margin: const EdgeInsets.symmetric(horizontal: 8),
+              color: AppColors.divider,
+            ),
+          ],
+          for (final (value, icon, label, tip) in _tabs)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Tooltip(
+                message: tip,
+                waitDuration: const Duration(milliseconds: 400),
+                child: InkWell(
+                  onTap: () => onChanged(value),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: view == value
+                          ? AppColors.primary.withValues(alpha: 0.14)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: view == value
+                            ? AppColors.primary.withValues(alpha: 0.5)
+                            : Colors.transparent,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          icon,
+                          size: 16,
+                          color: view == value
+                              ? AppColors.primary
+                              : AppColors.textSecondary,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          label,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: view == value
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            color: view == value
+                                ? AppColors.textPrimary
+                                : AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          const Spacer(),
+          if (filter != null) ...[
+            Text(
+              'Khung:',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+            const SizedBox(width: 6),
+            filter!,
+          ],
+        ],
+      ),
     );
   }
 }

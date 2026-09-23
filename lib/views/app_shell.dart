@@ -9,6 +9,7 @@ import '../utils/app_colors.dart';
 import '../utils/ui_helpers.dart';
 import 'academic/academic_page.dart';
 import 'chat/ai_chat_page.dart';
+import 'curriculum/curricula_overview_page.dart';
 import 'curriculum/curriculum_form_dialog.dart';
 import 'graph/graph_page.dart';
 import 'notes/obsidian_note_editor_view.dart';
@@ -41,7 +42,11 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
-  int _index = 0;
+  /// Tab "Khung chương trình" — màn hình ngoài cùng liệt kê mọi khung, bấm
+  /// một khung mới vào màn hình Bản đồ của khung đó.
+  static const int overviewTab = 6;
+
+  int _index = overviewTab;
   bool _isSidebarOpen = true;
   String _searchQuery = '';
 
@@ -51,7 +56,7 @@ class _AppShellState extends State<AppShell> {
   final Set<String> _collapsedNodes = {};
   int _sidebarTab = 0; // 0: Files, 1: Search, 2: Bookmarks
 
-  final List<int> _history = [0];
+  final List<int> _history = [overviewTab];
   int _historyIndex = 0;
 
   static const List<String> _tabTitles = [
@@ -61,6 +66,7 @@ class _AppShellState extends State<AppShell> {
     'Trợ lý học tập AI',
     'Học lực',
     'Cài đặt hệ thống',
+    'Khung chương trình',
   ];
 
   static const List<IconData> _tabIcons = [
@@ -70,7 +76,14 @@ class _AppShellState extends State<AppShell> {
     Icons.auto_awesome,
     Icons.insights,
     Icons.settings_outlined,
+    Icons.dashboard_outlined,
   ];
+
+  /// Mở màn hình khung ở một góc nhìn cụ thể (bảng học kỳ, tri thức...).
+  void _openCurriculumView(CurriculumView view) {
+    AppState.instance.setCurriculumView(view);
+    _switchTab(0);
+  }
 
   void _switchTab(int newIndex) {
     AppState.instance.setActiveNote(null);
@@ -243,23 +256,43 @@ class _AppShellState extends State<AppShell> {
                                   : IndexedStack(
                                       index: _index,
                                       children: [
-                                        const GraphPage(),
+                                        GraphPage(
+                                          onOpenAcademic: () => _switchTab(4),
+                                          onOpenOverview: () =>
+                                              _switchTab(overviewTab),
+                                        ),
                                         const SubjectsPage(),
                                         const VaultPage(),
                                         // Nút "Xem trên đồ thị" trong câu trả
                                         // lời của AI và trong khối cảnh báo
                                         // rủi ro cần shell chuyển tab hộ.
                                         AiChatPage(
-                                          onOpenGraph: () => _switchTab(0),
+                                          onOpenGraph: () => _openCurriculumView(
+                                            CurriculumView.graph,
+                                          ),
                                         ),
                                         AcademicPage(
-                                          onOpenGraph: () => _switchTab(0),
+                                          onOpenGraph: () => _openCurriculumView(
+                                            CurriculumView.graph,
+                                          ),
+                                          onOpenBoard: () => _openCurriculumView(
+                                            CurriculumView.board,
+                                          ),
                                         ),
                                         const SettingsPage(),
+                                        CurriculaOverviewPage(
+                                          onOpenCurriculum: () => _switchTab(0),
+                                        ),
                                       ],
                                     ),
                             ),
-                            if (AppState.instance.activeNote != null || _index == 0)
+                            // Mạng tri thức có bảng chi tiết riêng (khái
+                            // niệm, so sánh hai môn), nên không chồng thêm
+                            // bảng chi tiết môn học vào bên phải nó.
+                            if (AppState.instance.activeNote != null ||
+                                (_index == 0 &&
+                                    AppState.instance.curriculumView !=
+                                        CurriculumView.knowledge))
                               const SubjectDetailPanel(),
                           ],
                         ),
@@ -324,10 +357,20 @@ class _ObsidianRibbon extends StatelessWidget {
           Divider(height: 1, color: AppColors.shellBorder),
           const SizedBox(height: 10),
 
-          // Các icon điều hướng chính
+          // Các icon điều hướng chính. Tổng quan khung đứng đầu vì nó là màn
+          // hình ngoài cùng: chọn khung trước, rồi mới vào bản đồ của khung.
+          _RibbonIconButton(
+            icon: currentIndex == _AppShellState.overviewTab
+                ? Icons.dashboard
+                : Icons.dashboard_outlined,
+            tooltip: 'Khung chương trình (danh sách / biểu đồ)',
+            isSelected: currentIndex == _AppShellState.overviewTab,
+            onTap: () => onSelectTab(_AppShellState.overviewTab),
+          ),
+          const SizedBox(height: 6),
           _RibbonIconButton(
             icon: currentIndex == 0 ? Icons.hub : Icons.hub_outlined,
-            tooltip: 'Bản đồ tri thức (Graph view)',
+            tooltip: 'Bản đồ khung: sơ đồ · học kỳ · tri thức',
             isSelected: currentIndex == 0,
             onTap: () => onSelectTab(0),
           ),
