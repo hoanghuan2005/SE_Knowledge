@@ -14,7 +14,9 @@ import 'subject_form_dialog.dart';
 /// Bảng dữ liệu môn học — hiển thị danh sách môn theo Khung chương trình (Curriculum)
 /// và gom nhóm trực quan theo Học kỳ.
 class SubjectsPage extends StatefulWidget {
-  const SubjectsPage({super.key});
+  final bool showHeader;
+
+  const SubjectsPage({super.key, this.showHeader = true});
 
   @override
   State<SubjectsPage> createState() => _SubjectsPageState();
@@ -66,6 +68,109 @@ class _SubjectsPageState extends State<SubjectsPage> {
           ..sort();
 
         final totalCredits = rows.fold<int>(0, (sum, s) => sum + s.credits);
+
+        if (!widget.showHeader) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        border: Border(bottom: BorderSide(color: AppColors.divider)),
+                      ),
+                      child: Row(
+                        children: [
+                          _SemesterFilter(
+                            semesters: availableSemesters,
+                            value: _semesterFilter,
+                            onChanged: (sem) => setState(() => _semesterFilter = sem),
+                          ),
+                          const SizedBox(width: 12),
+                          SizedBox(
+                            width: 260,
+                            height: 32,
+                            child: TextField(
+                              controller: _search,
+                              style: const TextStyle(fontSize: 12.5),
+                              decoration: InputDecoration(
+                                hintText: 'Tìm mã hoặc tên môn...',
+                                hintStyle: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.textSecondary.withValues(alpha: 0.7),
+                                ),
+                                prefixIcon: Icon(
+                                  Icons.search,
+                                  size: 16,
+                                  color: AppColors.textSecondary,
+                                ),
+                                prefixIconConstraints: const BoxConstraints(
+                                  minWidth: 32,
+                                  minHeight: 32,
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 0,
+                                ),
+                                isDense: true,
+                                filled: true,
+                                fillColor: AppColors.surface,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(6),
+                                  borderSide: BorderSide(
+                                    color: AppColors.border.withValues(alpha: 0.5),
+                                    width: 0.8,
+                                  ),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(6),
+                                  borderSide: BorderSide(
+                                    color: AppColors.border.withValues(alpha: 0.5),
+                                    width: 0.8,
+                                  ),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(6),
+                                  borderSide: BorderSide(color: AppColors.primary, width: 1.2),
+                                ),
+                              ),
+                              onChanged: (v) => setState(() => _keyword = v),
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${rows.length} môn · $totalCredits tín chỉ',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: rows.isEmpty
+                          ? EmptyState(
+                              icon: Icons.inbox_outlined,
+                              title: currentGraph.isEmpty
+                                  ? 'Chưa có môn học nào trong khung này'
+                                  : 'Không tìm thấy môn khớp bộ lọc',
+                              message: currentGraph.isEmpty
+                                  ? 'Chọn khung chương trình khác hoặc thêm môn mới.'
+                                  : 'Thử xoá bộ lọc hoặc nhập từ khoá khác.',
+                            )
+                          : _Table(rows: rows),
+                    ),
+                  ],
+                ),
+              ),
+              const SubjectDetailPanel(),
+            ],
+          );
+        }
 
         return Column(
           children: [
@@ -173,7 +278,31 @@ class _SubjectsPageState extends State<SubjectsPage> {
                 ),
                 const SizedBox(width: 8),
 
-                // Nút Thêm môn
+                // Nút Nhập điểm chuyển từ FAB nổi lên thanh công cụ
+                SizedBox(
+                  height: 32,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.upload_file_outlined, size: 16),
+                    label: const Text(
+                      'Nhập điểm',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(
+                        color: AppColors.primary.withValues(alpha: 0.5),
+                      ),
+                      foregroundColor: AppColors.primary,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                    onPressed: () => TranscriptImportDialog.pickAndShow(context),
+                  ),
+                ),
+                const SizedBox(width: 8),
+
+                // Nút Thêm môn học
                 SizedBox(
                   height: 32,
                   child: ElevatedButton.icon(
@@ -183,7 +312,6 @@ class _SubjectsPageState extends State<SubjectsPage> {
                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                     ),
                     style: ElevatedButton.styleFrom(
-                      elevation: 0,
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(6),
@@ -198,37 +326,17 @@ class _SubjectsPageState extends State<SubjectsPage> {
               child: Row(
                 children: [
                   Expanded(
-                    child: Stack(
-                      children: [
-                        rows.isEmpty
-                            ? EmptyState(
-                                icon: Icons.inbox_outlined,
-                                title: currentGraph.isEmpty
-                                    ? 'Chưa có môn học nào trong khung này'
-                                    : 'Không tìm thấy môn khớp bộ lọc',
-                                message: currentGraph.isEmpty
-                                    ? 'Chọn khung chương trình khác hoặc thêm môn mới.'
-                                    : 'Thử xoá bộ lọc hoặc nhập từ khoá khác.',
-                              )
-                            : _Table(rows: rows),
-                        Positioned(
-                          right: 16,
-                          bottom: 16,
-                          child: FloatingActionButton.extended(
-                            heroTag: 'import_grades',
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: Colors.white,
-                            elevation: 2,
-                            icon: const Icon(Icons.upload_file, size: 18),
-                            label: const Text(
-                              'Nhập điểm',
-                              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
-                            ),
-                            onPressed: () => TranscriptImportDialog.pickAndShow(context),
-                          ),
-                        ),
-                      ],
-                    ),
+                    child: rows.isEmpty
+                        ? EmptyState(
+                            icon: Icons.inbox_outlined,
+                            title: currentGraph.isEmpty
+                                ? 'Chưa có môn học nào trong khung này'
+                                : 'Không tìm thấy môn khớp bộ lọc',
+                            message: currentGraph.isEmpty
+                                ? 'Chọn khung chương trình khác hoặc thêm môn mới.'
+                                : 'Thử xoá bộ lọc hoặc nhập từ khoá khác.',
+                          )
+                        : _Table(rows: rows),
                   ),
                   const SubjectDetailPanel(),
                 ],
@@ -359,7 +467,7 @@ class _Table extends StatelessWidget {
                               ),
                               const SizedBox(width: 6),
                               Text(
-                                sem == 0 ? 'Chưa phân kỳ' : 'Học kỳ $sem',
+                                sem == 0 ? 'Kỳ 0' : 'Học kỳ $sem',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w700,
@@ -397,7 +505,7 @@ class _Table extends StatelessWidget {
                             )
                           : Colors.transparent,
                       child: InkWell(
-                        onTap: () => state.select(s.id),
+                        onTap: () => state.select(selected ? null : s.id),
                         onDoubleTap: () =>
                             SubjectFormDialog.show(context, subject: s),
                         child: Container(
@@ -459,7 +567,7 @@ class _Table extends StatelessWidget {
                                       borderRadius: BorderRadius.circular(4),
                                     ),
                                     child: Text(
-                                      s.semester == 0 ? 'N/A' : 'Kỳ ${s.semester}',
+                                      s.semester == 0 ? 'Kỳ 0' : 'Kỳ ${s.semester}',
                                       textAlign: TextAlign.center,
                                       style: TextStyle(
                                         fontSize: 11,
@@ -627,7 +735,7 @@ class _SemesterFilter extends StatelessWidget {
               DropdownMenuItem<int?>(
                 value: s,
                 child: Text(
-                  s == 0 ? 'N/A' : 'Kỳ $s',
+                  s == 0 ? 'Kỳ 0' : 'Kỳ $s',
                   style: TextStyle(
                     fontSize: 12,
                     color: AppColors.textPrimary,

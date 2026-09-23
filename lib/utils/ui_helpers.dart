@@ -91,6 +91,7 @@ class PageHeader extends StatelessWidget {
   final String subtitle;
   final List<Widget> actions;
   final EdgeInsetsGeometry? padding;
+  final double? height;
 
   const PageHeader({
     super.key,
@@ -98,12 +99,14 @@ class PageHeader extends StatelessWidget {
     this.subtitle = '',
     this.actions = const [],
     this.padding,
+    this.height = 52,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: padding ?? const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      height: height,
+      padding: padding ?? const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
         color: AppColors.surface,
         border: Border(bottom: BorderSide(color: AppColors.divider)),
@@ -113,12 +116,12 @@ class PageHeader extends StatelessWidget {
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
                   title,
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 15,
                     fontWeight: FontWeight.w700,
                     color: AppColors.textPrimary,
                   ),

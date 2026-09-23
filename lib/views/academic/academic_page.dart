@@ -22,15 +22,19 @@ class AcademicPage extends StatefulWidget {
   /// nút "Xem trên đồ thị" ở tab Trợ lý AI.
   final VoidCallback? onOpenGraph;
 
-  /// Khi nhúng vào SubjectsPage thì ẩn PageHeader riêng, để trang cha quản lý.
-  final bool showHeader;
-
-  const AcademicPage({super.key, this.onOpenGraph, this.showHeader = true});
   /// Mở bảng học kỳ của khung đang xem, nơi các môn được tô xanh/đỏ theo
   /// mục tiêu GPA.
   final VoidCallback? onOpenBoard;
 
-  const AcademicPage({super.key, this.onOpenGraph, this.onOpenBoard});
+  /// Khi nhúng vào SubjectsPage thì ẩn PageHeader riêng, để trang cha quản lý.
+  final bool showHeader;
+
+  const AcademicPage({
+    super.key,
+    this.onOpenGraph,
+    this.onOpenBoard,
+    this.showHeader = true,
+  });
 
   @override
   State<AcademicPage> createState() => _AcademicPageState();

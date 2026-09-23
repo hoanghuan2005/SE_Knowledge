@@ -52,15 +52,34 @@ class _SubjectDetailPanelState extends State<SubjectDetailPanel> {
               ? const _NoSelection()
               : Column(
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                      child: _ModeToggle(
-                        showChat: _showChat,
-                        onChanged: (v) => setState(() => _showChat = v),
+                    Container(
+                      height: 52,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        border: Border(bottom: BorderSide(color: AppColors.divider)),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _ModeToggle(
+                              showChat: _showChat,
+                              onChanged: (v) => setState(() => _showChat = v),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            tooltip: 'Đóng chi tiết',
+                            icon: const Icon(Icons.close, size: 16),
+                            splashRadius: 14,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                            color: AppColors.textSecondary,
+                            onPressed: () => AppState.instance.select(null),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    const Divider(height: 1),
                     Expanded(
                       child: _showChat
                           ? SubjectChatPanel(
@@ -87,8 +106,8 @@ class _ModeToggle extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = AppColors.isDark;
     return Container(
-      height: 36,
-      padding: const EdgeInsets.all(3),
+      height: 32,
+      padding: const EdgeInsets.all(2.5),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF141418) : const Color(0xFFEBE9F2),
         borderRadius: BorderRadius.circular(8),
@@ -165,16 +184,16 @@ class _ToggleItem extends StatelessWidget {
           children: [
             Icon(
               icon,
-              size: 14,
+              size: 13,
               color: selected
                   ? AppColors.primary
                   : AppColors.textSecondary,
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 5),
             Text(
               label,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: 11.5,
                 fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                 color: selected
                     ? AppColors.textPrimary
@@ -222,7 +241,7 @@ class _Detail extends StatelessWidget {
       children: [
         Expanded(
           child: ListView(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
             children: [
               Row(
                 children: [

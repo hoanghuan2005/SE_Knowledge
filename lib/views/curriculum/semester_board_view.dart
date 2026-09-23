@@ -37,10 +37,7 @@ enum BoardColorMode {
 class SemesterBoardView extends StatefulWidget {
   final GraphData data;
 
-  /// Nhảy sang tab Học lực để xem kế hoạch học cải thiện đầy đủ.
-  final VoidCallback? onOpenAcademic;
-
-  const SemesterBoardView({super.key, required this.data, this.onOpenAcademic});
+  const SemesterBoardView({super.key, required this.data});
 
   @override
   State<SemesterBoardView> createState() => _SemesterBoardViewState();
@@ -55,7 +52,7 @@ class _SemesterBoardViewState extends State<SemesterBoardView> {
   final ScrollController _hScroll = ScrollController();
   final TextEditingController _search = TextEditingController();
 
-  late BoardColorMode _mode;
+  BoardColorMode _mode = BoardColorMode.semester;
   bool _onlyProgramming = false;
 
   String get _scopeKey => AppState.instance.activeCurriculumCode ?? '*';
@@ -131,16 +128,25 @@ class _SemesterBoardViewState extends State<SemesterBoardView> {
                   .where((s) => programming.contains(s.code.toUpperCase()))
                   .length,
               search: _search,
+              allCollapsed: terms.isNotEmpty && terms.every(_collapsed.contains),
               onModeChanged: _setMode,
               onToggleProgramming: () =>
                   setState(() => _onlyProgramming = !_onlyProgramming),
               onSearchChanged: () => setState(() {}),
-              onExpandAll: () => setState(_collapsed.clear),
-              onCollapseAll: () => setState(() => _collapsed.addAll(terms)),
+              onToggleCollapseAll: () {
+                setState(() {
+                  final allCollapsed = terms.isNotEmpty && terms.every(_collapsed.contains);
+                  if (allCollapsed) {
+                    _collapsed.clear();
+                  } else {
+                    _collapsed.addAll(terms);
+                  }
+                });
+              },
               onExport: () => _export(bySemester),
             ),
             if (state.hasTranscript)
-              _GoalStrip(onOpenAcademic: widget.onOpenAcademic),
+              const _GoalStrip(),
             Expanded(
               child: terms.isEmpty
                   ? const EmptyState(
@@ -329,11 +335,11 @@ class _Toolbar extends StatelessWidget {
   final bool onlyProgramming;
   final int programmingCount;
   final TextEditingController search;
+  final bool allCollapsed;
   final ValueChanged<BoardColorMode> onModeChanged;
   final VoidCallback onToggleProgramming;
   final VoidCallback onSearchChanged;
-  final VoidCallback onExpandAll;
-  final VoidCallback onCollapseAll;
+  final VoidCallback onToggleCollapseAll;
   final VoidCallback onExport;
 
   const _Toolbar({
@@ -342,11 +348,11 @@ class _Toolbar extends StatelessWidget {
     required this.onlyProgramming,
     required this.programmingCount,
     required this.search,
+    required this.allCollapsed,
     required this.onModeChanged,
     required this.onToggleProgramming,
     required this.onSearchChanged,
-    required this.onExpandAll,
-    required this.onCollapseAll,
+    required this.onToggleCollapseAll,
     required this.onExport,
   });
 
@@ -359,8 +365,6 @@ class _Toolbar extends StatelessWidget {
         color: AppColors.surface,
         border: Border(bottom: BorderSide(color: AppColors.divider)),
       ),
-      // Hai cụm trái/phải trong một Wrap: đủ chỗ thì nằm chung một hàng, cụm
-      // phải dạt về mép phải; hẹp quá thì cụm phải xuống hàng thay vì tràn.
       child: Wrap(
         alignment: WrapAlignment.spaceBetween,
         crossAxisAlignment: WrapCrossAlignment.center,
@@ -421,17 +425,21 @@ class _Toolbar extends StatelessWidget {
                     'nội dung syllabus (IoT, Hệ điều hành cũng có lập trình).',
                 onSelected: (_) => onToggleProgramming(),
               ),
-              const SizedBox(width: 10),
+            ],
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
               SizedBox(
-                width: 150,
-                height: 30,
+                width: 170,
+                height: 32,
                 child: TextField(
                   controller: search,
                   onChanged: (_) => onSearchChanged(),
                   style: const TextStyle(fontSize: 12),
                   decoration: InputDecoration(
                     isDense: true,
-                    hintText: 'Tìm mã hoặc tên môn',
+                    hintText: 'Tìm mã hoặc tên môn...',
                     hintStyle: TextStyle(
                       fontSize: 12,
                       color: AppColors.textHint,
@@ -452,29 +460,27 @@ class _Toolbar extends StatelessWidget {
                   ),
                 ),
               ),
-            ],
-          ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                tooltip: 'Mở rộng mọi kỳ',
-                icon: const Icon(Icons.unfold_more, size: 18),
-                color: AppColors.textSecondary,
-                onPressed: onExpandAll,
-              ),
-              IconButton(
-                tooltip: 'Thu gọn mọi kỳ',
-                icon: const Icon(Icons.unfold_less, size: 18),
-                color: AppColors.textSecondary,
-                onPressed: onCollapseAll,
-              ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 8),
               SizedBox(
-                height: 30,
+                height: 32,
                 child: OutlinedButton.icon(
                   icon: const Icon(Icons.view_kanban_outlined, size: 15),
-                  label: const Text('Xuất .md dạng board'),
+                  label: const Text(
+                    'Xuất .md dạng board',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    side: BorderSide(
+                      color: AppColors.primary.withValues(alpha: 0.5),
+                      width: 0.8,
+                    ),
+                    foregroundColor: AppColors.primary,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
                   onPressed: onExport,
                 ),
               ),
@@ -547,9 +553,7 @@ class _ModePill extends StatelessWidget {
 
 /// Dải tóm tắt tiến trình học tập so với mục tiêu, ngay trên bảng.
 class _GoalStrip extends StatelessWidget {
-  final VoidCallback? onOpenAcademic;
-
-  const _GoalStrip({this.onOpenAcademic});
+  const _GoalStrip();
 
   @override
   Widget build(BuildContext context) {
@@ -656,17 +660,6 @@ class _GoalStrip extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 8),
-          if (onOpenAcademic != null)
-            TextButton.icon(
-              icon: const Icon(Icons.trending_up, size: 15),
-              label: Text(
-                plan.belowTargetCount > 0
-                    ? 'Kế hoạch cải thiện (${plan.belowTargetCount} môn)'
-                    : 'Xem kế hoạch',
-              ),
-              onPressed: onOpenAcademic,
-            ),
         ],
       ),
     );
@@ -942,23 +935,6 @@ class _SubjectCardState extends State<_SubjectCard> {
   static Color get _prereqColor => AppColors.info;
   static const Color _dependentColor = AppColors.accent;
 
-  Color _stripeColor(TranscriptEntry? entry, double target) {
-    final s = widget.subject;
-    return switch (widget.mode) {
-      BoardColorMode.semester => AppColors.forSemester(s.semester),
-      BoardColorMode.grade => AppColors.gradeColor(
-        entry?.grade,
-        entry?.status ?? SubjectStatus.notStarted,
-      ),
-      BoardColorMode.target => targetStatusStyle(
-        targetStatusOf(entry, target),
-      ).color,
-      BoardColorMode.domain => AppColors.domainColor(
-        AcademicAnalyticsService.instance.domainOf(s.code),
-      ),
-    };
-  }
-
   @override
   Widget build(BuildContext context) {
     final state = AppState.instance;
@@ -966,7 +942,6 @@ class _SubjectCardState extends State<_SubjectCard> {
     final entry = state.gradeOf(s.code);
     final target = state.targetGpa;
     final status = targetStatusOf(entry, target);
-    final stripe = _stripeColor(entry, target);
 
     final knowledge = state.knowledge?.subjects[s.code.toUpperCase()];
     final topConcepts = knowledge == null
@@ -1015,6 +990,7 @@ class _SubjectCardState extends State<_SubjectCard> {
               onDoubleTap: () => state.openNoteTab(s),
               borderRadius: BorderRadius.circular(8),
               child: Container(
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
                   color: AppColors.surface,
                   borderRadius: BorderRadius.circular(8),
@@ -1023,96 +999,75 @@ class _SubjectCardState extends State<_SubjectCard> {
                     width: emphasized ? 1.8 : 1,
                   ),
                 ),
-                child: IntrinsicHeight(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Container(
-                        width: 4,
-                        decoration: BoxDecoration(
-                          color: stripe,
-                          borderRadius: const BorderRadius.horizontal(
-                            left: Radius.circular(7),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            s.code,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.textPrimary,
+                            ),
                           ),
                         ),
-                      ),
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Flexible(
-                                    child: Text(
-                                      s.code,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w800,
-                                        color: AppColors.textPrimary,
-                                      ),
-                                    ),
-                                  ),
-                                  if (widget.isProgramming) ...[
-                                    const SizedBox(width: 5),
-                                    Tooltip(
-                                      message: 'Có kiến thức lập trình',
-                                      child: Icon(
-                                        Icons.code,
-                                        size: 14,
-                                        color: AppColors.textSecondary,
-                                      ),
-                                    ),
-                                  ],
-                                  const Spacer(),
-                                  Text(
-                                    '${s.credits} TC',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: AppColors.textSecondary,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                s.name.replaceAll('_', ' — '),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11.5,
-                                  height: 1.3,
-                                  color: AppColors.textSecondary,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Wrap(
-                                spacing: 4,
-                                runSpacing: 4,
-                                children: [
-                                  ..._chips(entry, status),
-                                  if (widget.relation == _Relation.prerequisite)
-                                    _RelationTag(
-                                      icon: Icons.subdirectory_arrow_right,
-                                      text: 'Cần học trước',
-                                      color: _prereqColor,
-                                    ),
-                                  if (widget.relation == _Relation.dependent)
-                                    const _RelationTag(
-                                      icon: Icons.lock_open,
-                                      text: 'Được mở ra',
-                                      color: _dependentColor,
-                                    ),
-                                ],
-                              ),
-                            ],
+                        if (widget.isProgramming) ...[
+                          const SizedBox(width: 5),
+                          Tooltip(
+                            message: 'Có kiến thức lập trình',
+                            child: Icon(
+                              Icons.code,
+                              size: 14,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                        const Spacer(),
+                        Text(
+                          '${s.credits} TC',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textSecondary,
                           ),
                         ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      s.name.replaceAll('_', ' — '),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        height: 1.3,
+                        color: AppColors.textSecondary,
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      children: [
+                        ..._chips(entry, status),
+                        if (widget.relation == _Relation.prerequisite)
+                          _RelationTag(
+                            icon: Icons.subdirectory_arrow_right,
+                            text: 'Cần học trước',
+                            color: _prereqColor,
+                          ),
+                        if (widget.relation == _Relation.dependent)
+                          const _RelationTag(
+                            icon: Icons.lock_open,
+                            text: 'Được mở ra',
+                            color: _dependentColor,
+                          ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ),

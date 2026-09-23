@@ -120,7 +120,9 @@ class AppColors {
   ];
 
   static Color forSemester(int semester) {
-    if (semester < 1) return semesterPalette.first;
+    if (semester <= 0) {
+      return isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    }
     return semesterPalette[(semester - 1) % semesterPalette.length];
   }
 
