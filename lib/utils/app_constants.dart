@@ -26,6 +26,35 @@ class AppConstants {
   static const String defaultGeminiModel = 'gemini-3.6-flash';
   static const String defaultOpenAiModel = 'gpt-4o-mini';
 
+  /// Khoá lưu model dành cho tác vụ phụ, tách theo từng nhà cung cấp.
+  static const String keyAiLightModel = 'AI_LIGHT_MODEL';
+
+  /// Model chọn được cho tác vụ phụ (hiện chỉ có việc sinh câu hỏi gợi ý).
+  ///
+  /// Mục đích chính KHÔNG phải tiết kiệm tiền — sau khi cắt ngữ cảnh và
+  /// prompt thì lời gọi đó chỉ còn ~292 token, rẻ tới mức không đáng bàn.
+  /// Mục đích là **tách hạn mức**: Gemini tính RPM/TPM/RPD riêng cho từng
+  /// model, nên đẩy việc phụ sang model khác thì nó thôi ăn vào hạn mức của
+  /// model đang dùng để trả lời người dùng — đúng thứ đã gây lỗi 503 quá tải.
+  ///
+  /// Danh sách chép từ trang model chính thức, chỉ giữ nhóm sinh văn bản: đã
+  /// bỏ TTS, Live, Transcribe, image và các bản Pro (đắt hơn model chính thì
+  /// ngược mục đích).
+  static const List<({String id, String label})> geminiLightModels = [
+    (id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite'),
+    (id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite'),
+    (id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite'),
+    (id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash'),
+    (id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash'),
+  ];
+
+  /// Chưa có danh sách ID đã kiểm chứng cho OpenAI, nên để trống — giao diện
+  /// sẽ chỉ hiện mục "dùng model chính" thay vì bịa ra tên model.
+  static const List<({String id, String label})> openAiLightModels = [];
+
+  static List<({String id, String label})> lightModelsOf(String provider) =>
+      provider == providerOpenAi ? openAiLightModels : geminiLightModels;
+
   // --- Kích thước cửa sổ desktop ---
   static const double minWindowWidth = 1000;
   static const double minWindowHeight = 640;

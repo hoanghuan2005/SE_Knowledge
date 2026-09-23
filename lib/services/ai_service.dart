@@ -56,6 +56,15 @@ Stream<String> sseEventPayloads(Stream<String> lines) async* {
 /// Cố tình KHÔNG gồm 400/401/403/404: sai key, sai tên model hay request
 /// hỏng thì gọi lại bao nhiêu lần cũng hỏng, chỉ tổ bắt người dùng chờ thêm
 /// rồi vẫn nhận đúng lỗi đó.
+/// Mã lỗi nói rằng chính cái **tên model** là thứ sai, chứ không phải mạng
+/// hay nội dung request.
+///
+/// Dùng để quyết định có lùi tác vụ phụ về model chính hay không. Nhận diện
+/// sai ở đây rất đắt: coi nhầm lỗi mạng thành "model hỏng" sẽ tắt model phụ
+/// oan cả phiên, còn bỏ sót thì người dùng mất khối gợi ý mà không hiểu vì
+/// sao.
+bool isModelUnavailableStatus(int? status) => status == 404 || status == 400;
+
 bool isTransientAiStatus(int status) =>
     status == 429 || (status >= 500 && status <= 599);
 
@@ -132,6 +141,14 @@ class AiService {
     Duration(seconds: 2),
   ];
 
+  /// Model phụ đã lỗi một lần trong phiên này thì thôi thử lại.
+  ///
+  /// Giữ ở bộ nhớ chứ không ghi xuống đĩa: người dùng sửa lại cấu hình rồi mở
+  /// app lần sau là được thử lại, khỏi phải xoá cờ thủ công ở đâu cả.
+  bool _lightModelUnavailable = false;
+
+  bool _isModelUnavailable(int? status) => isModelUnavailableStatus(status);
+
 
   Future<bool> get isConfigured async {
     final key = await _settings.getApiKey();
@@ -172,6 +189,15 @@ class AiService {
     /// chuyện không liên quan tới việc đó (cách đánh số lộ trình, cách gắn
     /// nhãn phần tự học, cách bọc mã môn cho tầng hiển thị bóc link).
     bool minimalPrompt = false,
+
+    /// Ưu tiên model dành cho tác vụ phụ, nếu người dùng đã chọn một model
+    /// trong Cài đặt.
+    ///
+    /// Gemini tính hạn mức RPM/TPM/RPD riêng cho từng model, nên đẩy việc phụ
+    /// sang model khác giúp nó thôi tranh chấp hạn mức với model đang dùng để
+    /// trả lời người dùng. Chọn sai model cũng không mất tính năng: lời gọi
+    /// sẽ tự lùi về model chính.
+    bool preferLightModel = false,
     void Function(GraphRagSummary summary)? onContext,
     void Function(String delta)? onDelta,
   }) async {
@@ -183,7 +209,11 @@ class AiService {
       );
     }
 
-    final model = await _settings.getModel(provider);
+    final mainModel = await _settings.getModel(provider);
+    final lightModel = preferLightModel && !_lightModelUnavailable
+        ? await _settings.getLightModel(provider)
+        : null;
+    final usingLight = lightModel != null && lightModel != mainModel;
 
     GraphRagContext? ragContext;
     if (extraContext == null && includeKnowledgeContext) {
@@ -202,9 +232,9 @@ class AiService {
           );
     final recent = _recentHistory(history);
 
-    try {
-      final text = provider == AppConstants.providerOpenAi
-          ? await _streamOpenAi(
+    Future<String> dispatch(String model) {
+      return provider == AppConstants.providerOpenAi
+          ? _streamOpenAi(
               apiKey: apiKey,
               model: model,
               systemPrompt: systemPrompt,
@@ -212,7 +242,7 @@ class AiService {
               question: question,
               onDelta: onDelta,
             )
-          : await _streamGemini(
+          : _streamGemini(
               apiKey: apiKey,
               model: model,
               systemPrompt: systemPrompt,
@@ -220,6 +250,21 @@ class AiService {
               question: question,
               onDelta: onDelta,
             );
+    }
+
+    try {
+      String text;
+      try {
+        text = await dispatch(usingLight ? lightModel : mainModel);
+      } on AiException catch (e) {
+        // Model phụ không dùng được (Google đổi tên, khai tử, hoặc key không
+        // có quyền). Lùi về model chính để người dùng không mất tính năng, và
+        // ngừng thử model phụ trong phiên này để khỏi tốn thêm lượt gọi hỏng
+        // nào nữa.
+        if (!usingLight || !_isModelUnavailable(e.statusCode)) rethrow;
+        _lightModelUnavailable = true;
+        text = await dispatch(mainModel);
+      }
       return AiAnswer(text: text, ragSummary: ragContext?.summary);
     } on AiException {
       rethrow;
@@ -544,7 +589,7 @@ class AiService {
         if (isTransientAiStatus(response.statusCode)) {
           throw _TransientFailure(message);
         }
-        throw AiException(message);
+        throw AiException(message, statusCode: response.statusCode);
       }
 
       final buffer = StringBuffer();
@@ -604,7 +649,14 @@ class AiService {
 
 class AiException implements Exception {
   final String message;
-  AiException(this.message);
+
+  /// Mã HTTP khi lỗi đến từ phía nhà cung cấp, null với lỗi dựng tại chỗ
+  /// (thiếu API key, nội dung rỗng...). Dùng để phân biệt "sai tên model" với
+  /// "mạng hỏng" mà không phải dò chữ trong thông báo lỗi.
+  final int? statusCode;
+
+  AiException(this.message, {this.statusCode});
+
   @override
   String toString() => message;
 }

@@ -73,6 +73,8 @@ class SubjectChatService extends ChangeNotifier {
         extraContext: context,
         // Việc này chỉ cần 4 dòng chữ, không cần bộ quy tắc gia sư đầy đủ.
         minimalPrompt: true,
+        // Và cũng không cần ăn vào hạn mức của model đang dùng để trả lời.
+        preferLightModel: true,
       );
       _suggestions[subjectId] = _splitLines(answer.text);
     } catch (_) {

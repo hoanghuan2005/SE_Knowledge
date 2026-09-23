@@ -44,6 +44,8 @@ class SettingsService {
 
   String _apiKeyStorageKey(String provider) => '${AppConstants.keyAiApiKey}_$provider';
   String _modelStorageKey(String provider) => '${AppConstants.keyAiModel}_$provider';
+  String _lightModelStorageKey(String provider) =>
+      '${AppConstants.keyAiLightModel}_$provider';
 
   // --- Obsidian Vault ---
 
@@ -112,6 +114,28 @@ class SettingsService {
     return p == AppConstants.providerOpenAi
         ? AppConstants.defaultOpenAiModel
         : AppConstants.defaultGeminiModel;
+  }
+
+  /// Model dành cho tác vụ phụ. Rỗng nghĩa là dùng chung model chính.
+  ///
+  /// Mục đích là tách hạn mức gọi (Gemini tính RPM/TPM/RPD riêng theo từng
+  /// model), để việc sinh câu hỏi gợi ý không ăn vào hạn mức của model đang
+  /// dùng để trả lời người dùng.
+  Future<String?> getLightModel([String? provider]) async {
+    final p = provider ?? await getAiProvider();
+    final saved = (await _p).getString(_lightModelStorageKey(p));
+    return saved != null && saved.isNotEmpty ? saved : null;
+  }
+
+  Future<void> setLightModel(String? model, [String? provider]) async {
+    final prefs = await _p;
+    final p = provider ?? await getAiProvider();
+    final value = model?.trim() ?? '';
+    if (value.isEmpty) {
+      await prefs.remove(_lightModelStorageKey(p));
+    } else {
+      await prefs.setString(_lightModelStorageKey(p), value);
+    }
   }
 
   Future<void> setModel(String? model, [String? provider]) async {

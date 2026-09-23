@@ -160,6 +160,23 @@ void main() {
     });
   });
 
+  group('isModelUnavailableStatus', () {
+    test('sai tên model thì lùi về model chính', () {
+      expect(isModelUnavailableStatus(404), isTrue);
+      expect(isModelUnavailableStatus(400), isTrue);
+    });
+
+    test('lỗi tạm thời hay lỗi key thì không đổ cho tên model', () {
+      // Lùi model trong mấy ca này là chẩn đoán sai: 503 chỉ là quá tải, 401
+      // là sai key — đổi model không cứu được gì mà còn tắt model phụ oan.
+      expect(isModelUnavailableStatus(503), isFalse);
+      expect(isModelUnavailableStatus(429), isFalse);
+      expect(isModelUnavailableStatus(401), isFalse);
+      expect(isModelUnavailableStatus(500), isFalse);
+      expect(isModelUnavailableStatus(null), isFalse);
+    });
+  });
+
   group('geminiFinishReason', () {
     test('đọc được lý do dừng', () {
       expect(

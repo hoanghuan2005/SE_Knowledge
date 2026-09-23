@@ -28,6 +28,9 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _model = TextEditingController();
 
   String _provider = AppConstants.providerGemini;
+
+  /// Model cho tác vụ phụ; null nghĩa là dùng chung model chính.
+  String? _lightModel;
   bool _obscureKey = true;
   bool _loaded = false;
   int _dbSize = 0;
@@ -58,6 +61,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final provider = await _settings.getAiProvider();
     final key = await _settings.getApiKey();
     final model = await _settings.getModel();
+    final lightModel = await _settings.getLightModel(provider);
     final size = await DbService.instance.databaseSizeInBytes();
     final autoSave = await _settings.getAutoSaveFapNotes();
     final sendTranscript = await _settings.getSendTranscriptToAi();
@@ -67,6 +71,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _provider = provider;
       _apiKey.text = key ?? '';
       _model.text = model;
+      _lightModel = lightModel;
       _dbSize = size;
       _autoSaveFap = autoSave;
       _sendTranscriptToAi = sendTranscript;
@@ -113,6 +118,7 @@ class _SettingsPageState extends State<SettingsPage> {
     await _settings.setAiProvider(_provider);
     await _settings.setApiKey(_apiKey.text);
     await _settings.setModel(_model.text);
+    await _settings.setLightModel(_lightModel, _provider);
     if (mounted) Ui.success(context, 'Đã lưu cấu hình AI trên máy này.');
   }
 
@@ -285,6 +291,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 _model.text = _provider == AppConstants.providerOpenAi
                     ? AppConstants.defaultOpenAiModel
                     : AppConstants.defaultGeminiModel;
+                // Hai nhà cung cấp có danh sách model phụ khác nhau, giữ lại
+                // lựa chọn cũ sẽ thành giá trị không có trong danh sách mới.
+                _lightModel = null;
               });
             },
           ),
@@ -311,6 +320,8 @@ class _SettingsPageState extends State<SettingsPage> {
             controller: _model,
             decoration: const InputDecoration(labelText: 'Tên model'),
           ),
+          const SizedBox(height: 16),
+          _lightModelField(),
           const SizedBox(height: 16),
           Align(
             alignment: Alignment.centerRight,
@@ -656,6 +667,55 @@ class _SettingsPageState extends State<SettingsPage> {
     String two(int v) => v.toString().padLeft(2, '0');
     return '${two(t.day)}/${two(t.month)}/${t.year} '
         '${two(t.hour)}:${two(t.minute)}';
+  }
+
+  /// Chọn model cho tác vụ phụ (hiện là việc sinh câu hỏi gợi ý mỗi khi mở
+  /// một môn).
+  ///
+  /// Dùng danh sách cố định thay vì ô gõ tự do: gõ sai tên model thì lời gọi
+  /// hỏng, mà đây là chỗ người dùng không có cách nào biết mình gõ đúng hay
+  /// sai. Chọn nhầm cũng không mất tính năng — app tự lùi về model chính.
+  Widget _lightModelField() {
+    final options = AppConstants.lightModelsOf(_provider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DropdownButtonFormField<String?>(
+          initialValue: _lightModel,
+          isExpanded: true,
+          decoration: const InputDecoration(
+            labelText: 'Model cho tác vụ phụ',
+          ),
+          items: [
+            const DropdownMenuItem<String?>(
+              value: null,
+              child: Text('Dùng chung model chính'),
+            ),
+            for (final option in options)
+              DropdownMenuItem<String?>(
+                value: option.id,
+                child: Text('${option.label}  ·  ${option.id}'),
+              ),
+          ],
+          onChanged: (value) => setState(() => _lightModel = value),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          options.isEmpty
+              ? 'Chưa có danh sách model phụ đã kiểm chứng cho nhà cung cấp '
+                    'này, nên tác vụ phụ vẫn dùng model chính.'
+              : 'Việc sinh câu hỏi gợi ý sẽ gọi model này thay vì model chính. '
+                    'Google tính hạn mức riêng cho từng model, nên tách ra thì '
+                    'việc phụ không còn ăn vào hạn mức dành cho việc trả lời.',
+          style: TextStyle(
+            fontSize: 12,
+            height: 1.5,
+            color: AppColors.textSecondary,
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _storageCard() {
