@@ -56,6 +56,43 @@ class _AcademicPageState extends State<AcademicPage> {
   /// Tiêu đề của câu hỏi vừa gửi, hiện trên khung trả lời.
   String _aiTopic = '';
 
+  /// Nhận xét đã sinh trước đó, khoá theo tiêu đề câu hỏi.
+  ///
+  /// Bảng điểm hiếm khi đổi, nên mở lại tab rồi bấm lại cùng một nút là trả
+  /// tiền cho đúng một câu trả lời y hệt. Cache tại đây và chỉ thật sự gọi AI
+  /// khi dữ liệu đã khác hoặc người dùng chủ động bấm phân tích lại.
+  Map<String, String> _aiCache = const {};
+
+  /// Câu đang hiện lấy từ cache chứ không phải vừa gọi AI.
+  bool _aiFromCache = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAiCache();
+  }
+
+  /// Dấu vân tay của dữ liệu dùng để sinh nhận xét.
+  ///
+  /// Gồm cả kích thước đồ thị, vì sửa môn hay sửa quan hệ tiên quyết cũng làm
+  /// nhận xét về rủi ro lộ trình khác đi chứ không riêng bảng điểm.
+  String _aiSignature() {
+    final state = AppState.instance;
+    final rows = [
+      for (final e in state.transcript)
+        '${e.subjectCode}:${e.displayGrade}:${e.status.name}',
+    ]..sort();
+    return '${state.graph.subjects.length}/${state.graph.edges.length}'
+        '|${rows.join(",")}';
+  }
+
+  Future<void> _loadAiCache() async {
+    final cached =
+        await SettingsService.instance.getAcademicAiAnswers(_aiSignature());
+    if (!mounted || cached.isEmpty) return;
+    setState(() => _aiCache = cached);
+  }
+
   @override
   void dispose() {
     _search.dispose();
@@ -521,7 +558,23 @@ class _AcademicPageState extends State<AcademicPage> {
     return sb.toString();
   }
 
-  Future<void> _askAi(String topic, String question) async {
+  Future<void> _askAi(
+    String topic,
+    String question, {
+    bool force = false,
+  }) async {
+    // Dữ liệu không đổi thì hiện lại nhận xét cũ, khỏi tốn một lượt gọi.
+    final cached = _aiCache[topic];
+    if (!force && cached != null) {
+      setState(() {
+        _aiTopic = topic;
+        _aiAnswer = cached;
+        _aiError = null;
+        _aiFromCache = true;
+      });
+      return;
+    }
+
     // Người dùng đã tắt việc gửi điểm ra ngoài thì không lách qua nút này.
     if (!await SettingsService.instance.getSendTranscriptToAi()) {
       if (!mounted) return;
@@ -538,6 +591,7 @@ class _AcademicPageState extends State<AcademicPage> {
       _aiAnswer = '';
       _aiError = null;
       _aiTopic = topic;
+      _aiFromCache = false;
     });
 
     try {
@@ -555,7 +609,12 @@ class _AcademicPageState extends State<AcademicPage> {
         },
       );
       if (!mounted) return;
-      setState(() => _aiAnswer = answer.text);
+      setState(() {
+        _aiAnswer = answer.text;
+        _aiCache = {..._aiCache, topic: answer.text};
+      });
+      await SettingsService.instance
+          .setAcademicAiAnswers(_aiSignature(), _aiCache);
     } catch (e) {
       if (!mounted) return;
       setState(() => _aiError = e.toString());
@@ -586,15 +645,61 @@ class _AcademicPageState extends State<AcademicPage> {
                 color: AppColors.textPrimary,
               ),
             )
-          : LinkedAnswerText(
-              text: _aiAnswer,
-              style: TextStyle(
-                fontSize: 13.5,
-                height: 1.6,
-                color: AppColors.textPrimary,
-              ),
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                LinkedAnswerText(
+                  text: _aiAnswer,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    height: 1.6,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                // Nói rõ đây là bản lưu chứ không phải vừa hỏi xong, kèm
+                // đường thoát để hỏi lại — im lặng thì người dùng tưởng AI
+                // vừa chạy mà trả lời y hệt lần trước.
+                if (_aiFromCache) ...[
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.history,
+                        size: 14,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Nhận xét đã lưu từ lần trước, số liệu chưa đổi nên '
+                          'không gọi AI lại.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                      TextButton.icon(
+                        icon: const Icon(Icons.refresh, size: 15),
+                        label: const Text('Phân tích lại'),
+                        onPressed: _aiRunning ? null : _reAskCurrentTopic,
+                      ),
+                    ],
+                  ),
+                ],
+              ],
             ),
     );
+  }
+
+  /// Gọi lại AI cho đúng câu hỏi đang hiện, bỏ qua bản đã lưu.
+  void _reAskCurrentTopic() {
+    for (final (label, _, question) in _quickQuestions) {
+      if (label == _aiTopic) {
+        _askAi(label, question, force: true);
+        return;
+      }
+    }
   }
 }
 

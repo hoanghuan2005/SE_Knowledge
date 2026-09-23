@@ -259,10 +259,19 @@ class GraphRagService {
     // vẫn được ưu tiên, vì lúc đó người dùng đang nhắm vào môn cụ thể.
     if (byCode.isEmpty && _looksGlobal(question)) return const [];
 
+    final byKeyword = _rankByKeyword(question, rest);
+
     return [
       // Gọi thẳng mã môn đầy đủ là tín hiệu chắc chắn nhất, luôn đủ tin.
       for (final s in byCode) (subject: s, confident: true, viaCode: true),
-      ..._rankByKeyword(question, rest),
+
+      // Đã gọi tên môn bằng mã thì người dùng biết rõ mình hỏi gì, nên chỉ
+      // nhận thêm môn khớp chắc chắn (vào mã hoặc tên). Câu "prj301 và
+      // swd392 liên quan gì nhau" từng kéo theo GRC490, JPD316, JPD133 — chỉ
+      // vì mấy chữ còn lại trong câu trùng vài từ trong phần mô tả của chúng.
+      // Vẫn giữ đường cho câu hỏi trộn kiểu "PRJ301 và các môn database",
+      // nơi "database" khớp thẳng vào tên môn.
+      ...byKeyword.where((s) => byCode.isEmpty || s.confident),
     ];
   }
 
@@ -619,6 +628,32 @@ class GraphRagService {
         ..writeln(profile.summaryLine)
         ..writeln();
     }
+
+    // Điểm của những môn KHÔNG lọt vào subgraph.
+    //
+    // Subgraph bị cắt ở 20 node khi có kèm điểm, trong khi sinh viên có thể
+    // đã học 47 môn. Thiếu dòng này thì câu hỏi so sánh ("môn nào tôi thấp
+    // nhất") bị trả lời dựa trên đúng phần AI nhìn thấy, mà AI không hề biết
+    // mình đang nhìn thiếu. Liệt kê dạng "MÃ ĐIỂM" nên rất rẻ so với việc
+    // nâng trần node (mỗi node còn kéo theo mô tả và quan hệ tiên quyết).
+    if (!isFallback && gradeByCode.isNotEmpty) {
+      final shown = nodes.map((s) => s.code.toUpperCase()).toSet();
+      final others = <String>[
+        for (final entry in gradeByCode.entries)
+          if (!shown.contains(entry.key) && entry.value.hasGrade)
+            '${entry.key} ${entry.value.displayGrade}',
+      ]..sort();
+
+      if (others.isNotEmpty) {
+        sb
+          ..writeln(
+            'Điểm các môn đã học khác, không nằm trong danh sách chi tiết '
+            'bên dưới (${others.length} môn): ${others.join(", ")}.',
+          )
+          ..writeln();
+      }
+    }
+
     sb.write(isFallback
         ? 'Câu hỏi hướng tới cả chương trình, đây là toàn bộ danh sách môn '
             'học và quan hệ tiên quyết hiện có:\n'
