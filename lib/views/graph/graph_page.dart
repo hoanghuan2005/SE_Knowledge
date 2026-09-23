@@ -11,6 +11,7 @@ import '../../services/db_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
+import '../subjects/roadmap_dialog.dart';
 import '../subjects/subject_form_dialog.dart';
 import 'graph_settings_panel.dart';
 
@@ -183,21 +184,26 @@ class _GraphPageState extends State<GraphPage> {
                   onPressed: () => setState(() => _showSettings = !_showSettings),
                 ),
                 const SizedBox(width: 8),
+                // Nút Gợi ý lộ trình với viền mềm mại, tinh tế
                 SizedBox(
-                  height: 28,
+                  height: 32,
                   child: OutlinedButton.icon(
-                    icon: const Icon(Icons.cloud_download_outlined, size: 14),
+                    icon: const Icon(Icons.route_outlined, size: 16),
                     label: const Text(
-                      'Nhập từ fap_inbox',
-                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
+                      'Gợi ý lộ trình',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                     ),
                     style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                      side: BorderSide(
+                        color: AppColors.border.withValues(alpha: 0.7),
+                        width: 0.8,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(6),
                       ),
                     ),
-                    onPressed: () => _batchImportInbox(context),
+                    onPressed: () => _showLearningOrder(context),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -292,6 +298,30 @@ class _GraphPageState extends State<GraphPage> {
     );
   }
 
+Future<void> _showLearningOrder(BuildContext context) async {
+    final state = AppState.instance;
+    final order = await state.suggestLearningOrder();
+    if (!context.mounted) return;
+
+    if (order == null) {
+      Ui.error(
+        context,
+        'Đồ thị đang có chu trình tiên quyết nên không sắp xếp được lộ trình.',
+      );
+      return;
+    }
+    if (order.isEmpty) {
+      Ui.toast(context, 'Chưa có môn nào trong khung hiện tại để sắp xếp.');
+      return;
+    }
+
+    RoadmapDialog.show(
+      context,
+      order: order,
+      curriculumCode: state.activeCurriculumCode,
+      graphData: state.currentGraph,
+    );
+  }
 }
 
 // ============================================================================

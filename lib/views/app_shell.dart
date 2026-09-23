@@ -7,7 +7,6 @@ import '../services/chat_session_service.dart';
 import '../state/app_state.dart';
 import '../utils/app_colors.dart';
 import '../utils/ui_helpers.dart';
-import 'academic/academic_page.dart';
 import 'chat/ai_chat_page.dart';
 import 'curriculum/curriculum_form_dialog.dart';
 import 'graph/graph_page.dart';
@@ -16,6 +15,7 @@ import 'settings/settings_page.dart';
 import 'subjects/subject_form_dialog.dart';
 import 'subjects/subjects_page.dart';
 import 'vault/vault_page.dart';
+import 'widgets/sidebar_mini_graph.dart';
 import 'widgets/subject_detail_panel.dart';
 import 'widgets/tree_context_menu.dart';
 
@@ -59,7 +59,6 @@ class _AppShellState extends State<AppShell> {
     'Danh sách môn học',
     'Obsidian Vault',
     'Trợ lý học tập AI',
-    'Học lực',
     'Cài đặt hệ thống',
   ];
 
@@ -68,7 +67,6 @@ class _AppShellState extends State<AppShell> {
     Icons.article_outlined,
     Icons.folder_copy_outlined,
     Icons.auto_awesome,
-    Icons.insights,
     Icons.settings_outlined,
   ];
 
@@ -252,9 +250,6 @@ class _AppShellState extends State<AppShell> {
                                         AiChatPage(
                                           onOpenGraph: () => _switchTab(0),
                                         ),
-                                        AcademicPage(
-                                          onOpenGraph: () => _switchTab(0),
-                                        ),
                                         const SettingsPage(),
                                       ],
                                     ),
@@ -352,13 +347,6 @@ class _ObsidianRibbon extends StatelessWidget {
             isSelected: currentIndex == 3,
             onTap: () => onSelectTab(3),
           ),
-          const SizedBox(height: 6),
-          _RibbonIconButton(
-            icon: currentIndex == 4 ? Icons.insights : Icons.insights_outlined,
-            tooltip: 'Học lực (bảng điểm & phân tích)',
-            isSelected: currentIndex == 4,
-            onTap: () => onSelectTab(4),
-          ),
 
           const Spacer(),
 
@@ -382,10 +370,10 @@ class _ObsidianRibbon extends StatelessWidget {
 
           // Cài đặt
           _RibbonIconButton(
-            icon: currentIndex == 5 ? Icons.settings : Icons.settings_outlined,
+            icon: currentIndex == 4 ? Icons.settings : Icons.settings_outlined,
             tooltip: 'Cài đặt',
-            isSelected: currentIndex == 5,
-            onTap: () => onSelectTab(5),
+            isSelected: currentIndex == 4,
+            onTap: () => onSelectTab(4),
           ),
           const SizedBox(height: 12),
         ],
@@ -518,16 +506,14 @@ class _ObsidianSidebarPanel extends StatelessWidget {
       );
     }
 
-    // 3. Khi đang ở tab Cài đặt (index 5) -> Hiển thị Sidebar mục cài đặt
-    if (mainIndex == 5) {
+    // 3. Khi đang ở tab Cài đặt (index 4) -> Hiển thị Sidebar mục cài đặt
+    if (mainIndex == 4) {
       return _SettingsSidebarContent(
         onCloseSidebar: onCloseSidebar,
       );
     }
 
-    // 4. Mặc định (Đồ thị, Môn học, Học lực - index 0, 1, 4) -> Hiển thị Cây
-    //    thư mục môn học theo kỳ. Tab Học lực dùng chung cây này để bấm một
-    //    môn trong cây là nhảy thẳng sang node đó trên đồ thị.
+    // 4. Mặc định (Đồ thị, Môn học - index 0, 1) -> Hiển thị Cây thư mục môn học theo kỳ.
     return _FilesSidebarContent(
       activeTabIndex: activeTabIndex,
       searchQuery: searchQuery,
@@ -1411,7 +1397,7 @@ class _FilesSidebarContent extends StatelessWidget {
 
         return Column(
           children: [
-            // Top Tab Icons bar (Files, Search, Bookmarks) + Collapse button
+            // Top Tab Icons bar (Files, Search, Bookmarks, Graph) + Collapse button
             Container(
               height: 38,
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1442,6 +1428,13 @@ class _FilesSidebarContent extends StatelessWidget {
                     isSelected: activeTabIndex == 2,
                     onTap: () => onTabChanged(2),
                   ),
+                  const SizedBox(width: 4),
+                  _PanelTabIcon(
+                    icon: Icons.hub_outlined,
+                    tooltip: 'Đồ thị thu nhỏ (Graph view)',
+                    isSelected: activeTabIndex == 3,
+                    onTap: () => onTabChanged(3),
+                  ),
                   const Spacer(),
                   IconButton(
                     icon: const Icon(Icons.chevron_left, size: 18),
@@ -1454,189 +1447,285 @@ class _FilesSidebarContent extends StatelessWidget {
               ),
             ),
 
-            // Toolbar phụ kiểu Obsidian: Tiêu đề + Các nút New Note, Sort, Collapse All
-            Container(
-              height: 32,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                children: [
-                  Text(
-                    'TỆP & MÔN HỌC',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.obsidianTextMuted,
-                      letterSpacing: 0.8,
-                    ),
-                  ),
-                  const Spacer(),
-                  _MiniActionIcon(
-                    icon: Icons.create_new_folder_outlined,
-                    tooltip: 'Tạo tệp môn học mới',
-                    onTap: () => _createCurriculum(context),
-                  ),
-                  _MiniActionIcon(
-                    icon: Icons.note_add_outlined,
-                    tooltip: 'Tạo môn học mới',
-                    onTap: onNewSubject,
-                  ),
-                  _MiniActionIcon(
-                    icon: Icons.sync,
-                    tooltip: 'Đồng bộ lại',
-                    onTap: () => state.refresh(),
-                  ),
-                  _MiniActionIcon(
-                    icon: allCollapsed ? Icons.unfold_more : Icons.unfold_less,
-                    tooltip: 'Thu gọn/Mở rộng tất cả',
-                    onTap: () => onSetNodesCollapsed(allKeys, !allCollapsed),
-                  ),
-                ],
-              ),
-            ),
-
-            // Ô tìm kiếm nhanh (nếu chọn tab search hoặc muốn lọc nhanh)
-            if (activeTabIndex == 1 || searchQuery.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(10, 2, 10, 8),
-                child: Container(
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: AppColors.obsidianRibbon,
-                    borderRadius: BorderRadius.circular(5),
-                    border: Border.all(color: AppColors.obsidianBorder),
-                  ),
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.search,
-                        size: 14,
-                        color: AppColors.obsidianTextMuted,
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: TextField(
-                          onChanged: onSearchChanged,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.obsidianText,
-                          ),
-                          decoration: InputDecoration(
-                            hintText: 'Tìm kiếm...',
-                            hintStyle: TextStyle(
-                              fontSize: 12,
-                              color: AppColors.obsidianTextMuted,
-                            ),
-                            border: InputBorder.none,
-                            isDense: true,
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                      ),
-                      if (searchQuery.isNotEmpty)
-                        GestureDetector(
-                          onTap: () => onSearchChanged(''),
-                          child: Icon(
-                            Icons.close,
-                            size: 14,
-                            color: AppColors.obsidianTextMuted,
-                          ),
-                        ),
-                    ],
-                  ),
+            if (activeTabIndex == 3)
+              // Tab 3: Đồ thị thu nhỏ (Mini Graph trực tiếp trên sidebar)
+              Expanded(
+                child: SidebarMiniGraph(
+                  onSelectSubject: onSelectSubject,
                 ),
-              ),
-
-            // Cây thư mục: Tệp môn học -> Học kỳ -> Môn học
-            Expanded(
-              child: visible.isEmpty
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        child: Text(
-                          searchQuery.isNotEmpty
-                              ? 'Không có môn nào khớp'
-                              : 'Chưa có tệp môn học nào.\nNạp một khung chương '
-                                    'trình từ Vault để bắt đầu.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 12,
-                            height: 1.5,
-                            color: AppColors.obsidianTextMuted,
+              )
+            else if (activeTabIndex == 2)
+              // Tab 2: Dấu trang (Bookmarks / Ghi chú đang mở)
+              Expanded(
+                child: state.openNoteTabs.isEmpty
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.bookmark_border,
+                                size: 36,
+                                color: AppColors.obsidianTextMuted.withValues(alpha: 0.5),
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                'Chưa có dấu trang',
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.obsidianText,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Nhấp đúp chuột vào một môn học để mở ghi chú và thêm vào danh sách.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  height: 1.4,
+                                  color: AppColors.obsidianTextMuted,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ),
-                    )
-                  : ListView(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      children: [
-                        for (final v in visible)
-                          _buildCurriculumGroup(
-                            context: context,
-                            visible: v,
-                            selectedId: state.selectedSubjectId,
-                          ),
-                      ],
-                    ),
-            ),
-
-            // Vault Switcher ở chân Sidebar (y hệt Obsidian trong ảnh)
-            InkWell(
-              onTap: onOpenVault,
-              child: Container(
-                height: 42,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: AppColors.obsidianRibbon,
-                  border: Border(
-                    top: BorderSide(color: AppColors.obsidianBorder, width: 1),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.swap_vert,
-                      size: 16,
-                      color: AppColors.obsidianTextMuted,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      )
+                    : ListView(
+                        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
                         children: [
-                          Text(
-                            state.hasVault
-                                ? state.vaultPath!.split(r'[\/]').last
-                                : 'Obsidian Vault',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.obsidianText,
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
+                            child: Text(
+                              'GHI CHÚ ĐANG MỞ',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.obsidianTextMuted,
+                                letterSpacing: 0.8,
+                              ),
                             ),
                           ),
-                          Text(
-                            '${state.stats['subjects'] ?? 0} môn • '
-                            '${state.stats['edges'] ?? 0} liên kết',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: AppColors.obsidianTextMuted,
+                          for (final note in state.openNoteTabs)
+                            Container(
+                              margin: const EdgeInsets.only(bottom: 2),
+                              decoration: BoxDecoration(
+                                color: state.activeNote?.code == note.code
+                                    ? AppColors.obsidianActive
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: ListTile(
+                                dense: true,
+                                visualDensity: VisualDensity.compact,
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                                leading: const Icon(Icons.article_outlined, size: 15, color: AppColors.primary),
+                                title: Text(
+                                  '${note.code} - ${note.name}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(fontSize: 12, color: AppColors.obsidianText),
+                                ),
+                                trailing: IconButton(
+                                  icon: const Icon(Icons.close, size: 13),
+                                  splashRadius: 10,
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                  color: AppColors.obsidianTextMuted,
+                                  onPressed: () => state.closeNoteTab(note),
+                                ),
+                                onTap: () => state.setActiveNote(note),
+                              ),
                             ),
-                          ),
                         ],
                       ),
+              )
+            else ...[
+              // Toolbar phụ kiểu Obsidian: Tiêu đề + Các nút New Note, Sort, Collapse All
+              Container(
+                height: 32,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
+                  children: [
+                    Text(
+                      'TỆP & MÔN HỌC',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.obsidianTextMuted,
+                        letterSpacing: 0.8,
+                      ),
                     ),
-                    Icon(
-                      Icons.arrow_forward_ios,
-                      size: 11,
-                      color: AppColors.obsidianTextMuted,
+                    const Spacer(),
+                    _MiniActionIcon(
+                      icon: Icons.create_new_folder_outlined,
+                      tooltip: 'Tạo tệp môn học mới',
+                      onTap: () => _createCurriculum(context),
+                    ),
+                    _MiniActionIcon(
+                      icon: Icons.note_add_outlined,
+                      tooltip: 'Tạo môn học mới',
+                      onTap: onNewSubject,
+                    ),
+                    _MiniActionIcon(
+                      icon: Icons.sync,
+                      tooltip: 'Đồng bộ lại',
+                      onTap: () => state.refresh(),
+                    ),
+                    _MiniActionIcon(
+                      icon: allCollapsed ? Icons.unfold_more : Icons.unfold_less,
+                      tooltip: 'Thu gọn/Mở rộng tất cả',
+                      onTap: () => onSetNodesCollapsed(allKeys, !allCollapsed),
                     ),
                   ],
                 ),
               ),
-            ),
+
+              // Ô tìm kiếm nhanh (nếu chọn tab search hoặc muốn lọc nhanh)
+              if (activeTabIndex == 1 || searchQuery.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 2, 10, 8),
+                  child: Container(
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: AppColors.obsidianRibbon,
+                      borderRadius: BorderRadius.circular(5),
+                      border: Border.all(color: AppColors.obsidianBorder),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.search,
+                          size: 14,
+                          color: AppColors.obsidianTextMuted,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: TextField(
+                            onChanged: onSearchChanged,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.obsidianText,
+                            ),
+                            decoration: InputDecoration(
+                              hintText: 'Tìm kiếm...',
+                              hintStyle: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.obsidianTextMuted,
+                              ),
+                              border: InputBorder.none,
+                              isDense: true,
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                        ),
+                        if (searchQuery.isNotEmpty)
+                          GestureDetector(
+                            onTap: () => onSearchChanged(''),
+                            child: Icon(
+                              Icons.close,
+                              size: 14,
+                              color: AppColors.obsidianTextMuted,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+
+              // Cây thư mục: Tệp môn học -> Học kỳ -> Môn học
+              Expanded(
+                child: visible.isEmpty
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Text(
+                            searchQuery.isNotEmpty
+                                ? 'Không có môn nào khớp'
+                                : 'Chưa có tệp môn học nào.\nNạp một khung chương '
+                                      'trình từ Vault để bắt đầu.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 12,
+                              height: 1.5,
+                              color: AppColors.obsidianTextMuted,
+                            ),
+                          ),
+                        ),
+                      )
+                    : ListView(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        children: [
+                          for (final v in visible)
+                            _buildCurriculumGroup(
+                              context: context,
+                              visible: v,
+                              selectedId: state.selectedSubjectId,
+                            ),
+                        ],
+                      ),
+              ),
+
+              // Vault Switcher ở chân Sidebar (y hệt Obsidian trong ảnh)
+              InkWell(
+                onTap: onOpenVault,
+                child: Container(
+                  height: 42,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: AppColors.obsidianRibbon,
+                    border: Border(
+                      top: BorderSide(color: AppColors.obsidianBorder, width: 1),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.swap_vert,
+                        size: 16,
+                        color: AppColors.obsidianTextMuted,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              state.hasVault
+                                  ? state.vaultPath!.split(r'[\/]').last
+                                  : 'Obsidian Vault',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.obsidianText,
+                              ),
+                            ),
+                            Text(
+                              '${state.stats['subjects'] ?? 0} môn • '
+                              '${state.stats['edges'] ?? 0} liên kết',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: AppColors.obsidianTextMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(
+                        Icons.arrow_forward_ios,
+                        size: 11,
+                        color: AppColors.obsidianTextMuted,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ],
         );
       },

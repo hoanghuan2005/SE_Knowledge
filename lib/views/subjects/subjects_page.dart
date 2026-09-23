@@ -5,6 +5,7 @@ import '../../models/subject.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
+import '../academic/transcript_import_dialog.dart';
 import '../curriculum/syllabus_detail_dialog.dart';
 import '../widgets/subject_detail_panel.dart';
 import 'roadmap_dialog.dart';
@@ -197,17 +198,37 @@ class _SubjectsPageState extends State<SubjectsPage> {
               child: Row(
                 children: [
                   Expanded(
-                    child: rows.isEmpty
-                        ? EmptyState(
-                            icon: Icons.inbox_outlined,
-                            title: currentGraph.isEmpty
-                                ? 'Chưa có môn học nào trong khung này'
-                                : 'Không tìm thấy môn khớp bộ lọc',
-                            message: currentGraph.isEmpty
-                                ? 'Chọn khung chương trình khác hoặc thêm môn mới.'
-                                : 'Thử xoá bộ lọc hoặc nhập từ khoá khác.',
-                          )
-                        : _Table(rows: rows),
+                    child: Stack(
+                      children: [
+                        rows.isEmpty
+                            ? EmptyState(
+                                icon: Icons.inbox_outlined,
+                                title: currentGraph.isEmpty
+                                    ? 'Chưa có môn học nào trong khung này'
+                                    : 'Không tìm thấy môn khớp bộ lọc',
+                                message: currentGraph.isEmpty
+                                    ? 'Chọn khung chương trình khác hoặc thêm môn mới.'
+                                    : 'Thử xoá bộ lọc hoặc nhập từ khoá khác.',
+                              )
+                            : _Table(rows: rows),
+                        Positioned(
+                          right: 16,
+                          bottom: 16,
+                          child: FloatingActionButton.extended(
+                            heroTag: 'import_grades',
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            elevation: 2,
+                            icon: const Icon(Icons.upload_file, size: 18),
+                            label: const Text(
+                              'Nhập điểm',
+                              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                            ),
+                            onPressed: () => TranscriptImportDialog.pickAndShow(context),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                   const SubjectDetailPanel(),
                 ],
@@ -278,6 +299,7 @@ class _Table extends StatelessWidget {
               SizedBox(width: 90, child: _Th('TÍN CHỈ', textAlign: TextAlign.center)),
               SizedBox(width: 100, child: _Th('TIÊN QUYẾT', textAlign: TextAlign.center)),
               SizedBox(width: 90, child: _Th('MỞ RA', textAlign: TextAlign.center)),
+              SizedBox(width: 65, child: _Th('ĐIỂM', textAlign: TextAlign.center)),
               SizedBox(width: 48),
             ],
           ),
@@ -365,6 +387,7 @@ class _Table extends StatelessWidget {
                     final selected = state.selectedSubjectId == s.id;
                     final inDeg = state.graph.inDegree(s.id!);
                     final outDeg = state.graph.outDegree(s.id!);
+                    final gradeEntry = state.gradeOf(s.code);
 
                     return Material(
                       key: ValueKey(s.id),
@@ -479,6 +502,26 @@ class _Table extends StatelessWidget {
                                             fontSize: 12.5,
                                             fontWeight: FontWeight.w600,
                                             color: AppColors.primary,
+                                          ),
+                                        )
+                                      : _Td('—', textAlign: TextAlign.center),
+                                ),
+                              ),
+                              // Điểm (Căn giữa)
+                              SizedBox(
+                                width: 65,
+                                child: Center(
+                                  child: gradeEntry != null && gradeEntry.hasGrade
+                                      ? Text(
+                                          gradeEntry.displayGrade,
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w700,
+                                            color: AppColors.gradeColor(
+                                              gradeEntry.grade,
+                                              gradeEntry.status,
+                                            ),
                                           ),
                                         )
                                       : _Td('—', textAlign: TextAlign.center),
