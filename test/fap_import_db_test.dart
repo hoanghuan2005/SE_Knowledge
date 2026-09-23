@@ -234,7 +234,7 @@ void main() {
     expect(subject['name'], 'Tên từ FAP');
   });
 
-  test('kỳ 0 của FAP quy về kỳ 1 trong subjects nhưng giữ 0 ở bảng nối', () async {
+  test('kỳ 0 của FAP được giữ nguyên là 0 trong cả subjects và bảng nối', () async {
     await DbService.instance.importFapCurriculum(
       _curriculum(
         curid: 2951,
@@ -249,7 +249,7 @@ void main() {
       where: 'code = ?',
       whereArgs: ['OTP101'],
     )).single;
-    expect(subject['semester'], 1);
+    expect(subject['semester'], 0);
     expect(subject['credits'], 0);
 
     final link = (await db.query('curriculum_subjects')).single;

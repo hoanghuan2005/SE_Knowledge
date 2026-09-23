@@ -79,6 +79,45 @@ class DbService {
   /// nguyên cho migration lo, vì ở đó im lặng tạo bù sẽ giấu mất lỗi thật.
   Future<void> _onOpen(Database db) async {
     await _createTranscriptTable(db);
+    await _fixSemesterZero(db);
+  }
+
+  /// Tự động khắc phục các môn Kỳ 0 bị gán nhầm sang Kỳ 1 trong CSDL cũ.
+  Future<void> _fixSemesterZero(Database db) async {
+    try {
+      // 1. Đồng bộ các môn kỳ 0 từ bảng curriculum_subjects (dữ liệu thật từ FAP)
+      await db.execute('''
+        UPDATE curriculum_courses
+        SET term = 0
+        WHERE subject_id IN (
+          SELECT subject_id FROM curriculum_subjects WHERE semester = 0
+        );
+      ''');
+      await db.execute('''
+        UPDATE subjects
+        SET semester = 0
+        WHERE id IN (
+          SELECT subject_id FROM curriculum_subjects WHERE semester = 0
+        );
+      ''');
+
+      // 2. Tự động đồng bộ các môn dự bị/chuẩn bị phổ biến nếu bị gán kỳ 1
+      await db.execute('''
+        UPDATE subjects
+        SET semester = 0
+        WHERE (code IN ('OTP101', 'PEN') OR code LIKE 'PHE_COM%' OR code LIKE 'VOV%')
+          AND semester = 1;
+      ''');
+      await db.execute('''
+        UPDATE curriculum_courses
+        SET term = 0
+        WHERE subject_id IN (
+          SELECT id FROM subjects WHERE semester = 0
+        ) AND term = 1;
+      ''');
+    } catch (_) {
+      // Tránh crash nếu bảng chưa tồn tại
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -1209,9 +1248,9 @@ class DbService {
           await db.insert('curriculum_courses', {
             'curriculum_id': newId,
             'subject_id': cs['subject_id'],
-            'term': cs['semester'] ?? 1,
-            'credits': cs['credits'] ?? 3,
-          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+            'term': cs['semester'] ?? 0,
+            'credits': cs['credits'] ?? 0,
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
       }
     }
@@ -1648,7 +1687,7 @@ class DbService {
             'name': sample.subjectName.isEmpty ? code : sample.subjectName,
             // Kỳ trong khung (`Term`) là thứ gần nhất với kỳ của đồ thị; môn
             // ngoài khung không có Term nên xếp tạm vào kỳ 1.
-            'semester': (sample.term ?? 0) < 1 ? 1 : sample.term,
+            'semester': (sample.term != null && sample.term! >= 0) ? sample.term! : 1,
             'credits': sample.credits,
             'description': '',
             'created_at': now,
@@ -1860,8 +1899,8 @@ class DbService {
       for (final course in allCourses) {
         final code = course.code.trim().toUpperCase();
         final name = course.name.trim().isEmpty ? code : course.name.trim();
-        final semester = course.term > 0 ? course.term : 1;
-        final credits = course.credits > 0 ? course.credits : 3;
+        final semester = course.term >= 0 ? course.term : 0;
+        final credits = course.credits >= 0 ? course.credits : 0;
 
         int subjectId;
         if (existingMap.containsKey(code)) {
@@ -2098,7 +2137,7 @@ class DbService {
 
     final existing = await db.query(
       'subjects',
-      columns: ['id', 'semester_is_placeholder'],
+      columns: ['id', 'semester', 'semester_is_placeholder'],
       where: 'code = ?',
       whereArgs: [normalized],
       limit: 1,
@@ -2106,6 +2145,7 @@ class DbService {
 
     if (existing.isNotEmpty) {
       final id = existing.first['id'] as int;
+      final currentSemester = existing.first['semester'] as int? ?? 1;
       final values = <String, Object?>{'name': name, 'updated_at': now};
 
       // Môn này có thể chỉ tồn tại vì được tạo tạm từ một trang Syllabus lẻ
@@ -2115,9 +2155,12 @@ class DbService {
       // môn do người dùng tự thêm hoặc đã có kỳ thật từ trước thì không đụng.
       final placeholder = existing.first['semester_is_placeholder'] == 1;
       if (placeholder) {
-        values['semester'] = semester > 0 ? semester : 1;
-        values['credits'] = credits;
+        values['semester'] = semester >= 0 ? semester : 0;
+        values['credits'] = credits >= 0 ? credits : 0;
         values['semester_is_placeholder'] = 0;
+      } else if (currentSemester == 1 && semester == 0) {
+        // Khắc phục trường hợp môn dự bị/chuẩn bị (kỳ 0) trước đây bị ép thành kỳ 1
+        values['semester'] = 0;
       }
 
       await db.update(
@@ -2132,12 +2175,11 @@ class DbService {
     return db.insert('subjects', {
       'code': normalized,
       'name': name,
-      // FAP ghi kỳ 0 cho các môn chuẩn bị (OTP101, PEN, PHE...). Đồ thị và
-      // thanh bên nhóm môn theo kỳ nên quy về kỳ 1, còn con số 0 nguyên bản
-      // vẫn nằm ở `curriculum_subjects.semester`.
-      'semester': semester > 0 ? semester : 1,
-      // Ngược lại, 0 tín chỉ là sự thật về môn nên giữ nguyên.
-      'credits': credits,
+      // FAP ghi kỳ 0 cho các môn chuẩn bị (OTP101, PEN, PHE...). Hệ thống hỗ trợ
+      // hiển thị và quản lý Kỳ 0 (HK0 dự bị) nên giữ nguyên semester = 0.
+      'semester': semester >= 0 ? semester : 0,
+      // 0 tín chỉ là sự thật về môn nên giữ nguyên.
+      'credits': credits >= 0 ? credits : 0,
       'description': '',
       'created_at': now,
       'updated_at': now,

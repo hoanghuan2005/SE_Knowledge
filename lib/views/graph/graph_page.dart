@@ -10,6 +10,7 @@ import '../../models/curriculum.dart';
 import '../../models/graph_settings.dart';
 import '../../models/knowledge.dart';
 import '../../services/graph_layout_cache.dart';
+import '../../services/chat_session_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
@@ -18,6 +19,7 @@ import '../curriculum/fap_inbox_import.dart';
 import '../curriculum/semester_board_view.dart';
 import '../knowledge/knowledge_map_view.dart';
 import '../subjects/subject_form_dialog.dart';
+import '../widgets/subject_detail_panel.dart';
 import 'graph_settings_panel.dart';
 
 /// Màn hình của một khung chương trình:
@@ -26,8 +28,9 @@ import 'graph_settings_panel.dart';
 class GraphPage extends StatefulWidget {
   /// Quay về màn hình tổng quan mọi khung chương trình.
   final VoidCallback? onOpenOverview;
+  final VoidCallback? onOpenAiChat;
 
-  const GraphPage({super.key, this.onOpenOverview});
+  const GraphPage({super.key, this.onOpenOverview, this.onOpenAiChat});
 
   @override
   State<GraphPage> createState() => _GraphPageState();
@@ -201,6 +204,42 @@ class _GraphPageState extends State<GraphPage> {
                       const SizedBox(width: 8),
                       SizedBox(
                         height: 32,
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.auto_awesome, size: 14, color: AppColors.primary),
+                          label: const Text(
+                            'Hỏi AI',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(
+                              color: AppColors.primary.withValues(alpha: 0.45),
+                              width: 1.0,
+                            ),
+                            foregroundColor: AppColors.primary,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 0,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                          ),
+                          onPressed: () {
+                            final code = state.activeCurriculumCode;
+                            ChatSessionService.instance.newSession(
+                              curriculumCode: code,
+                              title: code != null ? 'Hỏi về $code' : 'Hỏi AI về chương trình',
+                            );
+                            widget.onOpenAiChat?.call();
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        height: 32,
                         child: ElevatedButton.icon(
                           icon: const Icon(Icons.add, size: 15),
                           label: const Text(
@@ -248,30 +287,33 @@ class _GraphPageState extends State<GraphPage> {
                 ],
               ),
             ),
-            if (showKnowledgePanel && index != null)
+            if (isGraph)
               SizedBox(
                 width: 320,
-                child: KnowledgeSidebarPanel(
-                  index: index,
-                  scope: scope,
-                  semesterOf: semesterOf,
-                  initialConceptId: _selectedConceptId,
-                  initialSubjectCode: _selectedSubjectCode,
-                  onSelectConcept: (cid) => setState(() {
-                    _selectedConceptId = cid;
-                    _selectedSubjectCode = null;
-                  }),
-                  onSelectSubject: (code) => setState(() {
-                    _selectedConceptId = null;
-                    _selectedSubjectCode = code;
-                  }),
-                  onClose: () => setState(() {
-                    _showKnowledgePanel = false;
-                    _selectedConceptId = null;
-                    _selectedSubjectCode = null;
-                  }),
-                  onShowSubjectGraph: () {},
-                ),
+                child: showKnowledgePanel && index != null
+                    ? KnowledgeSidebarPanel(
+                        index: index,
+                        scope: scope,
+                        semesterOf: semesterOf,
+                        initialConceptId: _selectedConceptId,
+                        initialSubjectCode: _selectedSubjectCode,
+                        onSelectConcept: (cid) => setState(() {
+                          _selectedConceptId = cid;
+                          _selectedSubjectCode = null;
+                        }),
+                        onSelectSubject: (code) => setState(() {
+                          _selectedConceptId = null;
+                          _selectedSubjectCode = code;
+                        }),
+                        onClose: () => setState(() {
+                          _showKnowledge = false;
+                          _showKnowledgePanel = false;
+                          _selectedConceptId = null;
+                          _selectedSubjectCode = null;
+                        }),
+                        onShowSubjectGraph: () {},
+                      )
+                    : const SubjectDetailPanel(),
               ),
           ],
         );
@@ -307,7 +349,7 @@ class _GraphPageState extends State<GraphPage> {
                   }),
                   viewer: _viewer,
                   onSelectSubject: (id) {
-                    if (_showKnowledgePanel) {
+                    if (_showKnowledge && _showKnowledgePanel) {
                       final s = currentGraph.subjects
                           .cast<Subject?>()
                           .firstWhere((x) => x?.id == id, orElse: () => null);
@@ -319,6 +361,7 @@ class _GraphPageState extends State<GraphPage> {
                       }
                     } else {
                       setState(() {
+                        _showKnowledgePanel = false;
                         _selectedConceptId = null;
                         _selectedSubjectCode = null;
                       });
@@ -331,6 +374,7 @@ class _GraphPageState extends State<GraphPage> {
                       state.ensureKnowledge();
                     }
                     setState(() {
+                      _showKnowledge = true;
                       _showKnowledgePanel = true;
                       _selectedConceptId = conceptId;
                       _selectedSubjectCode = null;
@@ -377,7 +421,9 @@ class _GraphPageState extends State<GraphPage> {
               } else {
                 setState(() {
                   _showKnowledge = false;
-                  // Chỉ tắt hiển thị các node tri thức trên graph, KHÔNG tắt sidebar
+                  _showKnowledgePanel = false;
+                  _selectedConceptId = null;
+                  _selectedSubjectCode = null;
                 });
               }
             },

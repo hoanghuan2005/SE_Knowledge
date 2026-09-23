@@ -44,6 +44,7 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   /// Tab "Khung chương trình & Môn học" — màn hình trung tâm liệt kê mọi khung và môn.
   static const int overviewTab = 1;
+  static const int aiChatTab = 3;
 
   int _index = overviewTab;
   bool _isSidebarOpen = true;
@@ -274,10 +275,14 @@ class _AppShellState extends State<AppShell> {
                                               GraphPage(
                                                 onOpenOverview: () =>
                                                     _switchTab(overviewTab),
+                                                onOpenAiChat: () =>
+                                                    _switchTab(aiChatTab),
                                               ),
                                               CurriculaOverviewPage(
                                                 onOpenCurriculum: () =>
                                                     _switchTab(0),
+                                                onOpenAiChat: (_) =>
+                                                    _switchTab(aiChatTab),
                                               ),
                                               const VaultPage(),
                                               // Nút "Xem trên đồ thị" trong câu trả
@@ -293,13 +298,8 @@ class _AppShellState extends State<AppShell> {
                                             ],
                                           ),
                                   ),
-                                  // Bảng chi tiết môn học bên phải chỉ hiển thị khi có môn được chọn (tránh hiện 2 sidebar cùng lúc)
-                                  if (AppState.instance.activeNote != null ||
-                                      (_index == 0 &&
-                                          AppState.instance.selectedSubjectId !=
-                                              null &&
-                                          AppState.instance.curriculumView !=
-                                              CurriculumView.knowledge))
+                                  // Bảng chi tiết môn học bên phải ở AppShell chỉ hiển thị khi đang mở ghi chú Obsidian Note
+                                  if (AppState.instance.activeNote != null)
                                     const SubjectDetailPanel(),
                                 ],
                               ),
@@ -718,7 +718,7 @@ class _AiChatSidebarContentState extends State<_AiChatSidebarContent> {
               child: Row(
                 children: [
                   const Icon(
-                    Icons.forum_outlined,
+                    Icons.auto_awesome,
                     size: 16,
                     color: AppColors.primary,
                   ),
@@ -838,7 +838,7 @@ class _AiChatSidebarContentState extends State<_AiChatSidebarContent> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
-                            Icons.chat_bubble_outline,
+                            Icons.auto_awesome_outlined,
                             size: 28,
                             color: AppColors.obsidianTextMuted.withValues(
                               alpha: 0.5,
@@ -991,7 +991,7 @@ class _ChatSessionTileState extends State<_ChatSessionTile> {
             child: Row(
               children: [
                 Icon(
-                  Icons.chat_bubble_outline,
+                  active ? Icons.auto_awesome : Icons.auto_awesome_outlined,
                   size: 14,
                   color: active
                       ? AppColors.primary
