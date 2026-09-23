@@ -9,6 +9,89 @@ import '../utils/app_constants.dart';
 import 'graph_rag_service.dart';
 import 'settings_service.dart';
 
+/// Gom các dòng thô của một SSE stream thành payload theo từng sự kiện.
+///
+/// Tách thành hàm thuần (không đụng `http`/`AiService`) để test được bằng
+/// `Stream<String>` giả lập, không cần giả lập kết nối mạng thật.
+///
+/// OpenAI luôn nén JSON của một sự kiện vào đúng một dòng `data: {...}`,
+/// nhưng Gemini đôi khi trải JSON của CÙNG một sự kiện ra nhiều dòng — chỉ
+/// dòng đầu có tiền tố `data:`, các dòng sau là phần còn lại của khối JSON
+/// đó, không lặp lại tiền tố. Bản cũ coi mỗi dòng phải tự đủ nghĩa
+/// (`if (!line.startsWith('data:')) continue;`), nên phần JSON trải dòng bị
+/// cắt cụt và rơi rụng âm thầm — nhẹ thì mất vài chữ giữa câu trả lời, nặng
+/// thì toàn bộ nội dung rơi hết, báo "nhà cung cấp AI trả về nội dung rỗng"
+/// dù AI đã trả lời thật.
+///
+/// Coi mỗi dòng không rỗng là thuộc sự kiện đang mở, dòng trống là ranh giới
+/// kết thúc sự kiện — nhờ vậy JSON trải dòng vẫn được ghép đủ trước khi
+/// decode.
+Stream<String> sseEventPayloads(Stream<String> lines) async* {
+  final eventLines = <String>[];
+
+  await for (final line in lines) {
+    if (line.isEmpty) {
+      if (eventLines.isNotEmpty) {
+        yield eventLines.join('\n').trim();
+        eventLines.clear();
+      }
+      continue;
+    }
+    if (line.startsWith('data:')) {
+      eventLines.add(line.substring(5).trimLeft());
+    } else if (eventLines.isNotEmpty) {
+      // Dòng tiếp theo của cùng một khối JSON trải dòng.
+      eventLines.add(line);
+    }
+  }
+  if (eventLines.isNotEmpty) {
+    yield eventLines.join('\n').trim();
+  }
+}
+
+/// Mã lỗi HTTP đáng gọi lại: quá nhịp gọi và các lỗi phía máy chủ — chính
+/// nhà cung cấp gọi chúng là tạm thời ("Spikes in demand are usually
+/// temporary").
+///
+/// Cố tình KHÔNG gồm 400/401/403/404: sai key, sai tên model hay request
+/// hỏng thì gọi lại bao nhiêu lần cũng hỏng, chỉ tổ bắt người dùng chờ thêm
+/// rồi vẫn nhận đúng lỗi đó.
+bool isTransientAiStatus(int status) =>
+    status == 429 || (status >= 500 && status <= 599);
+
+/// Lấy phần chữ **hiển thị được** từ một chunk SSE của Gemini.
+///
+/// Model đời mới trả kèm những `parts` gắn cờ `thought: true` — đó là phần
+/// nháp suy nghĩ nội bộ, không phải câu trả lời. Bản cũ ghép thẳng mọi part
+/// nên câu trả lời lẫn cả tiếng Anh kiểu "Let's cite MAE101 (7.9", đồng thời
+/// phần nháp ăn hết hạn mức token khiến câu trả lời thật bị cắt ngang.
+///
+/// Hàm thuần, tách khỏi `AiService` để test được mà không cần gọi mạng.
+String geminiVisibleText(Map<String, Object?> chunk) {
+  final candidates = chunk['candidates'] as List?;
+  if (candidates == null || candidates.isEmpty) return '';
+
+  final parts = ((candidates.first as Map)['content'] as Map?)?['parts'];
+  if (parts is! List) return '';
+
+  final sb = StringBuffer();
+  for (final part in parts) {
+    if (part is! Map) continue;
+    if (part['thought'] == true) continue;
+    final value = part['text'];
+    if (value is String) sb.write(value);
+  }
+  return sb.toString();
+}
+
+/// Lý do model dừng sinh chữ, nếu chunk này có kèm.
+String? geminiFinishReason(Map<String, Object?> chunk) {
+  final candidates = chunk['candidates'] as List?;
+  if (candidates == null || candidates.isEmpty) return null;
+  final reason = (candidates.first as Map)['finishReason'];
+  return reason is String && reason.isNotEmpty ? reason : null;
+}
+
 /// Gọi thẳng REST API của Gemini hoặc OpenAI bằng package `http`.
 ///
 /// Không có backend trung gian: app desktop là client duy nhất, request đi
@@ -29,6 +112,26 @@ class AiService {
   /// Số tin nhắn cũ gửi kèm. Gửi trọn lịch sử thì càng chat lâu prompt càng
   /// phình ra, đi ngược lại chính mục tiêu tiết kiệm token của Graph RAG.
   static const int maxHistoryMessages = 8;
+
+  /// Trần độ dài câu trả lời.
+  ///
+  /// Trước để 1024 và bị cắt ngang giữa câu ở những câu hỏi dạng lộ trình.
+  /// Model đời mới còn tiêu một phần hạn mức này cho phần suy nghĩ nội bộ,
+  /// nên phần chữ thật sự hiện ra còn ít hơn nhiều so với con số cấu hình.
+  /// Chỉ bị tính tiền theo số token thực sinh ra, nên để rộng không làm đắt
+  /// thêm với câu trả lời ngắn.
+  static const int maxOutputTokens = 4096;
+
+  /// Số lần gọi lại khi nhà cung cấp báo lỗi tạm thời (quá tải, quá nhịp).
+  static const int maxRetryAttempts = 2;
+
+  /// Giãn cách giữa các lần thử lại. Ngắn đủ để người dùng không thấy treo,
+  /// thưa dần để đợt quá tải kịp qua và không tự dồn thêm tải lên server.
+  static const List<Duration> retryDelays = [
+    Duration(milliseconds: 800),
+    Duration(seconds: 2),
+  ];
+
 
   Future<bool> get isConfigured async {
     final key = await _settings.getApiKey();
@@ -152,12 +255,26 @@ class AiService {
         'ngắn gọn dựa trên quan hệ tiên quyết.',
       )
       ..writeln(
-        '- Chỉ dùng dữ liệu môn học được cung cấp bên dưới, không bịa thêm '
-        'môn không có trong danh sách.',
+        '- Dữ liệu bên dưới là nguồn DUY NHẤT cho mọi khẳng định về chương '
+        'trình học: mã môn, tên môn, học kỳ, quan hệ tiên quyết, điểm số. '
+        'Không bịa ra môn không có trong danh sách, không suy đoán tiên '
+        'quyết hay điểm.',
       )
       ..writeln(
-        '- Nếu dữ liệu không đủ để trả lời, nói thẳng là chưa có thông tin '
-        'trong cơ sở dữ liệu thay vì suy đoán.',
+        '- Ngoài phạm vi đó, được phép khuyên thêm kỹ năng, công cụ hay chủ '
+        'đề nên tự học khi câu hỏi cần (nhất là câu hỏi định hướng nghề '
+        'nghiệp) — nhưng phải nói rõ đó là phần TỰ HỌC ngoài khung chương '
+        'trình, không phải môn trong chương trình.',
+      )
+      ..writeln(
+        '- Chỉ đặt trong hai ngoặc vuông những mã môn có thật trong danh sách '
+        'được cung cấp. Phần tự học ngoài chương trình viết chữ thường, tuyệt '
+        'đối không đặt trong ngoặc vuông.',
+      )
+      ..writeln(
+        '- Khi chương trình không có môn nào dạy chủ đề được hỏi, nói thẳng '
+        'điều đó trước, rồi mới gợi ý môn nền tảng gần nhất trong chương '
+        'trình và hướng tự học bổ sung.',
       );
 
     // Bộ quy tắc riêng cho lúc ngữ cảnh có điểm. Không có điểm mà vẫn nhét
@@ -211,7 +328,7 @@ class AiService {
     required List<ChatMessage> history,
     required String question,
     void Function(String delta)? onDelta,
-  }) {
+  }) async {
     final uri = Uri.parse(
       '${AppConstants.geminiBaseUrl}/models/$model:streamGenerateContent?alt=sse',
     );
@@ -232,7 +349,9 @@ class AiService {
       },
     ];
 
-    return _consumeSse(
+    String? finishReason;
+
+    final text = await _consumeSse(
       uri: uri,
       headers: {'Content-Type': 'application/json', 'x-goog-api-key': apiKey},
       body: jsonEncode({
@@ -242,20 +361,19 @@ class AiService {
           ],
         },
         'contents': contents,
-        'generationConfig': {'temperature': 0.4, 'maxOutputTokens': 1024},
+        'generationConfig': {
+          'temperature': 0.4,
+          'maxOutputTokens': maxOutputTokens,
+        },
       }),
       onDelta: onDelta,
       extract: (chunk) {
-        final candidates = chunk['candidates'] as List?;
-        if (candidates == null || candidates.isEmpty) return null;
-        final parts =
-            ((candidates.first as Map)['content'] as Map?)?['parts'] as List?;
-        return parts
-            ?.map((p) => (p as Map)['text'])
-            .whereType<String>()
-            .join();
+        finishReason = geminiFinishReason(chunk) ?? finishReason;
+        return geminiVisibleText(chunk);
       },
     );
+
+    return _appendFinishNotice(text, finishReason);
   }
 
   // ------------------------------------------------------------------
@@ -269,7 +387,7 @@ class AiService {
     required List<ChatMessage> history,
     required String question,
     void Function(String delta)? onDelta,
-  }) {
+  }) async {
     final uri = Uri.parse('${AppConstants.openAiBaseUrl}/chat/completions');
 
     final messages = <Map<String, String>>[
@@ -279,7 +397,9 @@ class AiService {
       {'role': 'user', 'content': question},
     ];
 
-    return _consumeSse(
+    String? finishReason;
+
+    final text = await _consumeSse(
       uri: uri,
       headers: {
         'Content-Type': 'application/json',
@@ -289,23 +409,78 @@ class AiService {
         'model': model,
         'messages': messages,
         'temperature': 0.4,
+        'max_tokens': maxOutputTokens,
         'stream': true,
       }),
       onDelta: onDelta,
       extract: (chunk) {
         final choices = chunk['choices'] as List?;
         if (choices == null || choices.isEmpty) return null;
-        return ((choices.first as Map)['delta'] as Map?)?['content'] as String?;
+        final choice = choices.first as Map;
+
+        final reason = choice['finish_reason'];
+        if (reason is String && reason.isNotEmpty) finishReason = reason;
+
+        return (choice['delta'] as Map?)?['content'] as String?;
       },
     );
+
+    return _appendFinishNotice(text, finishReason);
+  }
+
+  /// Nói thẳng khi câu trả lời bị cắt giữa chừng.
+  ///
+  /// Không có dòng này thì người dùng chỉ thấy câu văn đứt ngang và tưởng app
+  /// hỏng — đúng như đã xảy ra lúc câu trả lời dừng tại "Tuy nhiên".
+  String _appendFinishNotice(String text, String? finishReason) {
+    return switch (finishReason) {
+      'MAX_TOKENS' || 'length' =>
+        '$text\n\n_(Câu trả lời bị cắt vì chạm giới hạn độ dài. Hỏi lại gọn '
+            'hơn hoặc chia nhỏ câu hỏi để nhận câu trả lời đầy đủ.)_',
+      'SAFETY' || 'content_filter' =>
+        '$text\n\n_(Nhà cung cấp AI đã chặn một phần nội dung.)_',
+      'RECITATION' =>
+        '$text\n\n_(Nhà cung cấp AI dừng vì nội dung trùng nguồn có bản quyền.)_',
+      _ => text,
+    };
   }
 
   // ------------------------------------------------------------------
 
-  /// Đọc một stream Server-Sent Events, ghép các mẩu chữ lại và bắn từng mẩu
-  /// ra [onDelta]. [extract] là phần khác nhau giữa hai nhà cung cấp: lấy
-  /// đoạn text nằm trong một chunk JSON.
+  /// Gọi [_consumeSseOnce], tự thử lại khi nhà cung cấp báo lỗi tạm thời.
+  ///
+  /// Quá tải (503) hay chạm giới hạn nhịp gọi (429) là chuyện thường gặp và
+  /// thường chỉ kéo dài vài giây. Bắt người dùng tự gõ lại câu hỏi trong lúc
+  /// demo là không chấp nhận được, nên thử lại ngay tại đây.
+  ///
+  /// Chỉ thử lại khi lỗi xảy ra **trước** lúc phát chữ đầu tiên: chữ đã hiện
+  /// lên màn hình rồi mà gọi lại thì câu trả lời sẽ bị lặp đoạn đầu.
+  /// [_consumeSseOnce] chỉ ném [_TransientFailure] ở khâu kiểm tra mã trạng
+  /// thái, tức luôn trước khi có chữ nào chảy ra.
   Future<String> _consumeSse({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+    required String? Function(Map<String, Object?> chunk) extract,
+    void Function(String delta)? onDelta,
+  }) async {
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await _consumeSseOnce(
+          uri: uri,
+          headers: headers,
+          body: body,
+          extract: extract,
+          onDelta: onDelta,
+        );
+      } on _TransientFailure catch (failure) {
+        if (attempt >= maxRetryAttempts) throw AiException(failure.message);
+        await Future<void>.delayed(retryDelays[attempt]);
+      }
+    }
+  }
+
+  Future<String> _consumeSseOnce({
     required Uri uri,
     required Map<String, String> headers,
     required String body,
@@ -322,7 +497,13 @@ class AiService {
 
       if (response.statusCode != 200) {
         final raw = await response.stream.bytesToString();
-        throw AiException(_errorMessage(response.statusCode, _decode(raw)));
+        final message = _errorMessage(response.statusCode, _decode(raw));
+        // Sai key, sai tên model, request hỏng... thì thử lại bao nhiêu lần
+        // cũng vậy — chỉ tổ tốn thêm quota và bắt người dùng chờ.
+        if (isTransientAiStatus(response.statusCode)) {
+          throw _TransientFailure(message);
+        }
+        throw AiException(message);
       }
 
       final buffer = StringBuffer();
@@ -331,9 +512,7 @@ class AiService {
           .transform(const LineSplitter())
           .timeout(timeout);
 
-      await for (final line in lines) {
-        if (!line.startsWith('data:')) continue;
-        final payload = line.substring(5).trim();
+      await for (final payload in sseEventPayloads(lines)) {
         if (payload.isEmpty || payload == '[DONE]') continue;
 
         final chunk = _decode(payload);
@@ -385,6 +564,17 @@ class AiService {
 class AiException implements Exception {
   final String message;
   AiException(this.message);
+  @override
+  String toString() => message;
+}
+
+/// Lỗi nhà cung cấp tự nhận là tạm thời (quá tải, quá nhịp gọi).
+///
+/// Chỉ sống trong nội bộ [AiService]: hoặc được nuốt đi vì lần thử lại sau
+/// thành công, hoặc hết lượt thử thì chuyển thành [AiException] cho UI.
+class _TransientFailure implements Exception {
+  final String message;
+  _TransientFailure(this.message);
   @override
   String toString() => message;
 }

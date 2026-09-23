@@ -8,6 +8,21 @@ import 'db_service.dart';
 import 'fap_markdown_parser.dart';
 import 'settings_service.dart';
 
+/// Một môn "hạt giống" kèm mức tin cậy của lần khớp.
+///
+/// [confident] đúng khi môn được gọi thẳng bằng mã, hoặc từ khoá khớp vào
+/// chính mã/tên môn. Chỉ những môn như vậy mới được đính nguyên đề cương —
+/// đề cương nặng cỡ nghìn token, đính nhầm môn thì vừa tốn vừa làm lệch câu
+/// trả lời.
+typedef SeedMatch = ({Subject subject, bool confident});
+
+/// Một khái niệm trong câu hỏi, kèm đánh giá độ hiếm của nó trong danh mục.
+///
+/// [specific] đúng khi khái niệm chỉ khớp một nhúm môn — lúc đó nó thật sự
+/// trỏ tới môn cụ thể. Từ rộng như "engineer" (khớp 5/64 môn) vẫn được dùng
+/// để tìm môn, nhưng không đủ tư cách để app dám đính nguyên đề cương.
+typedef _Concept = ({List<String> forms, bool specific});
+
 /// Trích một subgraph liên quan trực tiếp đến câu hỏi từ đồ thị tiên quyết,
 /// thay vì gửi nguyên toàn bộ CSDL vào mọi prompt.
 ///
@@ -61,6 +76,33 @@ class GraphRagService {
   static const int maxSyllabusSessions = 45;
   static const int maxSyllabusMaterials = 8;
 
+  /// Từ khoá khớp quá tỉ lệ này trong danh mục thì bị bỏ, vì nó không chỉ ra
+  /// được môn nào cả.
+  ///
+  /// Câu "tôi muốn làm AI Engineer nên học gì" từng kéo về `GRC490`,
+  /// `SWE201C`, `SE_GRA_ELE`: chữ "engineer" khớp tiền tố vào "Engineering"
+  /// nằm trong tên hàng loạt môn, lấn át tín hiệu thật là "AI". Chữ càng phổ
+  /// biến trong danh mục thì càng ít giá trị phân biệt — đúng ý tưởng IDF
+  /// trong tìm kiếm, và đếm được ngay tại chỗ nên không tốn token nào.
+  static const double maxConceptMatchRatio = 0.25;
+
+  /// Danh mục nhỏ hơn mức này thì bỏ qua phép lọc trên: 25% của 6 môn chỉ là
+  /// 1-2 môn, tỉ lệ lúc đó không nói lên điều gì.
+  static const int minSubjectsForCommonFilter = 12;
+
+  /// Từ khoá chỉ được coi là **đặc hiệu** khi khớp không quá ngần này môn.
+  ///
+  /// Con số nhỏ và tuyệt đối, không theo tỉ lệ danh mục, vì câu hỏi cần trả
+  /// lời là "từ khoá này có trỏ tới đúng một môn không". Đo trên dữ liệu thật
+  /// (64 môn): "engineer" khớp 4 môn — chọn 2 trong 4 để đính đề cương chỉ là
+  /// tung đồng xu, còn một từ khớp 1-2 môn thì gần như chắc chắn đúng ý người
+  /// hỏi.
+  ///
+  /// Chỉ dùng để quyết định có đính nguyên đề cương hay không, không loại môn
+  /// khỏi ngữ cảnh: khớp rộng vẫn đáng đưa vào danh sách, chỉ là không đáng
+  /// trả giá nghìn token cho mỗi đề cương.
+  static const int maxMatchesForSpecific = 2;
+
   Future<GraphRagContext> buildContext(String question, {int hops = 2}) async {
     final stopwatch = Stopwatch()..start();
     final graph = await _db.loadGraph();
@@ -84,7 +126,8 @@ class GraphRagService {
     // tại nguồn chứ không chỉ ẩn nút ở giao diện.
     final grades = await _loadGrades(graph);
 
-    final seeds = findSeeds(question, graph.subjects);
+    final seedMatches = seedsWithConfidence(question, graph.subjects);
+    final seeds = seedMatches.map((s) => s.subject).toList();
     final isFallback = seeds.isEmpty;
 
 
@@ -112,9 +155,14 @@ class GraphRagService {
             subgraphIds.contains(e.prerequisiteId))
         .toList();
 
-    // Đề cương chỉ đính cho vài môn được nhắc thẳng trong câu hỏi. Đính cho
-    // cả subgraph thì riêng phần này đã vài chục nghìn token.
-    final syllabi = await _loadSyllabiFor(seeds.take(maxSyllabi));
+    // Đề cương nặng cỡ nghìn token mỗi môn, nên chỉ đính khi đã chắc đúng
+    // môn: được gọi thẳng bằng mã, hoặc từ khoá khớp vào chính mã/tên môn.
+    // Khớp mập mờ ở phần mô tả thì chỉ đưa mã + tên + mô tả ngắn — trước đây
+    // vẫn đính đề cương cho cả những môn đoán sai, vừa tốn vừa làm lệch câu
+    // trả lời.
+    final syllabi = await _loadSyllabiFor(
+      seedMatches.where((s) => s.confident).map((s) => s.subject).take(maxSyllabi),
+    );
 
     final promptText = _renderPrompt(
       nodes,
@@ -151,7 +199,12 @@ class GraphRagService {
   ///
   /// Trả về rỗng khi câu hỏi hướng tới cả chương trình, để [buildContext]
   /// chuyển sang dùng toàn đồ thị.
-  List<Subject> findSeeds(String question, List<Subject> subjects) {
+  List<Subject> findSeeds(String question, List<Subject> subjects) =>
+      seedsWithConfidence(question, subjects).map((s) => s.subject).toList();
+
+  /// Như [findSeeds] nhưng kèm mức tin cậy của từng môn, để [buildContext]
+  /// biết môn nào đáng đính nguyên đề cương.
+  List<SeedMatch> seedsWithConfidence(String question, List<Subject> subjects) {
     final codeHits = _codePattern
         .allMatches(question.toUpperCase())
         .map((m) => m.group(0)!)
@@ -172,7 +225,11 @@ class GraphRagService {
     // vẫn được ưu tiên, vì lúc đó người dùng đang nhắm vào môn cụ thể.
     if (byCode.isEmpty && _looksGlobal(question)) return const [];
 
-    return [...byCode, ..._rankByKeyword(question, rest)];
+    return [
+      // Gọi thẳng mã môn là tín hiệu chắc chắn nhất, luôn đủ tin.
+      for (final s in byCode) (subject: s, confident: true),
+      ..._rankByKeyword(question, rest),
+    ];
   }
 
   bool _looksGlobal(String question) {
@@ -180,33 +237,85 @@ class GraphRagService {
     return _globalIntentPhrases.any(normalized.contains);
   }
 
-  List<Subject> _rankByKeyword(String question, List<Subject> subjects) {
-    final concepts = _conceptsOf(question);
+  List<SeedMatch> _rankByKeyword(String question, List<Subject> subjects) {
+    final concepts = _weighConcepts(_conceptsOf(question), subjects);
     if (concepts.isEmpty) return const [];
 
-    final scored = <(Subject, int)>[];
+    final scored = <({Subject subject, int score, bool strong})>[];
     for (final s in subjects) {
       final hit = _score(s, concepts);
       // Bỏ dấu tiếng Việt xong rất nhiều âm tiết trùng nhau: "lập lộ trình"
       // và "lập trình" cùng ra "lap ... trinh". Vài âm tiết lẻ trùng vào phần
       // mô tả vì thế không đủ để coi là nhắc tới môn đó — phải khớp mã/tên,
       // hoặc khớp trọn một cụm từ.
-      if (hit.score > 0 && hit.reliable) scored.add((s, hit.score));
+      if (hit.score > 0 && hit.reliable) {
+        scored.add((subject: s, score: hit.score, strong: hit.strong));
+      }
     }
     if (scored.isEmpty) return const [];
 
-    scored.sort((a, b) => b.$2.compareTo(a.$2));
-    final best = scored.first.$2;
+    scored.sort((a, b) => b.score.compareTo(a.score));
+    final best = scored.first.score;
 
     // Ngưỡng tương đối: khi đã có môn khớp mạnh thì loại các môn chỉ khớp
     // lướt qua ở phần mô tả; còn khi cả nhóm đều khớp yếu thì vẫn giữ lại,
     // vì lúc đó chúng là manh mối duy nhất.
     final cutoff = (best * 2 / 3).ceil();
     return scored
-        .where((x) => x.$2 >= cutoff)
+        .where((x) => x.score >= cutoff)
         .take(maxKeywordSeeds)
-        .map((x) => x.$1)
+        // Khớp vào mã/tên môn mới đủ chắc để dám đính nguyên đề cương; khớp
+        // vào phần mô tả thì chỉ đủ để đưa môn đó vào danh sách.
+        .map((x) => (subject: x.subject, confident: x.strong))
         .toList();
+  }
+
+  /// Đếm độ phổ biến của từng khái niệm trong danh mục, bỏ những khái niệm
+  /// quá phổ biến và đánh dấu những khái niệm đủ hiếm để tin.
+  ///
+  /// Một chữ xuất hiện ở 1/4 số môn thì không giúp chọn ra môn nào — giữ lại
+  /// chỉ khiến các môn vô can lọt vào ngữ cảnh, vừa tốn token vừa làm câu trả
+  /// lời loãng đi.
+  List<_Concept> _weighConcepts(
+    List<List<String>> concepts,
+    List<Subject> subjects,
+  ) {
+    // Danh mục quá nhỏ thì không đo được độ phổ biến; coi mọi khái niệm là
+    // đặc hiệu, tức giữ nguyên hành vi cũ.
+    if (subjects.length < minSubjectsForCommonFilter) {
+      return [for (final forms in concepts) (forms: forms, specific: true)];
+    }
+
+    final dropAbove = (subjects.length * maxConceptMatchRatio).ceil();
+
+    final kept = <_Concept>[];
+    for (final forms in concepts) {
+      var matches = 0;
+      for (final s in subjects) {
+        if (_matchesAny(forms, s)) matches++;
+        if (matches > dropAbove) break;
+      }
+      if (matches > dropAbove) continue;
+      kept.add((
+        forms: forms,
+        specific: matches > 0 && matches <= maxMatchesForSpecific,
+      ));
+    }
+    return kept;
+  }
+
+  bool _matchesAny(List<String> forms, Subject subject) {
+    final strong = _normalize('${subject.code} ${subject.name}');
+    final weak = _normalize(subject.description);
+    final strongTokens = strong.split(_tokenSplitter).toSet();
+    final weakTokens = weak.split(_tokenSplitter).toSet();
+
+    for (final f in forms) {
+      if (_hits(f, strong, strongTokens) || _hits(f, weak, weakTokens)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Mỗi "khái niệm" là một nhóm cách viết cùng nghĩa. Khớp được bất kỳ cách
@@ -248,9 +357,13 @@ class GraphRagService {
   /// [reliable] đánh dấu có ít nhất một bằng chứng đáng tin: khớp vào mã/tên
   /// môn, hoặc khớp trọn một cụm từ nhiều chữ. Khớp lẻ từng âm tiết vào phần
   /// mô tả vẫn cộng điểm nhưng không tự nó đủ để chọn môn.
-  ({int score, bool reliable}) _score(
+  ///
+  /// [strong] chặt hơn: có khớp thẳng vào mã hoặc tên môn. Tên môn là thứ mô
+  /// tả môn đó đúng nhất, nên đây là mức tin cậy đủ để dám đính nguyên đề
+  /// cương — khớp vào phần mô tả thì chưa.
+  ({int score, bool reliable, bool strong}) _score(
     Subject subject,
-    List<List<String>> concepts,
+    List<_Concept> concepts,
   ) {
     final strong = _normalize('${subject.code} ${subject.name}');
     final weak = _normalize(subject.description);
@@ -259,12 +372,13 @@ class GraphRagService {
 
     var score = 0;
     var reliable = false;
+    var matchedStrongField = false;
 
-    for (final forms in concepts) {
+    for (final concept in concepts) {
       String? hitForm;
       var inStrong = false;
 
-      for (final f in forms) {
+      for (final f in concept.forms) {
         if (_hits(f, strong, strongTokens)) {
           hitForm = f;
           inStrong = true;
@@ -272,7 +386,7 @@ class GraphRagService {
         }
       }
       if (hitForm == null) {
-        for (final f in forms) {
+        for (final f in concept.forms) {
           if (_hits(f, weak, weakTokens)) {
             hitForm = f;
             break;
@@ -282,9 +396,13 @@ class GraphRagService {
       if (hitForm == null) continue;
 
       score += inStrong ? 2 : 1;
+      // Chỉ khớp bằng từ đặc hiệu vào mã/tên môn mới đủ chắc để đính đề
+      // cương. "engineer" khớp tên 4 môn kỹ thuật không nói lên câu hỏi đang
+      // nhắm vào môn nào trong số đó.
+      if (inStrong && concept.specific) matchedStrongField = true;
       if (inStrong || hitForm.contains(' ')) reliable = true;
     }
-    return (score: score, reliable: reliable);
+    return (score: score, reliable: reliable, strong: matchedStrongField);
   }
 
   /// Cụm nhiều từ thì dò nguyên cụm; từ đơn phải khớp trọn một từ trong text

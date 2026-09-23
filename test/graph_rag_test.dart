@@ -115,4 +115,99 @@ void main() {
       expect(seedCodes('Ai là người dạy môn này vậy ạ'), isEmpty);
     });
   });
+
+  group('lọc từ khoá không có sức phân biệt', () {
+    // Danh mục thật của FPTU có rất nhiều môn mang chữ "Engineering" trong
+    // tên. Phải đủ lớn thì phép lọc theo tỉ lệ mới kích hoạt.
+    final catalogue = <Subject>[
+      Subject.create(code: 'AIL303', name: 'Artificial Intelligence'),
+      Subject.create(code: 'MAE101', name: 'Mathematics for Engineering'),
+      Subject.create(code: 'SWE201C', name: 'Introduction to Software Engineering'),
+      Subject.create(code: 'SWR302', name: 'Software Requirement Engineering'),
+      Subject.create(code: 'SWT301', name: 'Software Testing Engineering'),
+      Subject.create(code: 'GRC490', name: 'Graduation Project Engineering'),
+      Subject.create(code: 'SE_GRA_ELE', name: 'SE Graduation Elective Engineering'),
+      Subject.create(code: 'PRF192', name: 'Programming Fundamentals'),
+      Subject.create(code: 'CSD201', name: 'Data Structures and Algorithms'),
+      Subject.create(code: 'DBI202', name: 'Database Systems'),
+      Subject.create(code: 'PRJ301', name: 'Java Web Application Development'),
+      Subject.create(code: 'PRM392', name: 'Mobile Programming'),
+      Subject.create(code: 'MAS291', name: 'Statistics and Probability'),
+      Subject.create(code: 'JPD316', name: 'Japanese Elementary'),
+    ];
+
+    List<String> codesFrom(String question) => GraphRagService.instance
+        .findSeeds(question, catalogue)
+        .map((s) => s.code)
+        .toList();
+
+    test('từ chung chung không kéo theo cả loạt môn vô can', () {
+      // Ca thật đã gặp: câu này từng trả về GRC490, SWE201C, SE_GRA_ELE...
+      // vì "engineer" khớp tiền tố "Engineering" ở tên hàng loạt môn.
+      final codes = codesFrom('tôi muốn làm AI Engineer nên học gì');
+
+      expect(codes, contains('AIL303'));
+      expect(codes, isNot(contains('GRC490')));
+      expect(codes, isNot(contains('SE_GRA_ELE')));
+      expect(codes, isNot(contains('SWE201C')));
+    });
+
+    test('từ khoá hiếm vẫn giữ nguyên sức chọn', () {
+      expect(codesFrom('môn database học gì'), contains('DBI202'));
+    });
+
+    test('từ rộng đưa môn vào ngữ cảnh nhưng không được đính đề cương', () {
+      // Đo trên CSDL thật (64 môn): "software" khớp tên 8 môn. Chọn 2 trong 8
+      // để đính đề cương chỉ là đoán mò, nên các môn này vào ngữ cảnh ở dạng
+      // gọn thôi.
+      final matches = GraphRagService.instance
+          .seedsWithConfidence('học về software thì sao', catalogue);
+
+      expect(matches, isNotEmpty);
+      expect(matches.every((m) => !m.confident), isTrue);
+    });
+
+    test('từ đặc hiệu thì được đính đề cương', () {
+      final matches = GraphRagService.instance
+          .seedsWithConfidence('môn japanese học gì', catalogue);
+
+      expect(matches.first.subject.code, 'JPD316');
+      expect(matches.first.confident, isTrue);
+    });
+
+    test('danh mục nhỏ thì không áp dụng lọc theo tỉ lệ', () {
+      // Với 6 môn, 25% chỉ là 1-2 môn nên tỉ lệ không nói lên điều gì —
+      // bộ test ở nhóm trên vẫn phải chạy đúng như cũ.
+      expect(seedCodes('database systems khó không'), contains('DBI202'));
+    });
+  });
+
+  group('mức tin cậy quyết định có đính đề cương hay không', () {
+    test('gọi thẳng mã môn thì luôn đủ tin', () {
+      final matches =
+          GraphRagService.instance.seedsWithConfidence('CSD201 là gì', subjects);
+      expect(matches.single.subject.code, 'CSD201');
+      expect(matches.single.confident, isTrue);
+    });
+
+    test('khớp vào tên môn thì đủ tin', () {
+      final matches = GraphRagService.instance.seedsWithConfidence(
+        'database systems khó không',
+        subjects,
+      );
+      expect(matches.first.subject.code, 'DBI202');
+      expect(matches.first.confident, isTrue);
+    });
+
+    test('chỉ khớp ở phần mô tả thì chưa đủ tin để đính đề cương', () {
+      // "cấu trúc dữ liệu" nằm trong phần mô tả của CSD201, không nằm trong
+      // tên tiếng Anh "Data Structures and Algorithms".
+      final matches = GraphRagService.instance.seedsWithConfidence(
+        'môn nào dạy cấu trúc dữ liệu',
+        subjects,
+      );
+      expect(matches.first.subject.code, 'CSD201');
+      expect(matches.first.confident, isFalse);
+    });
+  });
 }
