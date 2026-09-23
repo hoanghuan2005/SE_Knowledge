@@ -14,7 +14,26 @@ import 'settings_service.dart';
 /// chính mã/tên môn. Chỉ những môn như vậy mới được đính nguyên đề cương —
 /// đề cương nặng cỡ nghìn token, đính nhầm môn thì vừa tốn vừa làm lệch câu
 /// trả lời.
-typedef SeedMatch = ({Subject subject, bool confident});
+typedef SeedMatch = ({Subject subject, bool confident, bool viaCode});
+
+/// Các mã môn mà một viết tắt trong câu hỏi trỏ tới cùng lúc, tức chỗ AI nên
+/// hỏi lại thay vì tự chọn. Rỗng nghĩa là câu hỏi đủ rõ.
+///
+/// Ba điều kiện, thiếu một là không tính:
+///
+/// 1. **Khớp qua mã môn.** Gõ "jpd" là đang gọi tên một môn cụ thể nhưng gọi
+///    thiếu. Khớp qua tên/chủ đề ("software") lại là câu hỏi rộng thật lòng,
+///    hỏi lại chỉ làm phiền.
+/// 2. **Không môn nào đủ tin.** Có một môn nổi trội thì cứ trả lời môn đó.
+/// 3. **Từ hai môn trở lên.** Một môn thì chẳng có gì để hỏi.
+List<String> ambiguousCodeMatches(List<SeedMatch> seeds) {
+  if (seeds.any((s) => s.confident)) return const [];
+  final codes = [
+    for (final s in seeds)
+      if (s.viaCode) s.subject.code,
+  ];
+  return codes.length >= 2 ? codes : const [];
+}
 
 /// Một khái niệm trong câu hỏi, kèm đánh giá độ hiếm của nó trong danh mục.
 ///
@@ -49,6 +68,17 @@ class GraphRagService {
   /// Số môn hạt giống tối đa suy ra từ từ khoá, để một câu hỏi chung chung
   /// không kéo theo cả chục môn rồi phình ngược ngữ cảnh.
   static const int maxKeywordSeeds = 5;
+
+  /// Điểm cho từng nơi khớp, xếp theo mức chắc chắn của bằng chứng.
+  ///
+  /// Mã môn nặng nhất vì nó là định danh duy nhất, và người dùng rất hay viết
+  /// tắt mã ("csd", "swr", "prf"). Ca thật đã xảy ra: câu "điểm trung bình
+  /// csd và swr của tôi là bao nhiêu" từng mất hẳn SWR302 — hồi đó khớp mã và
+  /// khớp tên được tính điểm ngang nhau, nên mấy môn tình cờ có chữ "trung"
+  /// trong tên đủ sức hoà điểm rồi chen chỗ, mà chỉ giữ 5 hạt giống.
+  static const int scoreCodeHit = 4;
+  static const int scoreNameHit = 2;
+  static const int scoreDescriptionHit = 1;
 
   /// Trần số node của subgraph. Đồ thị thật có vài chục môn, BFS 2 bước từ
   /// nhiều seed có thể chạm gần hết đồ thị và làm mất ý nghĩa của việc thu hẹp.
@@ -175,6 +205,7 @@ class GraphRagService {
       syllabi,
       grades.byCode,
       grades.profile,
+      ambiguousCodeMatches(seedMatches),
     );
     stopwatch.stop();
 
@@ -229,8 +260,8 @@ class GraphRagService {
     if (byCode.isEmpty && _looksGlobal(question)) return const [];
 
     return [
-      // Gọi thẳng mã môn là tín hiệu chắc chắn nhất, luôn đủ tin.
-      for (final s in byCode) (subject: s, confident: true),
+      // Gọi thẳng mã môn đầy đủ là tín hiệu chắc chắn nhất, luôn đủ tin.
+      for (final s in byCode) (subject: s, confident: true, viaCode: true),
       ..._rankByKeyword(question, rest),
     ];
   }
@@ -244,7 +275,7 @@ class GraphRagService {
     final concepts = _weighConcepts(_conceptsOf(question), subjects);
     if (concepts.isEmpty) return const [];
 
-    final scored = <({Subject subject, int score, bool strong})>[];
+    final scored = <({Subject subject, int score, bool strong, bool viaCode})>[];
     for (final s in subjects) {
       final hit = _score(s, concepts);
       // Bỏ dấu tiếng Việt xong rất nhiều âm tiết trùng nhau: "lập lộ trình"
@@ -252,12 +283,23 @@ class GraphRagService {
       // mô tả vì thế không đủ để coi là nhắc tới môn đó — phải khớp mã/tên,
       // hoặc khớp trọn một cụm từ.
       if (hit.score > 0 && hit.reliable) {
-        scored.add((subject: s, score: hit.score, strong: hit.strong));
+        scored.add((
+          subject: s,
+          score: hit.score,
+          strong: hit.strong,
+          viaCode: hit.codeHit,
+        ));
       }
     }
     if (scored.isEmpty) return const [];
 
-    scored.sort((a, b) => b.score.compareTo(a.score));
+    // Hoà điểm thì xếp theo mã môn, để cùng một câu hỏi luôn ra cùng kết quả.
+    // Trước đây thứ tự phụ thuộc vào cách sort xử lý phần tử bằng nhau, nên
+    // môn nào lọt vào top 5 là chuyện hên xui.
+    scored.sort((a, b) {
+      final byScore = b.score.compareTo(a.score);
+      return byScore != 0 ? byScore : a.subject.code.compareTo(b.subject.code);
+    });
     final best = scored.first.score;
 
     // Ngưỡng tương đối: khi đã có môn khớp mạnh thì loại các môn chỉ khớp
@@ -269,7 +311,8 @@ class GraphRagService {
         .take(maxKeywordSeeds)
         // Khớp vào mã/tên môn mới đủ chắc để dám đính nguyên đề cương; khớp
         // vào phần mô tả thì chỉ đủ để đưa môn đó vào danh sách.
-        .map((x) => (subject: x.subject, confident: x.strong))
+        .map((x) =>
+            (subject: x.subject, confident: x.strong, viaCode: x.viaCode))
         .toList();
   }
 
@@ -364,48 +407,70 @@ class GraphRagService {
   /// [strong] chặt hơn: có khớp thẳng vào mã hoặc tên môn. Tên môn là thứ mô
   /// tả môn đó đúng nhất, nên đây là mức tin cậy đủ để dám đính nguyên đề
   /// cương — khớp vào phần mô tả thì chưa.
-  ({int score, bool reliable, bool strong}) _score(
+  ({int score, bool reliable, bool strong, bool codeHit}) _score(
     Subject subject,
     List<_Concept> concepts,
   ) {
-    final strong = _normalize('${subject.code} ${subject.name}');
-    final weak = _normalize(subject.description);
-    final strongTokens = strong.split(_tokenSplitter).toSet();
-    final weakTokens = weak.split(_tokenSplitter).toSet();
+    final code = _normalize(subject.code);
+    final name = _normalize(subject.name);
+    final description = _normalize(subject.description);
+    final codeTokens = code.split(_tokenSplitter).toSet();
+    final nameTokens = name.split(_tokenSplitter).toSet();
+    final descriptionTokens = description.split(_tokenSplitter).toSet();
 
     var score = 0;
     var reliable = false;
     var matchedStrongField = false;
+    var matchedCode = false;
 
     for (final concept in concepts) {
       String? hitForm;
-      var inStrong = false;
+      int? points;
+      var inStrongField = false;
 
       for (final f in concept.forms) {
-        if (_hits(f, strong, strongTokens)) {
+        if (_hits(f, code, codeTokens)) {
           hitForm = f;
-          inStrong = true;
+          points = scoreCodeHit;
+          inStrongField = true;
+          matchedCode = true;
           break;
         }
       }
       if (hitForm == null) {
         for (final f in concept.forms) {
-          if (_hits(f, weak, weakTokens)) {
+          if (_hits(f, name, nameTokens)) {
             hitForm = f;
+            points = scoreNameHit;
+            inStrongField = true;
+            break;
+          }
+        }
+      }
+      if (hitForm == null) {
+        for (final f in concept.forms) {
+          if (_hits(f, description, descriptionTokens)) {
+            hitForm = f;
+            points = scoreDescriptionHit;
             break;
           }
         }
       }
       if (hitForm == null) continue;
 
-      score += inStrong ? 2 : 1;
+      score += points!;
       // Chỉ khớp bằng từ đặc hiệu vào mã/tên môn mới đủ chắc để đính đề
       // cương. "engineer" khớp tên 4 môn kỹ thuật không nói lên câu hỏi đang
       // nhắm vào môn nào trong số đó.
-      if (inStrong && concept.specific) matchedStrongField = true;
-      if (inStrong || hitForm.contains(' ')) reliable = true;
+      if (inStrongField && concept.specific) matchedStrongField = true;
+      if (inStrongField || hitForm.contains(' ')) reliable = true;
     }
-    return (score: score, reliable: reliable, strong: matchedStrongField);
+    return (
+      score: score,
+      reliable: reliable,
+      strong: matchedStrongField,
+      codeHit: matchedCode,
+    );
   }
 
   /// Cụm nhiều từ thì dò nguyên cụm; từ đơn phải khớp trọn một từ trong text
@@ -531,11 +596,24 @@ class GraphRagService {
     List<FapSyllabusImport> syllabi,
     Map<String, TranscriptEntry> gradeByCode,
     AcademicProfile? profile,
+    List<String> ambiguousCodes,
   ) {
     if (nodes.isEmpty) {
       return 'Không tìm thấy môn học nào liên quan trực tiếp đến câu hỏi trong CSDL.';
     }
     final sb = StringBuffer();
+    if (ambiguousCodes.isNotEmpty) {
+      // Đặt lên đầu prompt để AI đọc thấy trước cả danh sách môn, khỏi lỡ
+      // chọn đại một môn rồi mới thấy dòng này ở cuối.
+      sb
+        ..writeln(
+          'LƯU Ý: mã môn viết tắt trong câu hỏi khớp nhiều môn cùng lúc: '
+          '${ambiguousCodes.join(", ")}. Nếu câu hỏi nhắm tới một môn cụ thể, '
+          'hãy hỏi lại người dùng muốn môn nào trong số đó thay vì tự chọn. '
+          'Nếu câu hỏi áp dụng cho cả nhóm thì cứ trả lời cho cả nhóm.',
+        )
+        ..writeln();
+    }
     if (profile != null) {
       sb
         ..writeln(profile.summaryLine)
@@ -731,6 +809,10 @@ class GraphRagService {
     'cac', 'moi', 'mot', 'hai', 'ba', 'nhieu', 'it', 'het', 'ca',
     'khong', 'ko', 'chua', 'roi', 'xong', 'nhe', 'nha', 'oi', 'day',
     'bao', 'gio', 'dau', 'tai', 'nhat', 'rat', 'qua', 'cung', 'van',
+    // Từ hay gặp khi hỏi về điểm số. Không môn nào tên là "điểm" hay "trung
+    // bình", nên để lại chỉ tổ khớp bừa vào tên/mô tả rồi chen chỗ của môn
+    // thật — đúng ca "điểm trung bình csd và swr" đã gặp.
+    'diem', 'trung', 'binh',
   };
 
   /// Dấu hiệu câu hỏi nhắm tới cả chương trình chứ không tới một môn nào.

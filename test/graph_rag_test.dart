@@ -183,6 +183,108 @@ void main() {
     });
   });
 
+  group('viết tắt mã môn', () {
+    // Đủ lớn để phép lọc theo tỉ lệ kích hoạt, và cố tình có môn mang chữ
+    // "trung"/"bình" trong tên để tái hiện đúng kiểu nhiễu đã gặp.
+    final catalogue = <Subject>[
+      Subject.create(code: 'CSD201', name: 'Data Structures and Algorithms'),
+      Subject.create(code: 'SWR302', name: 'Software Requirement'),
+      Subject.create(code: 'SWP391', name: 'Software Development Project'),
+      Subject.create(code: 'SWT301', name: 'Software Testing'),
+      Subject.create(code: 'JPD316', name: 'Intermediate Japanese_Tiếng Nhật trung cấp'),
+      Subject.create(code: 'JPD133', name: 'Elementary Japanese_Tiếng Nhật sơ cấp'),
+      Subject.create(code: 'VOV114', name: 'Vovinam_Võ bình định'),
+      Subject.create(code: 'OTP101', name: 'Orientation_Trung tâm định hướng'),
+      Subject.create(code: 'PRF192', name: 'Programming Fundamentals'),
+      Subject.create(code: 'PRO192', name: 'Object Oriented Programming'),
+      Subject.create(code: 'DBI202', name: 'Database Systems'),
+      Subject.create(code: 'MAE101', name: 'Mathematics for Engineering'),
+      Subject.create(code: 'MAS291', name: 'Statistics and Probability'),
+      Subject.create(code: 'PRJ301', name: 'Java Web Application Development'),
+    ];
+
+    List<String> codesFrom(String question) => GraphRagService.instance
+        .findSeeds(question, catalogue)
+        .map((s) => s.code)
+        .toList();
+
+    test('viết tắt mã môn được nhận ra và không bị môn khác chen chỗ', () {
+      // Ca thật: câu này từng chỉ ra CSD201, còn SWR302 bị bốn môn tình cờ
+      // mang chữ "trung"/"bình" trong tên đẩy khỏi top 5 hạt giống.
+      final codes = codesFrom('điểm trung bình csd và swr của tôi là bao nhiêu');
+
+      expect(codes, containsAll(['CSD201', 'SWR302']));
+      expect(codes, isNot(contains('JPD316')));
+      expect(codes, isNot(contains('VOV114')));
+      expect(codes, isNot(contains('OTP101')));
+    });
+
+    test('khớp mã môn xếp trên khớp tên môn', () {
+      // "swp" trỏ thẳng vào mã SWP391, còn "software" chỉ là chữ trong tên
+      // của ba môn — mã phải thắng.
+      expect(codesFrom('môn swp học gì').first, 'SWP391');
+    });
+
+    test('viết tắt vẫn đủ tin để đính đề cương', () {
+      final matches =
+          GraphRagService.instance.seedsWithConfidence('swr là môn gì', catalogue);
+      expect(matches.first.subject.code, 'SWR302');
+      expect(matches.first.confident, isTrue);
+    });
+  });
+
+  group('viết tắt trỏ vào nhiều môn thì hỏi lại', () {
+    SeedMatch seed(String code, {bool confident = false, bool viaCode = true}) =>
+        (
+          subject: Subject.create(code: code, name: code),
+          confident: confident,
+          viaCode: viaCode,
+        );
+
+    test('nhiều môn cùng khớp qua mã thì nêu hết để hỏi lại', () {
+      // "jpd" trỏ vào cả 5 môn tiếng Nhật, không môn nào nổi trội.
+      expect(
+        ambiguousCodeMatches([
+          seed('JPD113'),
+          seed('JPD123'),
+          seed('JPD133'),
+        ]),
+        ['JPD113', 'JPD123', 'JPD133'],
+      );
+    });
+
+    test('có môn đủ tin thì trả lời luôn, không hỏi', () {
+      expect(
+        ambiguousCodeMatches([
+          seed('CSD201', confident: true),
+          seed('CSD301'),
+        ]),
+        isEmpty,
+      );
+    });
+
+    test('chỉ một môn thì không có gì để hỏi', () {
+      expect(ambiguousCodeMatches([seed('PRF192')]), isEmpty);
+    });
+
+    test('khớp theo tên/chủ đề thì không hỏi lại', () {
+      // "software" khớp tên nhiều môn, nhưng đó là câu hỏi rộng thật lòng —
+      // hỏi lại chỉ làm phiền người dùng.
+      expect(
+        ambiguousCodeMatches([
+          seed('SWE201C', viaCode: false),
+          seed('SWR302', viaCode: false),
+          seed('SWT301', viaCode: false),
+        ]),
+        isEmpty,
+      );
+    });
+
+    test('không có hạt giống nào thì cũng không hỏi', () {
+      expect(ambiguousCodeMatches(const []), isEmpty);
+    });
+  });
+
   group('mức tin cậy quyết định có đính đề cương hay không', () {
     test('gọi thẳng mã môn thì luôn đủ tin', () {
       final matches =
