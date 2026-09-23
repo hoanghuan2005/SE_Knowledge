@@ -285,7 +285,12 @@ class _VaultImportPlanDialogState extends State<VaultImportPlanDialog> {
                 icon: Icons.edit_outlined,
                 color: AppColors.info,
                 title: 'Môn cập nhật',
-                items: [for (final n in _plan.toUpdate) n.code],
+                items: [
+                  for (final n in _plan.toUpdate)
+                    (_plan.changeDetails[n.code]?.isNotEmpty ?? false)
+                        ? '${n.code}: ${_plan.changeDetails[n.code]!.join(', ')}'
+                        : n.code,
+                ],
               ),
               _Group(
                 icon: Icons.link,
@@ -308,11 +313,11 @@ class _VaultImportPlanDialogState extends State<VaultImportPlanDialog> {
                 items: _plan.brokenLinks,
               ),
               _Group(
-                icon: Icons.folder_off_outlined,
-                color: AppColors.textSecondary,
-                title: 'Có trong CSDL nhưng không còn file .md',
-                note: 'Chỉ báo để biết, app không bao giờ tự xoá nhóm này.',
-                items: [for (final s in _plan.missingInVault) s.code],
+                icon: Icons.warning_amber_outlined,
+                color: AppColors.warning,
+                title: 'Cảnh báo khi quét',
+                note: 'File bị bỏ qua hoặc nhiều file trùng mã môn.',
+                items: _plan.warnings,
               ),
             ],
           ),
