@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:sqflite_common_ffi/sqflite_ffi.dart' show DatabaseExecutor;
 
 import '../models/graph_data.dart';
 import '../models/prerequisite.dart';
@@ -93,6 +94,54 @@ class ObsidianNote {
       return line;
     }
     return '';
+  }
+
+  // --- Phần dưới chỉ dùng cho lượt nạp Vault -> SQLite -----------------
+
+  static final RegExp _leadingInt = RegExp(r'^\s*(\d+)');
+
+  /// Tên khai trong front matter, `null` nếu file không khai.
+  ///
+  /// Khác [name] ở chỗ không tự rơi về tên file: nạp một ghi chú tay không có
+  /// front matter thì không được đè tên môn đang có bằng "PRJ301".
+  String? get declaredName {
+    final v = frontMatter['name']?.trim() ?? '';
+    return v.isEmpty ? null : v;
+  }
+
+  /// Kỳ khai trong front matter, `null` nếu thiếu hoặc không đọc được số.
+  /// Chịu được comment YAML cuối dòng: `semester: 3 # kỳ 3` -> 3.
+  int? get declaredSemester => _intOf(frontMatter['semester']);
+
+  /// Tín chỉ khai trong front matter, `null` nếu thiếu.
+  int? get declaredCredits => _intOf(frontMatter['credits']);
+
+  static int? _intOf(String? raw) {
+    final m = _leadingInt.firstMatch(raw ?? '');
+    return m == null ? null : int.tryParse(m.group(1)!);
+  }
+
+  /// Đoạn mô tả dùng khi nạp: nguyên khối văn bản giữa tiêu đề `# ...` và
+  /// heading kế tiếp — đúng chỗ lúc xuất ghi `subject.description`.
+  ///
+  /// Khác [description] (chỉ lấy một dòng) ở hai điểm: mô tả nhiều dòng đi
+  /// hết một vòng xuất -> nạp vẫn nguyên vẹn, và môn không có mô tả thì trả
+  /// rỗng thay vì vớ nhầm dòng đầu của mục "Ghi chú".
+  String get importDescription {
+    final lines = body.replaceAll('\r\n', '\n').split('\n');
+    var i = 0;
+    while (i < lines.length && lines[i].trim().isEmpty) {
+      i++;
+    }
+    // Bỏ dòng tiêu đề cấp 1 mà app sinh ra: `# PRF192 — Programming...`.
+    if (i < lines.length && RegExp(r'^#\s').hasMatch(lines[i].trim())) i++;
+
+    final out = <String>[];
+    for (; i < lines.length; i++) {
+      if (RegExp(r'^#{1,6}\s').hasMatch(lines[i].trim())) break;
+      out.add(lines[i].trimRight());
+    }
+    return out.join('\n').trim();
   }
 
   /// Chuyển thành model môn học để ghi xuống SQLite.
@@ -204,10 +253,6 @@ class VaultSyncPlan {
   /// `[[...]]` không trỏ tới file nào trong Vault.
   final List<String> brokenLinks;
 
-  /// Môn có trong CSDL nhưng không còn file `.md` nào tương ứng.
-  /// Chỉ báo cáo, không bao giờ tự xoá.
-  final List<Subject> missingInVault;
-
   /// Mã tệp môn học đọc được từ front matter `curriculum:` của các file đang
   /// quét. Hộp thoại dùng làm gợi ý mặc định cho ô "Tạo tệp mới".
   final List<String> detectedCurriculumCodes;
@@ -221,6 +266,17 @@ class VaultSyncPlan {
   /// riêng và [ObsidianService.applyPlan] nạp bằng [FapMarkdownParser].
   final List<ObsidianNote> fapPages;
 
+  /// Mã môn -> các trường sẽ đổi, ví dụ `kỳ 3 → 4`. Hộp thoại hiện kèm mỗi
+  /// môn trong mục "Môn cập nhật" để người dùng biết mình sắp ghi đè gì.
+  final Map<String, List<String>> changeDetails;
+
+  /// Cảnh báo phát sinh lúc quét: file đọc không được, nhiều file cùng mã...
+  final List<String> warnings;
+
+  /// Thời điểm bắt đầu quét. [ObsidianService.applyPlan] dùng để từ chối ghi
+  /// một kế hoạch đã cũ khi file bị sửa trong lúc hộp thoại còn mở.
+  final DateTime? scannedAt;
+
   const VaultSyncPlan({
     required this.vaultPath,
     this.subFolder = '',
@@ -231,9 +287,11 @@ class VaultSyncPlan {
     required this.edgesToAdd,
     required this.edgesToRemove,
     required this.brokenLinks,
-    required this.missingInVault,
     this.detectedCurriculumCodes = const [],
     this.fapPages = const [],
+    this.changeDetails = const {},
+    this.warnings = const [],
+    this.scannedAt,
   });
 
   /// Mọi môn mà lần nạp này đụng tới — chính là tập sẽ được gắn vào tệp đích.
@@ -625,9 +683,13 @@ class ObsidianService {
   /// đối so với gốc Vault). Dùng khi người dùng chỉ muốn nạp riêng một lượt
   /// quét — ví dụ `FAP/BIT_SE_K19B` — thay vì nuốt trọn mọi ghi chú cá nhân
   /// đang nằm rải rác trong Vault.
+  ///
+  /// [skipped] khác null thì nhận thêm một dòng cho mỗi file bị bỏ qua (khoá,
+  /// không phải UTF-8, nội dung lỗi) để lớp gọi báo lại cho người dùng.
   Future<List<ObsidianNote>> scanVault(
     String vaultPath, {
     String subFolder = '',
+    List<String>? skipped,
   }) async {
     if (!await Directory(vaultPath).exists()) {
       throw ObsidianException('Không tìm thấy thư mục Vault: $vaultPath');
@@ -654,9 +716,12 @@ class ObsidianService {
       try {
         final content = await entity.readAsString();
         notes.add(parseNote(entity.path, content));
-      } on FileSystemException {
+      } on FileSystemException catch (e) {
         // File đang bị khoá hoặc không phải UTF-8 -> bỏ qua, không làm sập app.
-        continue;
+        skipped?.add('$relative: không đọc được file (${e.message}), đã bỏ qua.');
+      } catch (e) {
+        // Một file hỏng không được kéo sập cả lượt quét.
+        skipped?.add('$relative: nội dung không bóc tách được ($e), đã bỏ qua.');
       }
     }
 
@@ -1414,40 +1479,138 @@ class ObsidianService {
     String vaultPath, {
     String subFolder = '',
   }) async {
+    // Lấy mốc TRƯỚC khi đọc file: file nào sửa sau mốc này là kế hoạch đã cũ.
+    final scannedAt = DateTime.now();
+    final warnings = <String>[];
     final scanned = (await scanVault(
       vaultPath,
       subFolder: subFolder,
+      skipped: warnings,
     )).where((n) => n.code.isNotEmpty && n.code != indexCode).toList();
 
     // Trang FAP thô đi đường riêng — xem chú thích ở [VaultSyncPlan.fapPages].
+    // File tự khai `code:` trong front matter là ghi chú môn học (app xuất ra
+    // hoặc người dùng tự viết), không bao giờ là trang FAP thô — kể cả khi
+    // trong đó có dán link `SyllabusDetails?sylID=` hay mục "## Syllabus
+    // Details". Không chặn thì ghi chú đó bị nạp nhầm bằng bộ đọc FAP.
     final fapPages = <ObsidianNote>[];
     final notes = <ObsidianNote>[];
     for (final note in scanned) {
-      if (FapMarkdownParser.looksLikeFapPage(note.body)) {
+      final declaresCode = (note.frontMatter['code'] ?? '').trim().isNotEmpty;
+      if (!declaresCode && FapMarkdownParser.looksLikeFapPage(note.body)) {
         fapPages.add(note);
       } else {
         notes.add(note);
       }
     }
 
+    // Mã môn mà các trang FAP trong phạm vi quét sẽ ghi xuống. Thiếu chúng thì
+    // ghi chú trỏ tới môn chỉ có trong trang FAP cùng lượt bị coi là liên kết
+    // gãy.
+    final fapCodes = <String>{};
+    for (final page in fapPages) {
+      final parsed = FapMarkdownParser.parse(page.body);
+      for (final row in parsed.curriculum?.subjects ?? const <FapSubjectRow>[]) {
+        final code = row.code.trim().toUpperCase();
+        if (code.isNotEmpty) fapCodes.add(code);
+      }
+      final sylCode = parsed.syllabus?.subjectCode.trim().toUpperCase() ?? '';
+      if (sylCode.isNotEmpty) fapCodes.add(sylCode);
+    }
+
     final graph = await _db.loadGraph();
     final byCode = graph.byCode;
     final byId = graph.byId;
 
-    final vaultCodes = notes.map((n) => n.code).toSet();
+    // Gom file theo mã môn. Hai file cùng mã (thường do lần xuất trước không
+    // dời được file cũ) mà diff riêng từng file thì file không khai tiên quyết
+    // sẽ gỡ mất cạnh mà file kia vẫn khai.
+    final groups = <String, List<ObsidianNote>>{};
+    for (final note in notes) {
+      groups.putIfAbsent(note.code, () => []).add(note);
+    }
+
+    final primaryOf = <String, ObsidianNote>{};
+    final prereqTargetsOf = <String, Set<String>>{};
+    final declaresPrereqOf = <String, bool>{};
+    for (final entry in groups.entries) {
+      final files = entry.value;
+      final primary = _pickPrimary(files, byCode[entry.key], vaultPath);
+      primaryOf[entry.key] = primary;
+
+      final targets = <String>{};
+      var declares = false;
+      for (final f in files) {
+        final deep = MarkdownParser.prerequisiteLinksDeep(f.body);
+        declares = declares || deep.hasSection;
+        targets.addAll(deep.links.map((l) => l.target));
+      }
+      prereqTargetsOf[entry.key] = targets;
+      declaresPrereqOf[entry.key] = declares;
+
+      if (files.length > 1) {
+        String rel(ObsidianNote n) => p.relative(n.filePath, from: vaultPath);
+        warnings.add(
+          '${entry.key}: có ${files.length} file .md cùng mã '
+          '(${files.map(rel).join(', ')}) — lấy thông tin môn từ '
+          '${rel(primary)}, gộp môn tiên quyết của cả ${files.length} file.',
+        );
+      }
+    }
+
+    final vaultCodes = groups.keys.toSet();
+
+    // Link -> mã môn. Obsidian cho phép trỏ bằng tên file (`[[PHE_COM-1]]` của
+    // môn `PHE_COM*1`), bí danh, hay đường dẫn (`[[FAP/PRF192]]`), nên không
+    // thể chỉ so nguyên văn với mã môn. Mã thật được đăng ký trước để luôn
+    // thắng khi một tên file tình cờ trùng mã của môn khác.
+    final resolve = <String, String>{};
+    void addKey(String key, String code) {
+      final k = key.trim().toUpperCase();
+      if (k.isNotEmpty) resolve.putIfAbsent(k, () => code);
+    }
+
+    for (final code in vaultCodes) {
+      addKey(code, code);
+    }
+    for (final code in fapCodes) {
+      addKey(code, code);
+    }
+    for (final s in graph.subjects) {
+      addKey(s.code, s.code);
+    }
+    for (final note in notes) {
+      addKey(p.basenameWithoutExtension(note.fileName), note.code);
+      for (final alias in MarkdownParser.parseListValue(
+        note.frontMatter['aliases'],
+      )) {
+        addKey(alias, note.code);
+      }
+    }
+    for (final s in graph.subjects) {
+      addKey(sanitizeFileStem(s.code), s.code);
+    }
 
     final toCreate = <ObsidianNote>[];
     final toUpdate = <ObsidianNote>[];
     final unchanged = <ObsidianNote>[];
+    final changeDetails = <String, List<String>>{};
 
-    for (final note in notes) {
-      final existing = byCode[note.code];
+    for (final entry in primaryOf.entries) {
+      final existing = byCode[entry.key];
       if (existing == null) {
-        toCreate.add(note);
-      } else if (_hasChanged(existing, note)) {
-        toUpdate.add(note);
+        toCreate.add(entry.value);
+        continue;
+      }
+      final changes = _describeChanges(
+        existing,
+        _mergeNote(existing, entry.value),
+      );
+      if (changes.isEmpty) {
+        unchanged.add(entry.value);
       } else {
-        unchanged.add(note);
+        toUpdate.add(entry.value);
+        changeDetails[entry.key] = changes;
       }
     }
 
@@ -1464,39 +1627,36 @@ class ObsidianService {
     final edgesToRemove = <EdgeChange>[];
     final brokenLinks = <String>[];
 
-    for (final note in notes) {
+    for (final code in vaultCodes) {
       final desired = <String>{};
-      for (final code in note.prerequisiteCodes) {
-        if (vaultCodes.contains(code) || byCode.containsKey(code)) {
-          desired.add(code);
+      for (final target in prereqTargetsOf[code]!) {
+        final resolved = resolve[_linkKey(target)];
+        if (resolved != null) {
+          desired.add(resolved);
         } else {
           brokenLinks.add(
-            '${note.code}: liên kết [[$code]] không trỏ tới file .md nào.',
+            '$code: liên kết [[$target]] không trỏ tới file .md nào.',
           );
         }
       }
 
-      final current = currentEdges[note.code] ?? const <String>{};
+      final current = currentEdges[code] ?? const <String>{};
 
-      for (final code in desired.difference(current)) {
-        edgesToAdd.add(
-          EdgeChange(subjectCode: note.code, prerequisiteCode: code),
-        );
+      for (final parent in desired.difference(current)) {
+        edgesToAdd.add(EdgeChange(subjectCode: code, prerequisiteCode: parent));
       }
-      // Chỉ gỡ cạnh của những môn thật sự có file trong Vault. Môn chỉ tồn tại
-      // trong CSDL thì Vault không có quyền phát biểu gì về quan hệ của nó.
-      for (final code in current.difference(desired)) {
-        edgesToRemove.add(
-          EdgeChange(subjectCode: note.code, prerequisiteCode: code),
-        );
+      // Chỉ gỡ cạnh khi file thật sự có mục "Môn tiên quyết". Ghi chú tay
+      // không có mục đó không phát biểu gì về tiên quyết, nên không được suy
+      // ra "môn này hết tiên quyết" rồi xoá sạch cạnh đang có. Môn chỉ tồn tại
+      // trong CSDL thì càng không (vòng lặp này chỉ đi qua môn có file).
+      if (declaresPrereqOf[code]!) {
+        for (final parent in current.difference(desired)) {
+          edgesToRemove.add(
+            EdgeChange(subjectCode: code, prerequisiteCode: parent),
+          );
+        }
       }
     }
-
-    // Chỉ có nghĩa khi quét cả Vault. Quét một thư mục con thì đương nhiên
-    // mọi môn ngoài thư mục đó đều "không thấy file", báo ra chỉ tổ gây nhiễu.
-    final missingInVault = subFolder.trim().isEmpty
-        ? graph.subjects.where((s) => !vaultCodes.contains(s.code)).toList()
-        : <Subject>[];
 
     // Mã tệp môn học các file tự khai, xếp theo số file khai nhiều nhất trước
     // để gợi ý mặc định trúng cái người dùng đang định nạp.
@@ -1530,20 +1690,114 @@ class ObsidianService {
       edgesToAdd: edgesToAdd,
       edgesToRemove: edgesToRemove,
       brokenLinks: brokenLinks,
-      missingInVault: missingInVault,
       detectedCurriculumCodes: detected,
       fapPages: fapPages,
+      changeDetails: changeDetails,
+      warnings: warnings,
+      scannedAt: scannedAt,
     );
   }
 
-  /// Nội dung file có khác với bản ghi trong CSDL không.
-  /// Dùng để đếm đúng số môn thật sự được cập nhật.
-  bool _hasChanged(Subject existing, ObsidianNote note) =>
-      existing.name != note.name ||
-      existing.semester != note.semester ||
-      existing.credits != note.credits ||
-      existing.description != note.description ||
-      existing.notePath != note.filePath;
+  /// Chuẩn hoá đích của một `[[...]]` về dạng tra được trong bảng resolve:
+  /// bỏ thư mục (`FAP/PRF192`), bỏ đuôi `.md`, viết hoa.
+  static String _linkKey(String target) {
+    var t = target.trim().replaceAll('\\', '/');
+    final slash = t.lastIndexOf('/');
+    if (slash >= 0) t = t.substring(slash + 1);
+    if (t.toLowerCase().endsWith('.md')) t = t.substring(0, t.length - 3);
+    return t.trim().toUpperCase();
+  }
+
+  /// Trong nhóm file cùng mã, chọn file làm nguồn thông tin môn: ưu tiên file
+  /// CSDL đang trỏ tới (`note_path`), rồi tới file nằm nông nhất trong Vault.
+  ObsidianNote _pickPrimary(
+    List<ObsidianNote> files,
+    Subject? existing,
+    String vaultPath,
+  ) {
+    if (files.length == 1) return files.first;
+    final current = existing?.notePath;
+    if (current != null && current.isNotEmpty) {
+      for (final f in files) {
+        if (p.equals(f.filePath, current)) return f;
+      }
+    }
+    int depth(ObsidianNote n) =>
+        p.split(p.relative(n.filePath, from: vaultPath)).length;
+    final sorted = [...files]
+      ..sort((a, b) {
+        final d = depth(a).compareTo(depth(b));
+        return d != 0 ? d : a.filePath.compareTo(b.filePath);
+      });
+    return sorted.first;
+  }
+
+  static String _normText(String s) => s.replaceAll('\r\n', '\n').trim();
+
+  /// Môn sẽ được ghi xuống khi nạp [note].
+  ///
+  /// Môn đã có thì **chỉ đè những trường file thật sự khai**: thiếu `name`,
+  /// `semester`, `credits` hay mô tả thì giữ nguyên giá trị trong CSDL, thay
+  /// vì đè bằng tên file / kỳ 1 / 3 tín chỉ / chuỗi rỗng.
+  Subject _mergeNote(Subject? existing, ObsidianNote note) {
+    final description = note.importDescription;
+    if (existing == null) {
+      return Subject.create(
+        code: note.code,
+        name: note.declaredName ?? note.name,
+        semester: note.declaredSemester ?? 1,
+        credits: note.declaredCredits ?? 3,
+        description: description,
+        notePath: note.filePath,
+      );
+    }
+    final samePath =
+        existing.notePath != null && p.equals(existing.notePath!, note.filePath);
+    final sameDescription =
+        description.isEmpty ||
+        _normText(description) == _normText(existing.description);
+    return existing.copyWith(
+      name: note.declaredName ?? existing.name,
+      semester: note.declaredSemester ?? existing.semester,
+      credits: note.declaredCredits ?? existing.credits,
+      description: sameDescription ? existing.description : description,
+      notePath: samePath ? existing.notePath : note.filePath,
+    );
+  }
+
+  /// Các trường khác nhau giữa bản ghi hiện tại và bản sắp ghi, diễn đạt cho
+  /// người dùng đọc. Rỗng = không có gì để cập nhật.
+  List<String> _describeChanges(Subject before, Subject after) => [
+    if (before.name != after.name) 'tên "${before.name}" → "${after.name}"',
+    if (before.semester != after.semester)
+      'kỳ ${before.semester} → ${after.semester}',
+    if (before.credits != after.credits)
+      'tín chỉ ${before.credits} → ${after.credits}',
+    if (before.description != after.description) 'mô tả',
+    if (before.notePath != after.notePath) 'đường dẫn file',
+  ];
+
+  /// Từ chối ghi một kế hoạch đã cũ: file `.md` bị sửa / xoá sau lúc quét
+  /// (người dùng sửa trong Obsidian khi hộp thoại còn mở) thì ghi tiếp sẽ đè
+  /// nội dung cũ lên CSDL và lặng lẽ bỏ qua thay đổi mới.
+  Future<void> _ensurePlanIsFresh(VaultSyncPlan plan) async {
+    final scannedAt = plan.scannedAt;
+    if (scannedAt == null) return;
+    final changed = <String>[];
+    for (final note in [...plan.notes, ...plan.fapPages]) {
+      final stat = await File(note.filePath).stat();
+      if (stat.type == FileSystemEntityType.notFound ||
+          stat.modified.isAfter(scannedAt)) {
+        changed.add(note.fileName);
+      }
+    }
+    if (changed.isEmpty) return;
+    throw ObsidianException(
+      'Có ${changed.length} file .md vừa bị sửa hoặc xoá sau lúc quét '
+      '(${changed.take(3).join(', ')}${changed.length > 3 ? ', …' : ''}). '
+      'Hãy mở lại "Nạp vào CSDL" để quét lại rồi nạp.',
+    );
+  }
 
   /// Ghi kế hoạch xuống CSDL.
   ///
@@ -1553,53 +1807,35 @@ class ObsidianService {
     VaultSyncPlan plan, {
     VaultImportTarget? target,
   }) async {
-    final warnings = <String>[...plan.brokenLinks];
+    await _ensurePlanIsFresh(plan);
 
-    // Lượt 1: tạo/cập nhật toàn bộ node trước, để lượt 2 luôn tìm thấy đích.
+    final warnings = <String>[...plan.warnings, ...plan.brokenLinks];
+
     final idByCode = <String, int>{};
-    for (final note in [...plan.toCreate, ...plan.toUpdate]) {
-      idByCode[note.code] = await _db.upsertSubjectByCode(note.toSubject());
-    }
-    for (final note in plan.unchanged) {
-      final existing = await _db.getSubjectByCode(note.code);
-      if (existing?.id != null) idByCode[note.code] = existing!.id!;
-    }
+    // Môn của các ghi chú sau khi ghi — lượt 3 lấy kỳ/tín chỉ từ đây thay vì
+    // từ front matter, để file thiếu `semester` không xếp môn vào kỳ 1.
+    final subjectByCode = <String, Subject>{};
 
-    Future<int?> idOf(String code) async {
+    Future<int?> idOf(String code, [DatabaseExecutor? txn]) async {
       final cached = idByCode[code];
       if (cached != null) return cached;
-      final found = await _db.getSubjectByCode(code);
+      final found = await _db.getSubjectByCode(code, txn: txn);
       if (found?.id != null) idByCode[code] = found!.id!;
       return found?.id;
     }
 
-    // Lượt 2: gỡ trước rồi mới thêm, để chỗ vừa trống không chặn cạnh mới.
-    var edgesRemoved = 0;
-    for (final change in plan.edgesToRemove) {
-      final subjectId = await idOf(change.subjectCode);
-      final prereqId = await idOf(change.prerequisiteCode);
-      if (subjectId == null || prereqId == null) continue;
-      await _db.removeEdge(subjectId: subjectId, prerequisiteId: prereqId);
-      edgesRemoved++;
-    }
-
-    var edgesCreated = 0;
-    for (final change in plan.edgesToAdd) {
-      final subjectId = await idOf(change.subjectCode);
-      final prereqId = await idOf(change.prerequisiteCode);
-      if (subjectId == null || prereqId == null) {
-        warnings.add(
-          '${change.subjectCode}: không tìm thấy môn ${change.prerequisiteCode}.',
-        );
-        continue;
-      }
+    Future<bool> tryAddEdge(EdgeChange change, [DatabaseExecutor? txn]) async {
+      final subjectId = await idOf(change.subjectCode, txn);
+      final prereqId = await idOf(change.prerequisiteCode, txn);
+      if (subjectId == null || prereqId == null) return false;
       try {
         await _db.addEdge(
           subjectId: subjectId,
           prerequisiteId: prereqId,
           relationType: Prerequisite.kPrerequisite,
+          txn: txn,
         );
-        edgesCreated++;
+        return true;
       } on DbConflictException catch (e) {
         // Trùng liên kết là bình thường khi đồng bộ lại; chu trình thì cảnh báo.
         if (!e.message.contains('đã tồn tại')) {
@@ -1607,19 +1843,75 @@ class ObsidianService {
             '${change.prerequisiteCode} -> ${change.subjectCode}: ${e.message}',
           );
         }
+        return false;
       }
     }
 
-    for (final subject in plan.missingInVault) {
-      warnings.add(
-        '${subject.code} có trong CSDL nhưng không còn file .md trong Vault.',
-      );
-    }
+    var edgesRemoved = 0;
+    var edgesCreated = 0;
+    // Cạnh trỏ tới môn chỉ có trong trang FAP cùng lượt: môn đó chưa có trong
+    // CSDL cho tới lượt 2b, nên để dành thử lại sau.
+    final deferred = <EdgeChange>[];
+
+    // Lượt 1 + 2 chạy trong MỘT transaction: lỗi giữa chừng (CSDL bị khoá,
+    // app bị tắt) thì không có gì được ghi, thay vì để lại CSDL nửa vời kiểu
+    // đã gỡ cạnh cũ mà chưa kịp thêm cạnh mới.
+    await _db.transaction((txn) async {
+      // Lượt 1: tạo/cập nhật toàn bộ node trước, để lượt 2 luôn tìm thấy đích.
+      // Đọc lại bản ghi ngay lúc ghi để trộn trên dữ liệu mới nhất.
+      for (final note in [...plan.toCreate, ...plan.toUpdate]) {
+        final existing = await _db.getSubjectByCode(note.code, txn: txn);
+        final subject = _mergeNote(existing, note);
+        final id = await _db.upsertSubjectByCode(subject, txn: txn);
+        idByCode[note.code] = id;
+        subjectByCode[note.code] = subject;
+      }
+      for (final note in plan.unchanged) {
+        final existing = await _db.getSubjectByCode(note.code, txn: txn);
+        if (existing?.id != null) {
+          idByCode[note.code] = existing!.id!;
+          subjectByCode[note.code] = existing;
+        }
+      }
+
+      // Lượt 2: gỡ trước rồi mới thêm, để chỗ vừa trống không chặn cạnh mới.
+      for (final change in plan.edgesToRemove) {
+        final subjectId = await idOf(change.subjectCode, txn);
+        final prereqId = await idOf(change.prerequisiteCode, txn);
+        if (subjectId == null || prereqId == null) continue;
+        await _db.removeEdge(
+          subjectId: subjectId,
+          prerequisiteId: prereqId,
+          txn: txn,
+        );
+        edgesRemoved++;
+      }
+
+      for (final change in plan.edgesToAdd) {
+        if ((await idOf(change.subjectCode, txn)) == null ||
+            (await idOf(change.prerequisiteCode, txn)) == null) {
+          deferred.add(change);
+          continue;
+        }
+        if (await tryAddEdge(change, txn)) edgesCreated++;
+      }
+    });
 
     // Lượt 2b: nạp các trang FAP thô bằng bộ đọc riêng của chúng. Khung CTĐT
     // đi trước để bảng môn có sẵn khi syllabus tìm mã môn tiên quyết.
     final fapReport = await _importFapPages(plan.fapPages, warnings);
     edgesCreated += fapReport.$2;
+
+    for (final change in deferred) {
+      if (await tryAddEdge(change)) {
+        edgesCreated++;
+      } else if ((await idOf(change.subjectCode)) == null ||
+          (await idOf(change.prerequisiteCode)) == null) {
+        warnings.add(
+          '${change.subjectCode}: không tìm thấy môn ${change.prerequisiteCode}.',
+        );
+      }
+    }
 
     // Lượt 3: xếp toàn bộ môn vừa nạp vào đúng tệp môn học người dùng chọn.
     var curriculumCode = '';
@@ -1640,11 +1932,12 @@ class ObsidianService {
         for (final note in plan.allNotes) {
           final id = await idOf(note.code);
           if (id == null || !seen.add(id)) continue;
+          final subject = subjectByCode[note.code];
           entries.add(
             CurriculumCourseEntry(
               subjectId: id,
-              term: note.semester,
-              credits: note.credits,
+              term: subject?.semester ?? note.semester,
+              credits: subject?.credits ?? note.credits,
             ),
           );
         }

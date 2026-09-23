@@ -198,6 +198,76 @@ class MarkdownParser {
   static bool isUnlockHeading(String heading) =>
       unlockHeadings.contains(_normalizeHeading(heading));
 
+  static final RegExp _closingHashes = RegExp(r'\s+#+$');
+  static final RegExp _emphasisEdges = RegExp(r'^[*_]+|[*_]+$');
+  static final RegExp _trailingColon = RegExp(r'[:：]+$');
+  static final RegExp _spaces = RegExp(r'\s+');
+
+  /// Như [isPrerequisiteHeading] nhưng chịu được các biến thể người dùng hay
+  /// gõ tay trong Obsidian: `## Môn tiên quyết ##`, `## Môn tiên quyết:`,
+  /// `## **Môn tiên quyết**`. Chỉ dùng lúc nạp Vault; phần ghi ra Vault vẫn
+  /// nhận heading theo [isPrerequisiteHeading] như cũ.
+  static bool isPrerequisiteHeadingLoose(String heading) {
+    var h = heading.replaceAll(_leadingHashes, '').trim();
+    h = h.replaceAll(_closingHashes, '').trim();
+    h = h.replaceAll(_emphasisEdges, '').trim();
+    h = h.replaceAll(_trailingColon, '').trim();
+    h = h.replaceAll(_emphasisEdges, '').trim();
+    return prerequisiteHeadings.contains(
+      h.replaceAll(_spaces, ' ').toLowerCase(),
+    );
+  }
+
+  /// Các `[[...]]` thuộc mục tiên quyết, **kể cả dưới heading con** của mục
+  /// đó (`## Môn tiên quyết` > `### Bắt buộc` > `- [[PRF192]]`).
+  ///
+  /// [WikiLink.isPrerequisite] chỉ nhìn heading gần nhất nên bỏ sót ca heading
+  /// con; hàm này đi theo cấp heading. `hasSection` cho biết file có khai mục
+  /// tiên quyết hay không — không khai thì lúc nạp không được suy ra "môn này
+  /// không có tiên quyết" để gỡ cạnh đang có.
+  static ({bool hasSection, List<WikiLink> links}) prerequisiteLinksDeep(
+    String body,
+  ) {
+    final normalized = body.replaceAll('\r\n', '\n');
+    // Heading nằm trong khối code không phải heading thật.
+    final masked = maskCode(normalized);
+
+    final ranges = <(int, int)>[];
+    final stack = <(int, bool)>[]; // (cấp heading, là mục tiên quyết)
+    var hasSection = false;
+    var offset = 0;
+    int? rangeStart;
+
+    for (final line in masked.split('\n')) {
+      final match = _headingPattern.firstMatch(line);
+      if (match != null) {
+        final level = match.group(1)!.length;
+        while (stack.isNotEmpty && stack.last.$1 >= level) {
+          stack.removeLast();
+        }
+        final isPrereq = isPrerequisiteHeadingLoose(match.group(2)!);
+        if (isPrereq) hasSection = true;
+        stack.add((level, isPrereq));
+
+        final inside = stack.any((e) => e.$2);
+        if (inside && rangeStart == null) {
+          rangeStart = offset;
+        } else if (!inside && rangeStart != null) {
+          ranges.add((rangeStart, offset));
+          rangeStart = null;
+        }
+      }
+      offset += line.length + 1;
+    }
+    if (rangeStart != null) ranges.add((rangeStart, normalized.length + 1));
+
+    final links = [
+      for (final l in parseLinks(normalized))
+        if (ranges.any((r) => l.start >= r.$1 && l.start < r.$2)) l,
+    ];
+    return (hasSection: hasSection, links: links);
+  }
+
   // ------------------------------------------------------------------
   // FRONT MATTER
   // ------------------------------------------------------------------
@@ -223,7 +293,10 @@ class MarkdownParser {
       return (const {}, normalized);
     }
 
-    final rawBlock = normalized.substring(4, end);
+    // `---` đóng ngay sau `---` mở (khối properties rỗng) thì `end` == 3, nhỏ
+    // hơn điểm bắt đầu khối — cắt thẳng sẽ ném RangeError và làm hỏng cả lượt
+    // nạp Vault chỉ vì một file template.
+    final rawBlock = end > 4 ? normalized.substring(4, end) : '';
     final map = <String, String>{};
     final listBuffer = <String, List<String>>{};
     String? currentListKey;
@@ -279,6 +352,9 @@ class MarkdownParser {
       final quoted =
           (first == '"' && last == '"') || (first == "'" && last == "'");
       if (quoted) value = value.substring(1, value.length - 1);
+      // Lúc xuất, `"` trong chuỗi nháy kép được escape thành `\"`. Không bỏ
+      // escape thì mỗi vòng xuất -> nạp lại dài thêm một dấu `\`.
+      if (first == '"' && last == '"') value = value.replaceAll(r'\"', '"');
     }
     return value;
   }

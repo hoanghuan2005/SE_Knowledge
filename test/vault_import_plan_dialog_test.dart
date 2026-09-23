@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:se_knowledge/models/subject.dart';
 import 'package:se_knowledge/services/obsidian_service.dart';
 import 'package:se_knowledge/views/widgets/vault_import_plan_dialog.dart';
 
@@ -9,8 +8,6 @@ import 'package:se_knowledge/views/widgets/vault_import_plan_dialog.dart';
 /// Hộp thoại chỉ đọc một [VaultSyncPlan] dựng sẵn nên không cần đụng tới đĩa
 /// lẫn cơ sở dữ liệu: ráp plan trong bộ nhớ rồi pump thẳng widget.
 void main() {
-  final now = DateTime(2026, 1, 1);
-
   ObsidianNote note(String code, {String? curriculum}) => ObsidianNote(
     filePath: 'C:/Vault/$code.md',
     fileName: '$code.md',
@@ -24,9 +21,6 @@ void main() {
     tags: const [],
   );
 
-  Subject subject(String code) =>
-      Subject(code: code, name: 'Môn $code', createdAt: now, updatedAt: now);
-
   VaultSyncPlan plan({
     String subFolder = '',
     List<ObsidianNote> toCreate = const [],
@@ -35,7 +29,6 @@ void main() {
     List<EdgeChange> edgesToAdd = const [],
     List<EdgeChange> edgesToRemove = const [],
     List<String> brokenLinks = const [],
-    List<Subject> missingInVault = const [],
     List<String> detectedCurriculumCodes = const [],
   }) => VaultSyncPlan(
     vaultPath: r'C:\Vault',
@@ -47,7 +40,6 @@ void main() {
     edgesToAdd: edgesToAdd,
     edgesToRemove: edgesToRemove,
     brokenLinks: brokenLinks,
-    missingInVault: missingInVault,
     detectedCurriculumCodes: detectedCurriculumCodes,
   );
 
@@ -152,15 +144,6 @@ void main() {
 
       expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
       expect(find.byIcon(Icons.download_outlined), findsOneWidget);
-    });
-
-    testWidgets('môn không còn file .md được nêu rõ là app không tự xoá', (
-      tester,
-    ) async {
-      await open(tester, plan(missingInVault: [subject('SWR302')]));
-
-      expect(find.textContaining('không bao giờ tự xoá'), findsOneWidget);
-      expect(find.text('SWR302'), findsOneWidget);
     });
 
     testWidgets('liên kết gãy được báo là sẽ bỏ qua', (tester) async {

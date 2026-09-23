@@ -642,8 +642,11 @@ class DbService {
     return rows.isEmpty ? null : Subject.fromMap(rows.first);
   }
 
-  Future<Subject?> getSubjectByCode(String code) async {
-    final db = await database;
+  Future<Subject?> getSubjectByCode(
+    String code, {
+    DatabaseExecutor? txn,
+  }) async {
+    final db = txn ?? await database;
     final rows = await db.query(
       'subjects',
       where: 'code = ?',
@@ -654,8 +657,8 @@ class DbService {
   }
 
   /// Thêm môn học. Ném [DbConflictException] nếu mã môn đã tồn tại (UNIQUE).
-  Future<int> insertSubject(Subject subject) async {
-    final db = await database;
+  Future<int> insertSubject(Subject subject, {DatabaseExecutor? txn}) async {
+    final db = txn ?? await database;
     try {
       return await db.insert('subjects', subject.toMap());
     } on DatabaseException catch (e) {
@@ -666,9 +669,9 @@ class DbService {
     }
   }
 
-  Future<void> updateSubject(Subject subject) async {
+  Future<void> updateSubject(Subject subject, {DatabaseExecutor? txn}) async {
     assert(subject.id != null, 'Không thể update môn chưa có id');
-    final db = await database;
+    final db = txn ?? await database;
     try {
       await db.update(
         'subjects',
@@ -725,13 +728,27 @@ class DbService {
     });
   }
 
+  /// Chạy [action] trong một transaction. Bên trong [action] chỉ được gọi các
+  /// hàm có tham số `txn` và phải truyền `txn` vào — gọi hàm dùng thẳng
+  /// [database] giữa chừng sẽ treo vì transaction đang giữ kết nối.
+  Future<T> transaction<T>(Future<T> Function(Transaction txn) action) async {
+    final db = await database;
+    return db.transaction(action);
+  }
+
   /// Tìm môn theo mã, chưa có thì tạo mới. Dùng khi đồng bộ từ Obsidian Vault.
-  Future<int> upsertSubjectByCode(Subject subject) async {
-    final existing = await getSubjectByCode(subject.code);
+  ///
+  /// [txn] khác null thì mọi truy vấn chạy trong transaction đó.
+  Future<int> upsertSubjectByCode(
+    Subject subject, {
+    DatabaseExecutor? txn,
+  }) async {
+    final existing = await getSubjectByCode(subject.code, txn: txn);
     if (existing == null) {
-      return insertSubject(subject);
+      return insertSubject(subject, txn: txn);
     }
     await updateSubject(
+      txn: txn,
       existing.copyWith(
         name: subject.name,
         semester: subject.semester,
@@ -790,16 +807,17 @@ class DbService {
     required int subjectId,
     required int prerequisiteId,
     String relationType = Prerequisite.kPrerequisite,
+    DatabaseExecutor? txn,
   }) async {
     if (subjectId == prerequisiteId) {
       throw DbConflictException('Một môn không thể là tiên quyết của chính nó.');
     }
-    if (await _wouldCreateCycle(subjectId, prerequisiteId)) {
+    if (await _wouldCreateCycle(subjectId, prerequisiteId, txn: txn)) {
       throw DbConflictException(
         'Liên kết này tạo ra chu trình trong đồ thị tiên quyết.',
       );
     }
-    final db = await database;
+    final db = txn ?? await database;
     try {
       await db.insert('prerequisites', {
         'subject_id': subjectId,
@@ -817,8 +835,9 @@ class DbService {
   Future<void> removeEdge({
     required int subjectId,
     required int prerequisiteId,
+    DatabaseExecutor? txn,
   }) async {
-    final db = await database;
+    final db = txn ?? await database;
     await db.delete(
       'prerequisites',
       where: 'subject_id = ? AND prerequisite_id = ?',

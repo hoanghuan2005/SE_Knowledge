@@ -15,6 +15,10 @@ import '../widgets/vault_import_plan_dialog.dart';
 class VaultImportFlow {
   VaultImportFlow._();
 
+  /// Chặn mở luồng thứ hai khi luồng trước chưa xong (bấm lặp ở menu chuột
+  /// phải trong lúc đang quét) — hai hộp thoại có thể ghi cùng một kế hoạch.
+  static bool _running = false;
+
   /// Trả về báo cáo khi đã nạp, `null` khi người dùng huỷ hoặc gặp lỗi
   /// (lỗi đã được hiển thị bằng snackbar).
   static Future<VaultSyncReport?> run(
@@ -26,6 +30,9 @@ class VaultImportFlow {
       Ui.error(context, 'Chưa chọn thư mục Obsidian Vault.');
       return null;
     }
+
+    if (_running) return null;
+    _running = true;
 
     try {
       final folders = await state.listVaultFolders();
@@ -49,8 +56,16 @@ class VaultImportFlow {
       if (context.mounted) Ui.success(context, report.summary);
       return report;
     } catch (e) {
+      // `applyVaultPlan` chỉ làm mới giao diện khi ghi xong trọn vẹn. Lỗi ở
+      // lượt nạp trang FAP / xếp tệp có thể xảy ra SAU khi môn và cạnh đã ghi,
+      // nên vẫn làm mới để cây và đồ thị khớp với CSDL.
+      try {
+        await state.refresh();
+      } catch (_) {}
       if (context.mounted) Ui.error(context, e);
       return null;
+    } finally {
+      _running = false;
     }
   }
 }
