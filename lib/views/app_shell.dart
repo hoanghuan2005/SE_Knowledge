@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/curriculum.dart';
+import '../models/mini_graph_pin.dart';
 import '../models/subject.dart';
 import '../services/chat_session_service.dart';
 import '../state/app_state.dart';
@@ -15,7 +16,7 @@ import 'notes/obsidian_note_editor_view.dart';
 import 'settings/settings_page.dart';
 import 'subjects/subject_form_dialog.dart';
 import 'vault/vault_page.dart';
-import 'widgets/sidebar_mini_graph.dart';
+import 'widgets/mini_graph_panel.dart';
 import 'widgets/subject_detail_panel.dart';
 import 'widgets/tree_context_menu.dart';
 
@@ -135,165 +136,187 @@ class _AppShellState extends State<AppShell> {
               child: Scaffold(
                 backgroundColor: AppColors.shellWorkspace,
                 body: Row(
-              children: [
-                // 1. Thanh Ribbon mép ngoài cùng (Obsidian Activity Bar)
-                _ObsidianRibbon(
-                  currentIndex: _index,
-                  isSidebarOpen: _isSidebarOpen,
-                  onToggleSidebar: _toggleSidebar,
-                  onSelectTab: (idx) {
-                    _switchTab(idx);
-                    if (!_isSidebarOpen) {
-                      setState(() => _isSidebarOpen = true);
-                    }
-                  },
-                  onNewSubject: () => SubjectFormDialog.show(context),
-                ),
-
-                // 2. Thanh bên thu/mở mượt mà - tự đổi nội dung theo tab đang mở
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 240),
-                  curve: Curves.easeInOutCubic,
-                  width: _isSidebarOpen ? 260 : 0,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: AppColors.shellSidebar,
-                      border: Border(
-                        right: BorderSide(color: AppColors.shellBorder, width: 1),
-                      ),
+                  children: [
+                    // 1. Thanh Ribbon mép ngoài cùng (Obsidian Activity Bar)
+                    _ObsidianRibbon(
+                      currentIndex: _index,
+                      isSidebarOpen: _isSidebarOpen,
+                      onToggleSidebar: _toggleSidebar,
+                      onSelectTab: (idx) {
+                        _switchTab(idx);
+                        if (!_isSidebarOpen) {
+                          setState(() => _isSidebarOpen = true);
+                        }
+                      },
+                      onNewSubject: () => SubjectFormDialog.show(context),
                     ),
-                    child: ClipRect(
-                      child: OverflowBox(
-                        minWidth: 260,
-                        maxWidth: 260,
-                        alignment: Alignment.topLeft,
-                        child: _ObsidianSidebarPanel(
-                          mainIndex: _index,
-                          activeTabIndex: _sidebarTab,
-                          searchQuery: _searchQuery,
-                          collapsedNodes: _collapsedNodes,
-                          onTabChanged: (tab) => setState(() => _sidebarTab = tab),
-                          onSearchChanged: (q) => setState(() => _searchQuery = q),
-                          onToggleNode: (key) {
-                            setState(() {
-                              if (!_collapsedNodes.remove(key)) {
-                                _collapsedNodes.add(key);
-                              }
-                            });
-                          },
-                          onSetNodesCollapsed: (keys, collapsed) {
-                            setState(() {
-                              if (collapsed) {
-                                _collapsedNodes.addAll(keys);
-                              } else {
-                                _collapsedNodes.removeAll(keys);
-                              }
-                            });
-                          },
-                          onSelectSubject: (subject) {
-                            AppState.instance.select(subject.id);
-                            AppState.instance.setActiveNote(null);
-                            _switchTab(0); // Chuyển về Graph view để xem node
-                          },
-                          onOpenVault: () => _switchTab(2),
-                          onCloseSidebar: _toggleSidebar,
-                          onNewSubject: () => SubjectFormDialog.show(context),
-                          onNavigateToTab: _switchTab,
+
+                    // 2. Thanh bên thu/mở mượt mà - tự đổi nội dung theo tab đang mở
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 240),
+                      curve: Curves.easeInOutCubic,
+                      width: _isSidebarOpen ? 260 : 0,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: AppColors.shellSidebar,
+                          border: Border(
+                            right: BorderSide(
+                              color: AppColors.shellBorder,
+                              width: 1,
+                            ),
+                          ),
+                        ),
+                        child: ClipRect(
+                          child: OverflowBox(
+                            minWidth: 260,
+                            maxWidth: 260,
+                            alignment: Alignment.topLeft,
+                            child: _ObsidianSidebarPanel(
+                              mainIndex: _index,
+                              activeTabIndex: _sidebarTab,
+                              searchQuery: _searchQuery,
+                              collapsedNodes: _collapsedNodes,
+                              onTabChanged: (tab) =>
+                                  setState(() => _sidebarTab = tab),
+                              onSearchChanged: (q) =>
+                                  setState(() => _searchQuery = q),
+                              onToggleNode: (key) {
+                                setState(() {
+                                  if (!_collapsedNodes.remove(key)) {
+                                    _collapsedNodes.add(key);
+                                  }
+                                });
+                              },
+                              onSetNodesCollapsed: (keys, collapsed) {
+                                setState(() {
+                                  if (collapsed) {
+                                    _collapsedNodes.addAll(keys);
+                                  } else {
+                                    _collapsedNodes.removeAll(keys);
+                                  }
+                                });
+                              },
+                              onSelectSubject: (subject) {
+                                AppState.instance.select(subject.id);
+                                AppState.instance.setActiveNote(null);
+                                _switchTab(
+                                  0,
+                                ); // Chuyển về Graph view để xem node
+                              },
+                              onOpenVault: () => _switchTab(2),
+                              onCloseSidebar: _toggleSidebar,
+                              onNewSubject: () =>
+                                  SubjectFormDialog.show(context),
+                              onNavigateToTab: _switchTab,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
 
-                // 3. Vùng làm việc chính kèm Top Tab Bar kiểu Obsidian
-                Expanded(
-                  child: ClipRect(
-                  child: Column(
-                    children: [
-                      _ObsidianWorkspaceTabBar(
-                        currentTabTitle: _tabTitles[_index],
-                        currentTabIcon: _tabIcons[_index],
-                        canGoBack: _historyIndex > 0,
-                        canGoForward: _historyIndex < _history.length - 1,
-                        isSidebarOpen: _isSidebarOpen,
-                        openNotes: AppState.instance.openNoteTabs,
-                        activeNote: AppState.instance.activeNote,
-                        currentIndex: _index,
-                        onGoBack: _goBack,
-                        onGoForward: _goForward,
-                        onToggleSidebar: _toggleSidebar,
-                        onSelectGraphTab: () {
-                          AppState.instance.setActiveNote(null);
-                          AppState.instance.setCurriculumView(CurriculumView.graph);
-                          _switchTab(0);
-                        },
-                        onSelectPageTab: (idx) {
-                          AppState.instance.setActiveNote(null);
-                          _switchTab(idx);
-                        },
-                        onClosePageTab: (idx) => _switchTab(0),
-                        onSelectNoteTab: (note) => AppState.instance.setActiveNote(note),
-                        onCloseNoteTab: (note) => AppState.instance.closeNoteTab(note),
-                        onNewTab: () => SubjectFormDialog.show(context),
-                      ),
-                      Expanded(
-                        child: Row(
+                    // 3. Vùng làm việc chính kèm Top Tab Bar kiểu Obsidian
+                    Expanded(
+                      child: ClipRect(
+                        child: Column(
                           children: [
-                            Expanded(
-                              child: AppState.instance.activeNote != null
-                                  ? ObsidianNoteEditorView(
-                                      key: ValueKey(
-                                        AppState.instance.activeNote!.id ??
-                                            AppState.instance.activeNote!.code,
-                                      ),
-                                      subject: AppState.instance.activeNote!,
-                                    )
-                                  : IndexedStack(
-                                      index: _index,
-                                      children: [
-                                        GraphPage(
-                                          onOpenOverview: () =>
-                                              _switchTab(overviewTab),
-                                        ),
-                                        CurriculaOverviewPage(
-                                          onOpenCurriculum: () => _switchTab(0),
-                                        ),
-                                        const VaultPage(),
-                                        // Nút "Xem trên đồ thị" trong câu trả
-                                        // lời của AI và trong khối cảnh báo
-                                        // rủi ro cần shell chuyển tab hộ.
-                                        AiChatPage(
-                                          onOpenGraph: () => _openCurriculumView(
-                                            CurriculumView.graph,
-                                          ),
-                                        ),
-                                        const SettingsPage(),
-                                      ],
-                                    ),
+                            _ObsidianWorkspaceTabBar(
+                              currentTabTitle: _tabTitles[_index],
+                              currentTabIcon: _tabIcons[_index],
+                              canGoBack: _historyIndex > 0,
+                              canGoForward: _historyIndex < _history.length - 1,
+                              isSidebarOpen: _isSidebarOpen,
+                              openNotes: AppState.instance.openNoteTabs,
+                              activeNote: AppState.instance.activeNote,
+                              currentIndex: _index,
+                              onGoBack: _goBack,
+                              onGoForward: _goForward,
+                              onToggleSidebar: _toggleSidebar,
+                              onSelectGraphTab: () {
+                                AppState.instance.setActiveNote(null);
+                                AppState.instance.setCurriculumView(
+                                  CurriculumView.graph,
+                                );
+                                _switchTab(0);
+                              },
+                              onSelectPageTab: (idx) {
+                                AppState.instance.setActiveNote(null);
+                                _switchTab(idx);
+                              },
+                              onClosePageTab: (idx) => _switchTab(0),
+                              onSelectNoteTab: (note) =>
+                                  AppState.instance.setActiveNote(note),
+                              onCloseNoteTab: (note) =>
+                                  AppState.instance.closeNoteTab(note),
+                              onNewTab: () => SubjectFormDialog.show(context),
                             ),
-                            // Bảng chi tiết môn học bên phải chỉ hiển thị khi có môn được chọn (tránh hiện 2 sidebar cùng lúc)
-                            if (AppState.instance.activeNote != null ||
-                                (_index == 0 &&
-                                    AppState.instance.selectedSubjectId != null &&
-                                    AppState.instance.curriculumView !=
-                                        CurriculumView.knowledge))
-                              const SubjectDetailPanel(),
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: AppState.instance.activeNote != null
+                                        ? ObsidianNoteEditorView(
+                                            key: ValueKey(
+                                              AppState
+                                                      .instance
+                                                      .activeNote!
+                                                      .id ??
+                                                  AppState
+                                                      .instance
+                                                      .activeNote!
+                                                      .code,
+                                            ),
+                                            subject:
+                                                AppState.instance.activeNote!,
+                                          )
+                                        : IndexedStack(
+                                            index: _index,
+                                            children: [
+                                              GraphPage(
+                                                onOpenOverview: () =>
+                                                    _switchTab(overviewTab),
+                                              ),
+                                              CurriculaOverviewPage(
+                                                onOpenCurriculum: () =>
+                                                    _switchTab(0),
+                                              ),
+                                              const VaultPage(),
+                                              // Nút "Xem trên đồ thị" trong câu trả
+                                              // lời của AI và trong khối cảnh báo
+                                              // rủi ro cần shell chuyển tab hộ.
+                                              AiChatPage(
+                                                onOpenGraph: () =>
+                                                    _openCurriculumView(
+                                                      CurriculumView.graph,
+                                                    ),
+                                              ),
+                                              const SettingsPage(),
+                                            ],
+                                          ),
+                                  ),
+                                  // Bảng chi tiết môn học bên phải chỉ hiển thị khi có môn được chọn (tránh hiện 2 sidebar cùng lúc)
+                                  if (AppState.instance.activeNote != null ||
+                                      (_index == 0 &&
+                                          AppState.instance.selectedSubjectId !=
+                                              null &&
+                                          AppState.instance.curriculumView !=
+                                              CurriculumView.knowledge))
+                                    const SubjectDetailPanel(),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
                       ),
-                    ],
-                  ),
-                  ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
-  },
-);
-}
+  }
 }
 
 // ============================================================================
@@ -342,7 +365,9 @@ class _ObsidianRibbon extends StatelessWidget {
                 color: color,
                 size: 18,
               ),
-              tooltip: isSidebarOpen ? 'Thu gọn thanh bên (Ctrl+B)' : 'Mở thanh bên (Ctrl+B)',
+              tooltip: isSidebarOpen
+                  ? 'Thu gọn thanh bên (Ctrl+B)'
+                  : 'Mở thanh bên (Ctrl+B)',
               isActive: isSidebarOpen,
               onTap: onToggleSidebar,
             ),
@@ -364,7 +389,9 @@ class _ObsidianRibbon extends StatelessWidget {
           _RibbonIconButton(
             icon: currentIndex == 0 ? Icons.hub : Icons.hub_outlined,
             tooltip: 'Sơ đồ môn học (Graph view)',
-            isSelected: currentIndex == 0 && AppState.instance.curriculumView == CurriculumView.graph,
+            isSelected:
+                currentIndex == 0 &&
+                AppState.instance.curriculumView == CurriculumView.graph,
             onTap: () {
               AppState.instance.setCurriculumView(CurriculumView.graph);
               onSelectTab(0);
@@ -374,7 +401,9 @@ class _ObsidianRibbon extends StatelessWidget {
 
           // 3. Obsidian Vault
           _RibbonIconButton(
-            icon: currentIndex == 2 ? Icons.folder_copy : Icons.folder_copy_outlined,
+            icon: currentIndex == 2
+                ? Icons.folder_copy
+                : Icons.folder_copy_outlined,
             tooltip: 'Obsidian Vault',
             isSelected: currentIndex == 2,
             onTap: () => onSelectTab(2),
@@ -383,7 +412,9 @@ class _ObsidianRibbon extends StatelessWidget {
 
           // 4. Trợ lý AI
           _RibbonIconButton(
-            icon: currentIndex == 3 ? Icons.auto_awesome : Icons.auto_awesome_outlined,
+            icon: currentIndex == 3
+                ? Icons.auto_awesome
+                : Icons.auto_awesome_outlined,
             tooltip: 'Trợ lý học tập AI (Đoạn chat)',
             isSelected: currentIndex == 3,
             onTap: () => onSelectTab(3),
@@ -440,10 +471,7 @@ class _ObsidianSidebarIcon extends StatelessWidget {
       width: size,
       height: size,
       child: CustomPaint(
-        painter: _ObsidianSidebarIconPainter(
-          isOpen: isOpen,
-          color: color,
-        ),
+        painter: _ObsidianSidebarIconPainter(isOpen: isOpen, color: color),
       ),
     );
   }
@@ -562,11 +590,7 @@ class _RibbonIconButtonState extends State<_RibbonIconButton> {
                 if (widget.iconBuilder != null)
                   widget.iconBuilder!(color)
                 else
-                  Icon(
-                    widget.icon!,
-                    size: 19,
-                    color: color,
-                  ),
+                  Icon(widget.icon!, size: 19, color: color),
               ],
             ),
           ),
@@ -614,23 +638,17 @@ class _ObsidianSidebarPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     // 1. Khi đang ở tab Trợ lý AI (index 3) -> Hiển thị Sidebar Lịch sử các đoạn chat AI
     if (mainIndex == 3) {
-      return _AiChatSidebarContent(
-        onCloseSidebar: onCloseSidebar,
-      );
+      return _AiChatSidebarContent(onCloseSidebar: onCloseSidebar);
     }
 
     // 2. Khi đang ở tab Obsidian Vault (index 2) -> Hiển thị Sidebar Vault Explorer
     if (mainIndex == 2) {
-      return _VaultSidebarContent(
-        onCloseSidebar: onCloseSidebar,
-      );
+      return _VaultSidebarContent(onCloseSidebar: onCloseSidebar);
     }
 
     // 3. Khi đang ở tab Cài đặt (index 4) -> Hiển thị Sidebar mục cài đặt
     if (mainIndex == 4) {
-      return _SettingsSidebarContent(
-        onCloseSidebar: onCloseSidebar,
-      );
+      return _SettingsSidebarContent(onCloseSidebar: onCloseSidebar);
     }
 
     // 4. Mặc định (Đồ thị, Môn học - index 0, 1) -> Hiển thị Cây thư mục môn học theo kỳ.
@@ -657,9 +675,7 @@ class _ObsidianSidebarPanel extends StatelessWidget {
 class _AiChatSidebarContent extends StatefulWidget {
   final VoidCallback onCloseSidebar;
 
-  const _AiChatSidebarContent({
-    required this.onCloseSidebar,
-  });
+  const _AiChatSidebarContent({required this.onCloseSidebar});
 
   @override
   State<_AiChatSidebarContent> createState() => _AiChatSidebarContentState();
@@ -671,7 +687,10 @@ class _AiChatSidebarContentState extends State<_AiChatSidebarContent> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([ChatSessionService.instance, AppState.instance]),
+      listenable: Listenable.merge([
+        ChatSessionService.instance,
+        AppState.instance,
+      ]),
       builder: (context, _) {
         final chatService = ChatSessionService.instance;
         final sessions = chatService.sessions;
@@ -680,9 +699,9 @@ class _AiChatSidebarContentState extends State<_AiChatSidebarContent> {
         final filtered = _chatSearch.trim().isEmpty
             ? sessions
             : sessions.where((s) {
-                return s.title
-                    .toLowerCase()
-                    .contains(_chatSearch.trim().toLowerCase());
+                return s.title.toLowerCase().contains(
+                  _chatSearch.trim().toLowerCase(),
+                );
               }).toList();
 
         return Column(
@@ -698,7 +717,11 @@ class _AiChatSidebarContentState extends State<_AiChatSidebarContent> {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.forum_outlined, size: 16, color: AppColors.primary),
+                  const Icon(
+                    Icons.forum_outlined,
+                    size: 16,
+                    color: AppColors.primary,
+                  ),
                   const SizedBox(width: 8),
                   Text(
                     'ĐOẠN CHAT AI',
@@ -777,15 +800,25 @@ class _AiChatSidebarContentState extends State<_AiChatSidebarContent> {
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: Row(
                     children: [
-                      Icon(Icons.search, size: 13, color: AppColors.obsidianTextMuted),
+                      Icon(
+                        Icons.search,
+                        size: 13,
+                        color: AppColors.obsidianTextMuted,
+                      ),
                       const SizedBox(width: 6),
                       Expanded(
                         child: TextField(
                           onChanged: (q) => setState(() => _chatSearch = q),
-                          style: TextStyle(fontSize: 11.5, color: AppColors.obsidianText),
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: AppColors.obsidianText,
+                          ),
                           decoration: InputDecoration(
                             hintText: 'Tìm đoạn chat...',
-                            hintStyle: TextStyle(fontSize: 11.5, color: AppColors.obsidianTextMuted),
+                            hintStyle: TextStyle(
+                              fontSize: 11.5,
+                              color: AppColors.obsidianTextMuted,
+                            ),
                             border: InputBorder.none,
                             isDense: true,
                             contentPadding: EdgeInsets.zero,
@@ -807,18 +840,26 @@ class _AiChatSidebarContentState extends State<_AiChatSidebarContent> {
                           Icon(
                             Icons.chat_bubble_outline,
                             size: 28,
-                            color: AppColors.obsidianTextMuted.withValues(alpha: 0.5),
+                            color: AppColors.obsidianTextMuted.withValues(
+                              alpha: 0.5,
+                            ),
                           ),
                           const SizedBox(height: 8),
                           Text(
                             'Chưa có đoạn chat nào',
-                            style: TextStyle(fontSize: 11.5, color: AppColors.obsidianTextMuted),
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: AppColors.obsidianTextMuted,
+                            ),
                           ),
                         ],
                       ),
                     )
                   : ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       itemCount: filtered.length,
                       itemBuilder: (context, i) {
                         final s = filtered[i];
@@ -847,7 +888,11 @@ class _AiChatSidebarContentState extends State<_AiChatSidebarContent> {
               ),
               child: Row(
                 children: [
-                  Icon(Icons.history, size: 14, color: AppColors.obsidianTextMuted),
+                  Icon(
+                    Icons.history,
+                    size: 14,
+                    color: AppColors.obsidianTextMuted,
+                  ),
                   const SizedBox(width: 8),
                   Text(
                     '${sessions.length} cuộc trò chuyện đã lưu',
@@ -948,7 +993,9 @@ class _ChatSessionTileState extends State<_ChatSessionTile> {
                 Icon(
                   Icons.chat_bubble_outline,
                   size: 14,
-                  color: active ? AppColors.primary : AppColors.obsidianTextMuted,
+                  color: active
+                      ? AppColors.primary
+                      : AppColors.obsidianTextMuted,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -961,9 +1008,13 @@ class _ChatSessionTileState extends State<_ChatSessionTile> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 12,
-                          fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+                          fontWeight: active
+                              ? FontWeight.w600
+                              : FontWeight.w500,
                           color: active
-                              ? (AppColors.isDark ? Colors.white : AppColors.primaryDark)
+                              ? (AppColors.isDark
+                                    ? Colors.white
+                                    : AppColors.primaryDark)
                               : AppColors.obsidianText,
                         ),
                       ),
@@ -985,7 +1036,10 @@ class _ChatSessionTileState extends State<_ChatSessionTile> {
                     tooltip: 'Đổi tên',
                     splashRadius: 12,
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
+                    constraints: const BoxConstraints(
+                      minWidth: 22,
+                      minHeight: 22,
+                    ),
                     onPressed: _showRenameDialog,
                   ),
                   IconButton(
@@ -994,7 +1048,10 @@ class _ChatSessionTileState extends State<_ChatSessionTile> {
                     tooltip: 'Xóa đoạn chat',
                     splashRadius: 12,
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
+                    constraints: const BoxConstraints(
+                      minWidth: 22,
+                      minHeight: 22,
+                    ),
                     onPressed: widget.onDelete,
                   ),
                 ],
@@ -1023,9 +1080,7 @@ class _ChatSessionTileState extends State<_ChatSessionTile> {
 class _VaultSidebarContent extends StatelessWidget {
   final VoidCallback onCloseSidebar;
 
-  const _VaultSidebarContent({
-    required this.onCloseSidebar,
-  });
+  const _VaultSidebarContent({required this.onCloseSidebar});
 
   @override
   Widget build(BuildContext context) {
@@ -1046,7 +1101,11 @@ class _VaultSidebarContent extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.folder_copy_outlined, size: 16, color: AppColors.accent),
+                  const Icon(
+                    Icons.folder_copy_outlined,
+                    size: 16,
+                    color: AppColors.accent,
+                  ),
                   const SizedBox(width: 8),
                   Text(
                     'OBSIDIAN VAULT',
@@ -1296,9 +1355,7 @@ class _VaultSidebarContent extends StatelessWidget {
 class _SettingsSidebarContent extends StatelessWidget {
   final VoidCallback onCloseSidebar;
 
-  const _SettingsSidebarContent({
-    required this.onCloseSidebar,
-  });
+  const _SettingsSidebarContent({required this.onCloseSidebar});
 
   @override
   Widget build(BuildContext context) {
@@ -1314,7 +1371,11 @@ class _SettingsSidebarContent extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Icon(Icons.settings_outlined, size: 16, color: AppColors.obsidianText),
+              Icon(
+                Icons.settings_outlined,
+                size: 16,
+                color: AppColors.obsidianText,
+              ),
               const SizedBox(width: 8),
               Text(
                 'CÀI ĐẶT HỆ THỐNG',
@@ -1549,11 +1610,22 @@ class _FilesSidebarContent extends StatelessWidget {
                     onTap: () => onTabChanged(2),
                   ),
                   const SizedBox(width: 4),
-                  _PanelTabIcon(
-                    icon: Icons.hub_outlined,
-                    tooltip: 'Đồ thị thu nhỏ (Graph view)',
-                    isSelected: activeTabIndex == 3,
-                    onTap: () => onTabChanged(3),
+                  // Nhận thả ngay trên icon: lúc đang mở tab khác thì vùng
+                  // tab 3 chưa có trên màn hình, icon này là đích duy nhất.
+                  DragTarget<MiniGraphDragData>(
+                    onAcceptWithDetails: (details) {
+                      AppState.instance.pinMiniGraph(
+                        details.data.curriculumCode,
+                      );
+                      onTabChanged(3);
+                    },
+                    builder: (context, candidate, rejected) => _PanelTabIcon(
+                      icon: Icons.hub_outlined,
+                      tooltip:
+                          'Đồ thị thu nhỏ (kéo Graph view vào đây để ghim)',
+                      isSelected: activeTabIndex == 3 || candidate.isNotEmpty,
+                      onTap: () => onTabChanged(3),
+                    ),
                   ),
                   const Spacer(),
                   IconButton(
@@ -1568,10 +1640,12 @@ class _FilesSidebarContent extends StatelessWidget {
             ),
 
             if (activeTabIndex == 3)
-              // Tab 3: Đồ thị thu nhỏ (Mini Graph trực tiếp trên sidebar)
+              // Tab 3: Đồ thị thu nhỏ — danh sách các khung đã ghim, đồng thời
+              // là vùng nhận khi kéo tab "Graph view" từ thanh trên xuống.
               Expanded(
-                child: SidebarMiniGraph(
+                child: MiniGraphPanel(
                   onSelectSubject: onSelectSubject,
+                  onOpenGraphView: () => onNavigateToTab(0),
                 ),
               )
             else if (activeTabIndex == 2)
@@ -1587,7 +1661,9 @@ class _FilesSidebarContent extends StatelessWidget {
                               Icon(
                                 Icons.bookmark_border,
                                 size: 36,
-                                color: AppColors.obsidianTextMuted.withValues(alpha: 0.5),
+                                color: AppColors.obsidianTextMuted.withValues(
+                                  alpha: 0.5,
+                                ),
                               ),
                               const SizedBox(height: 10),
                               Text(
@@ -1613,7 +1689,10 @@ class _FilesSidebarContent extends StatelessWidget {
                         ),
                       )
                     : ListView(
-                        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 6,
+                          horizontal: 8,
+                        ),
                         children: [
                           Padding(
                             padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
@@ -1639,13 +1718,22 @@ class _FilesSidebarContent extends StatelessWidget {
                               child: ListTile(
                                 dense: true,
                                 visualDensity: VisualDensity.compact,
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                                leading: const Icon(Icons.article_outlined, size: 15, color: AppColors.primary),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                ),
+                                leading: const Icon(
+                                  Icons.article_outlined,
+                                  size: 15,
+                                  color: AppColors.primary,
+                                ),
                                 title: Text(
                                   '${note.code} - ${note.name}',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(fontSize: 12, color: AppColors.obsidianText),
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: AppColors.obsidianText,
+                                  ),
                                 ),
                                 trailing: IconButton(
                                   icon: const Icon(Icons.close, size: 13),
@@ -1694,7 +1782,9 @@ class _FilesSidebarContent extends StatelessWidget {
                       onTap: () => state.refresh(),
                     ),
                     _MiniActionIcon(
-                      icon: allCollapsed ? Icons.unfold_more : Icons.unfold_less,
+                      icon: allCollapsed
+                          ? Icons.unfold_more
+                          : Icons.unfold_less,
                       tooltip: 'Thu gọn/Mở rộng tất cả',
                       onTap: () => onSetNodesCollapsed(allKeys, !allCollapsed),
                     ),
@@ -1797,7 +1887,10 @@ class _FilesSidebarContent extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: AppColors.obsidianRibbon,
                     border: Border(
-                      top: BorderSide(color: AppColors.obsidianBorder, width: 1),
+                      top: BorderSide(
+                        color: AppColors.obsidianBorder,
+                        width: 1,
+                      ),
                     ),
                   ),
                   child: Row(
@@ -2259,7 +2352,6 @@ class _FileItemTileState extends State<_FileItemTile> {
   }
 }
 
-
 class _PanelTabIcon extends StatelessWidget {
   final IconData icon;
   final String tooltip;
@@ -2331,6 +2423,67 @@ class _MiniActionIcon extends StatelessWidget {
 // ============================================================================
 // 3. OBSIDIAN TOP WORKSPACE TAB BAR
 // ============================================================================
+/// Bọc tab "Graph view" để kéo được xuống thanh bên.
+///
+/// Dùng [Draggable] chứ không phải `LongPressDraggable`: trên desktop thao tác
+/// quen thuộc là bấm giữ rồi kéo luôn, bắt người dùng nhấn giữ một nhịp sẽ
+/// thành ra tab không bấm được bình thường nữa.
+class _DraggableGraphTab extends StatelessWidget {
+  final String? curriculumCode;
+  final Widget child;
+
+  const _DraggableGraphTab({required this.curriculumCode, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final label = curriculumCode ?? 'Toàn bộ môn';
+    return Draggable<MiniGraphDragData>(
+      data: MiniGraphDragData(curriculumCode: curriculumCode, label: label),
+      dragAnchorStrategy: pointerDragAnchorStrategy,
+      feedback: _feedback(label),
+      // Tab gốc mờ đi trong lúc kéo để thấy rõ mình đang cầm đúng cái gì.
+      childWhenDragging: Opacity(opacity: 0.4, child: child),
+      child: child,
+    );
+  }
+
+  Widget _feedback(String label) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppColors.shellSidebar,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: AppColors.primary, width: 1.2),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.25),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.hub, size: 14, color: AppColors.primary),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: AppColors.shellText,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ObsidianWorkspaceTabBar extends StatelessWidget {
   final String currentTabTitle;
   final IconData currentTabIcon;
@@ -2411,22 +2564,27 @@ class _ObsidianWorkspaceTabBar extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
-                  // 1. Tab Sơ đồ môn học / Graph view (hoặc Bảng học kỳ / Mạng tri thức)
-                  _buildTab(
-                    title: switch (AppState.instance.curriculumView) {
-                      CurriculumView.graph => 'Graph view',
-                      CurriculumView.board => 'Bảng học kỳ',
-                      CurriculumView.knowledge => 'Mạng tri thức',
-                    },
-                    icon: switch (AppState.instance.curriculumView) {
-                      CurriculumView.graph => Icons.hub,
-                      CurriculumView.board => Icons.view_week_outlined,
-                      CurriculumView.knowledge => Icons.psychology_outlined,
-                    },
-                    isActive: activeNote == null && currentIndex == 0,
-                    isDark: isDark,
-                    onTap: onSelectGraphTab,
-                    onClose: null,
+                  // 1. Tab Sơ đồ môn học / Graph view (hoặc Bảng học kỳ /
+                  //    Mạng tri thức). Kéo được xuống thanh bên để "thu" khung
+                  //    đang xem thành một ô đồ thị thu nhỏ, giống Obsidian.
+                  _DraggableGraphTab(
+                    curriculumCode: AppState.instance.activeCurriculumCode,
+                    child: _buildTab(
+                      title: switch (AppState.instance.curriculumView) {
+                        CurriculumView.graph => 'Graph view',
+                        CurriculumView.board => 'Bảng học kỳ',
+                        CurriculumView.knowledge => 'Mạng tri thức',
+                      },
+                      icon: switch (AppState.instance.curriculumView) {
+                        CurriculumView.graph => Icons.hub,
+                        CurriculumView.board => Icons.view_week_outlined,
+                        CurriculumView.knowledge => Icons.psychology_outlined,
+                      },
+                      isActive: activeNote == null && currentIndex == 0,
+                      isDark: isDark,
+                      onTap: onSelectGraphTab,
+                      onClose: null,
+                    ),
                   ),
 
                   // 2. Tab Trang chức năng ngoài Graph view (nếu đang chọn từ Ribbon)
@@ -2445,7 +2603,9 @@ class _ObsidianWorkspaceTabBar extends StatelessWidget {
                     _buildTab(
                       title: '${note.code}.md',
                       icon: Icons.article_outlined,
-                      isActive: activeNote?.code.toUpperCase() == note.code.toUpperCase(),
+                      isActive:
+                          activeNote?.code.toUpperCase() ==
+                          note.code.toUpperCase(),
                       isDark: isDark,
                       onTap: () => onSelectNoteTab(note),
                       onClose: () => onCloseNoteTab(note),
@@ -2463,7 +2623,6 @@ class _ObsidianWorkspaceTabBar extends StatelessWidget {
               ),
             ),
           ),
-
         ],
       ),
     );
@@ -2478,8 +2637,9 @@ class _ObsidianWorkspaceTabBar extends StatelessWidget {
     VoidCallback? onClose,
   }) {
     final activeTextColor = isDark ? Colors.white : AppColors.primaryDark;
-    final inactiveTextColor =
-        isDark ? const Color(0xFF9E9EB3) : const Color(0xFF6B6B80);
+    final inactiveTextColor = isDark
+        ? const Color(0xFF9E9EB3)
+        : const Color(0xFF6B6B80);
     final textColor = isActive ? activeTextColor : inactiveTextColor;
     final iconColor = isActive ? AppColors.primary : inactiveTextColor;
     final tabBg = isActive
@@ -2498,19 +2658,12 @@ class _ObsidianWorkspaceTabBar extends StatelessWidget {
         decoration: BoxDecoration(
           color: tabBg,
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(
-            color: borderColor,
-            width: 1,
-          ),
+          border: Border.all(color: borderColor, width: 1),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: 14,
-              color: iconColor,
-            ),
+            Icon(icon, size: 14, color: iconColor),
             const SizedBox(width: 7),
             Text(
               title,
@@ -2527,11 +2680,7 @@ class _ObsidianWorkspaceTabBar extends StatelessWidget {
                 borderRadius: BorderRadius.circular(10),
                 child: Padding(
                   padding: const EdgeInsets.all(2),
-                  child: Icon(
-                    Icons.close,
-                    size: 12,
-                    color: inactiveTextColor,
-                  ),
+                  child: Icon(Icons.close, size: 12, color: inactiveTextColor),
                 ),
               ),
             ],

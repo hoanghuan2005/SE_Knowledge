@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/graph_settings.dart';
+import '../models/mini_graph_pin.dart';
 import '../utils/app_constants.dart';
 
 /// Lưu cấu hình cục bộ: đường dẫn Obsidian Vault, nhà cung cấp AI, API key.
@@ -33,7 +34,8 @@ class SettingsService {
     if (legacyKey == null && legacyModel == null) return;
 
     final provider =
-        prefs.getString(AppConstants.keyAiProvider) ?? AppConstants.providerGemini;
+        prefs.getString(AppConstants.keyAiProvider) ??
+        AppConstants.providerGemini;
     if (legacyKey != null) {
       await prefs.setString(_apiKeyStorageKey(provider), legacyKey);
       await prefs.remove(AppConstants.keyAiApiKey);
@@ -44,8 +46,10 @@ class SettingsService {
     }
   }
 
-  String _apiKeyStorageKey(String provider) => '${AppConstants.keyAiApiKey}_$provider';
-  String _modelStorageKey(String provider) => '${AppConstants.keyAiModel}_$provider';
+  String _apiKeyStorageKey(String provider) =>
+      '${AppConstants.keyAiApiKey}_$provider';
+  String _modelStorageKey(String provider) =>
+      '${AppConstants.keyAiModel}_$provider';
   String _lightModelStorageKey(String provider) =>
       '${AppConstants.keyAiLightModel}_$provider';
 
@@ -241,5 +245,24 @@ class SettingsService {
 
   Future<void> setTargetGpa(double value) async =>
       (await _p).setDouble('target_gpa', value);
-}
 
+  // --- Đồ thị thu nhỏ ghim trên thanh bên ---
+
+  static const String _keyPinnedMiniGraphs = 'pinned_mini_graphs';
+
+  /// Các ô đồ thị thu nhỏ người dùng đã ghim, giữ nguyên thứ tự.
+  ///
+  /// Ô "toàn bộ môn" được lưu bằng [MiniGraphPins.allSentinel] vì
+  /// `setStringList` không nhận phần tử null.
+  Future<MiniGraphPins> getPinnedMiniGraphs() async =>
+      MiniGraphPins.decode((await _p).getStringList(_keyPinnedMiniGraphs));
+
+  Future<void> setPinnedMiniGraphs(MiniGraphPins pins) async {
+    final prefs = await _p;
+    if (pins.isEmpty) {
+      await prefs.remove(_keyPinnedMiniGraphs);
+    } else {
+      await prefs.setStringList(_keyPinnedMiniGraphs, pins.encode());
+    }
+  }
+}

@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -8,6 +9,7 @@ import '../../models/transcript_entry.dart';
 import '../../models/curriculum.dart';
 import '../../models/graph_settings.dart';
 import '../../models/knowledge.dart';
+import '../../services/graph_layout_cache.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
@@ -33,7 +35,8 @@ class GraphPage extends StatefulWidget {
 
 class _GraphPageState extends State<GraphPage> {
   final TransformationController _viewer = TransformationController();
-  final GlobalKey<_ObsidianGraphCanvasState> _canvasKey = GlobalKey<_ObsidianGraphCanvasState>();
+  final GlobalKey<_ObsidianGraphCanvasState> _canvasKey =
+      GlobalKey<_ObsidianGraphCanvasState>();
 
   bool _showRelated = true;
   bool _showSettings = false;
@@ -73,6 +76,23 @@ class _GraphPageState extends State<GraphPage> {
     _viewer.value = Matrix4.identity()..setTranslationRaw(dx, dy, 0);
   }
 
+  /// Ghim khung đang xem thành ô đồ thị thu nhỏ trên thanh bên.
+  ///
+  /// Đây là đường dự phòng cho thao tác kéo tab "Graph view" vào thanh bên:
+  /// kéo thả chuẩn xác không phải ai cũng làm được, và trên máy chỉ có
+  /// touchpad thì càng khó.
+  Future<void> _pinCurrentToSidebar(AppState state) async {
+    final code = state.activeCurriculumCode;
+    final label = code ?? 'Toàn bộ môn';
+    final added = await state.pinMiniGraph(code);
+    if (!mounted) return;
+    if (added) {
+      Ui.success(context, 'Đã ghim "$label" vào đồ thị thu nhỏ ở thanh bên.');
+    } else {
+      Ui.toast(context, '"$label" đã có sẵn trong đồ thị thu nhỏ.');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -80,7 +100,9 @@ class _GraphPageState extends State<GraphPage> {
       builder: (context, _) {
         final state = AppState.instance;
         final currentGraph = state.currentGraph;
-        final activeGroup = state.curriculumGroups.cast<CurriculumGroup?>().firstWhere(
+        final activeGroup = state.curriculumGroups
+            .cast<CurriculumGroup?>()
+            .firstWhere(
               (g) => g?.code == state.activeCurriculumCode,
               orElse: () => null,
             );
@@ -93,7 +115,10 @@ class _GraphPageState extends State<GraphPage> {
         // Chỉ mở KnowledgeSidebarPanel khi ở view graph và không có môn nào đang được chọn (tránh hiện 2 sidebar cùng lúc)
         final hasSubjectSelected = state.selectedSubjectId != null;
         final showKnowledgePanel =
-            isGraph && _showKnowledgePanel && !hasSubjectSelected && state.knowledge != null;
+            isGraph &&
+            _showKnowledgePanel &&
+            !hasSubjectSelected &&
+            state.knowledge != null;
 
         final index = state.knowledge;
         final scope = <String, SubjectKnowledge>{};
@@ -152,14 +177,20 @@ class _GraphPageState extends State<GraphPage> {
                           icon: const Icon(Icons.route_outlined, size: 16),
                           label: const Text(
                             'Gợi ý lộ trình',
-                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                           style: OutlinedButton.styleFrom(
                             side: BorderSide(
                               color: AppColors.border.withValues(alpha: 0.7),
                               width: 0.8,
                             ),
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 0,
+                            ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(6),
                             ),
@@ -174,10 +205,16 @@ class _GraphPageState extends State<GraphPage> {
                           icon: const Icon(Icons.add, size: 15),
                           label: const Text(
                             'Thêm môn',
-                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                           style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 0,
+                            ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(6),
                             ),
@@ -197,9 +234,7 @@ class _GraphPageState extends State<GraphPage> {
                           child: _graphCanvas(context, state, currentGraph),
                         ),
                         if (view == CurriculumView.board)
-                          SemesterBoardView(
-                            data: currentGraph,
-                          ),
+                          SemesterBoardView(data: currentGraph),
                         if (view == CurriculumView.knowledge)
                           KnowledgeMapView(
                             data: currentGraph,
@@ -273,10 +308,9 @@ class _GraphPageState extends State<GraphPage> {
                   viewer: _viewer,
                   onSelectSubject: (id) {
                     if (_showKnowledgePanel) {
-                      final s = currentGraph.subjects.cast<Subject?>().firstWhere(
-                        (x) => x?.id == id,
-                        orElse: () => null,
-                      );
+                      final s = currentGraph.subjects
+                          .cast<Subject?>()
+                          .firstWhere((x) => x?.id == id, orElse: () => null);
                       if (s != null) {
                         setState(() {
                           _selectedConceptId = null;
@@ -305,18 +339,15 @@ class _GraphPageState extends State<GraphPage> {
                 ),
         ),
         if (state.graphSettings.colorMode == 'grade')
-          const Positioned(
-            left: 12,
-            bottom: 12,
-            child: _GradeLegend(),
-          ),
+          const Positioned(left: 12, bottom: 12, child: _GradeLegend()),
         if (_showSettings)
           Positioned(
             top: 14,
             right: 62,
             child: GraphSettingsPanel(
               settings: state.graphSettings,
-              onChanged: (newSettings) => state.updateGraphSettings(newSettings),
+              onChanged: (newSettings) =>
+                  state.updateGraphSettings(newSettings),
               onClose: () => setState(() => _showSettings = false),
               onResimulate: () => _canvasKey.currentState?.resimulate(),
               onResetZoom: _resetZoom,
@@ -331,7 +362,8 @@ class _GraphPageState extends State<GraphPage> {
             showSettings: _showSettings,
             showKnowledge: _showKnowledge,
             showRelated: _showRelated,
-            onToggleSettings: () => setState(() => _showSettings = !_showSettings),
+            onToggleSettings: () =>
+                setState(() => _showSettings = !_showSettings),
             onToggleKnowledge: () {
               if (!_showKnowledge) {
                 state.ensureKnowledge();
@@ -350,6 +382,7 @@ class _GraphPageState extends State<GraphPage> {
               }
             },
             onToggleRelated: () => setState(() => _showRelated = !_showRelated),
+            onPinMiniGraph: () => _pinCurrentToSidebar(state),
             onResetZoom: _resetZoom,
             onRefresh: state.refresh,
           ),
@@ -381,7 +414,7 @@ class _GraphPageState extends State<GraphPage> {
     );
   }
 
-Future<void> _showLearningOrder(BuildContext context) async {
+  Future<void> _showLearningOrder(BuildContext context) async {
     final state = AppState.instance;
     final order = await state.suggestLearningOrder();
     if (!context.mounted) return;
@@ -423,12 +456,7 @@ class _NodeSim {
   bool get isConcept => concept != null;
   String get id => isConcept ? 'c_${concept!.id}' : 's_${subject!.id}';
 
-  _NodeSim({
-    this.subject,
-    this.concept,
-    required this.x,
-    required this.y,
-  });
+  _NodeSim({this.subject, this.concept, required this.x, required this.y});
 }
 
 class _EdgeSim {
@@ -509,7 +537,11 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
     final curriculumChanged = widget.curriculumCode != oldWidget.curriculumCode;
     final settingsChanged = widget.settings != oldWidget.settings;
 
-    if (filterChanged || relatedChanged || knowledgeChanged || dataChanged || curriculumChanged) {
+    if (filterChanged ||
+        relatedChanged ||
+        knowledgeChanged ||
+        dataChanged ||
+        curriculumChanged) {
       _syncGraph(resetPositions: filterChanged || curriculumChanged);
     } else if (settingsChanged && widget.settings.enablePhysics) {
       _wakeSimulation();
@@ -542,10 +574,25 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
     }
   }
 
+  /// Chụp lại vị trí các node môn học cho ô đồ thị thu nhỏ mượn.
+  ///
+  /// Gọi khi mô phỏng đã cân bằng và sau mỗi lần kéo node xong — hai thời điểm
+  /// mà hình trên màn hình đúng là hình người dùng đang nhìn. Node tri thức bị
+  /// bỏ qua vì ô thu nhỏ chỉ vẽ môn học.
+  void _saveLayout() {
+    final positions = <int, Offset>{
+      for (final n in _nodes)
+        if (n.subject?.id != null) n.subject!.id!: Offset(n.x, n.y),
+    };
+    GraphLayoutCache.instance.save(widget.curriculumCode, positions);
+  }
+
   void _syncGraph({bool resetPositions = false}) {
     final visible = widget.semesterFilter == null
         ? widget.data.subjects
-        : widget.data.subjects.where((s) => s.semester == widget.semesterFilter).toList();
+        : widget.data.subjects
+              .where((s) => s.semester == widget.semesterFilter)
+              .toList();
 
     if (visible.isEmpty) {
       _nodes.clear();
@@ -591,7 +638,9 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
       final from = nodeById[e.prerequisiteId];
       final to = nodeById[e.subjectId];
       if (from != null && to != null) {
-        newEdges.add(_EdgeSim(from: from, to: to, isHard: e.isHardPrerequisite));
+        newEdges.add(
+          _EdgeSim(from: from, to: to, isHard: e.isHardPrerequisite),
+        );
       }
     }
 
@@ -610,7 +659,11 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
       }
 
       final sortedIds = candidateConcepts.keys.toList()
-        ..sort((a, b) => (candidateConcepts[b]?.length ?? 0).compareTo(candidateConcepts[a]?.length ?? 0));
+        ..sort(
+          (a, b) => (candidateConcepts[b]?.length ?? 0).compareTo(
+            candidateConcepts[a]?.length ?? 0,
+          ),
+        );
 
       final conceptNodes = <_NodeSim>[];
       final nodeByConceptId = <String, _NodeSim>{};
@@ -636,14 +689,14 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
           }
           final rng = math.Random(cid.hashCode);
           final offset = 65.0;
-          final posX = cnt > 0 ? (avgX / cnt) + (rng.nextDouble() - 0.5) * offset : centerX;
-          final posY = cnt > 0 ? (avgY / cnt) + (rng.nextDouble() - 0.5) * offset : centerY;
+          final posX = cnt > 0
+              ? (avgX / cnt) + (rng.nextDouble() - 0.5) * offset
+              : centerX;
+          final posY = cnt > 0
+              ? (avgY / cnt) + (rng.nextDouble() - 0.5) * offset
+              : centerY;
 
-          final node = _NodeSim(
-            concept: kc,
-            x: posX,
-            y: posY,
-          );
+          final node = _NodeSim(concept: kc, x: posX, y: posY);
           conceptNodes.add(node);
           nodeByConceptId[cid] = node;
         }
@@ -657,12 +710,14 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
         for (final sc in entry.value) {
           final sNode = nodeBySubjectCode[sc];
           if (sNode != null) {
-            newEdges.add(_EdgeSim(
-              from: sNode,
-              to: cNode,
-              isHard: false,
-              isConceptLink: true,
-            ));
+            newEdges.add(
+              _EdgeSim(
+                from: sNode,
+                to: cNode,
+                isHard: false,
+                isConceptLink: true,
+              ),
+            );
           }
         }
       }
@@ -688,7 +743,10 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
     }
 
     double maxVelocity = 0.0;
-    final repulsionThreshold = math.max(380.0, widget.settings.linkDistance * 2.5);
+    final repulsionThreshold = math.max(
+      380.0,
+      widget.settings.linkDistance * 2.5,
+    );
     final repulsionStrength = widget.settings.repulsionForce;
 
     // 1. Lực đẩy giữa các node (Repulsion Coulomb)
@@ -761,6 +819,7 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
     // Tự động ngủ khi đồ thị cân bằng để tiết kiệm 100% CPU
     if (!_isDraggingAny && maxVelocity < 0.06) {
       _ticker.stop();
+      _saveLayout();
     }
   }
 
@@ -779,9 +838,11 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
 
     // Tính toán tập hợp highlight khi đang ở chế độ tri thức
     final kIndex = AppState.instance.knowledge;
-    final bool hasHighlight = widget.showKnowledge &&
+    final bool hasHighlight =
+        widget.showKnowledge &&
         kIndex != null &&
-        (widget.selectedConceptId != null || widget.selectedSubjectCode != null);
+        (widget.selectedConceptId != null ||
+            widget.selectedSubjectCode != null);
 
     final Set<String> highlightedCodes = {};
     final Set<String> highlightedConceptIds = {};
@@ -792,7 +853,9 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
         highlightedConceptIds.add(cid);
         final kc = kIndex.concepts[cid];
         if (kc != null) {
-          highlightedCodes.addAll(kc.bySubject.keys.map((s) => s.toUpperCase()));
+          highlightedCodes.addAll(
+            kc.bySubject.keys.map((s) => s.toUpperCase()),
+          );
         }
       } else if (widget.selectedSubjectCode != null) {
         final code = widget.selectedSubjectCode!.toUpperCase();
@@ -861,8 +924,11 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
                       node: node,
                       settings: widget.settings,
                       isSelected: node.concept?.id == widget.selectedConceptId,
-                      isHighlighted: highlightedConceptIds.contains(node.concept?.id),
-                      isDimmed: hasHighlight &&
+                      isHighlighted: highlightedConceptIds.contains(
+                        node.concept?.id,
+                      ),
+                      isDimmed:
+                          hasHighlight &&
                           !(node.concept?.id == widget.selectedConceptId ||
                               highlightedConceptIds.contains(node.concept?.id)),
                       viewer: widget.viewer,
@@ -889,6 +955,7 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
                         if (wasTap && node.concept != null) {
                           widget.onSelectConcept?.call(node.concept!.id);
                         }
+                        _saveLayout();
                         _wakeSimulation();
                       },
                     ),
@@ -902,9 +969,14 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
                       data: widget.data,
                       settings: widget.settings,
                       isSelected: selectedId == node.subject?.id,
-                      isConceptRelated: highlightedCodes.contains(node.subject?.code.toUpperCase()),
-                      isDimmed: hasHighlight &&
-                          !highlightedCodes.contains(node.subject?.code.toUpperCase()),
+                      isConceptRelated: highlightedCodes.contains(
+                        node.subject?.code.toUpperCase(),
+                      ),
+                      isDimmed:
+                          hasHighlight &&
+                          !highlightedCodes.contains(
+                            node.subject?.code.toUpperCase(),
+                          ),
                       viewer: widget.viewer,
                       onDragStart: () {
                         setState(() {
@@ -930,6 +1002,7 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
                         if (wasTap && sid != null) {
                           widget.onSelectSubject?.call(sid);
                         }
+                        _saveLayout();
                         _wakeSimulation();
                       },
                     ),
@@ -970,7 +1043,8 @@ class _DraggableConceptNodeItem extends StatefulWidget {
   });
 
   @override
-  State<_DraggableConceptNodeItem> createState() => _DraggableConceptNodeItemState();
+  State<_DraggableConceptNodeItem> createState() =>
+      _DraggableConceptNodeItemState();
 }
 
 class _DraggableConceptNodeItemState extends State<_DraggableConceptNodeItem> {
@@ -1031,30 +1105,32 @@ class _DraggableConceptNodeItemState extends State<_DraggableConceptNodeItem> {
                 color: isSelected
                     ? baseColor
                     : (isDark
-                        ? (isHighlighted
-                            ? baseColor.withValues(alpha: 0.35)
-                            : baseColor.withValues(alpha: 0.20))
-                        : (isHighlighted
-                            ? baseColor.withValues(alpha: 0.25)
-                            : baseColor.withValues(alpha: 0.12))),
+                          ? (isHighlighted
+                                ? baseColor.withValues(alpha: 0.35)
+                                : baseColor.withValues(alpha: 0.20))
+                          : (isHighlighted
+                                ? baseColor.withValues(alpha: 0.25)
+                                : baseColor.withValues(alpha: 0.12))),
                 borderRadius: BorderRadius.circular(13 * scale),
                 border: Border.all(
                   color: isSelected
                       ? Colors.white
                       : (widget.node.isDragging
-                          ? AppColors.primary
-                          : (isHighlighted
-                              ? baseColor
-                              : baseColor.withValues(alpha: 0.65))),
-                  width: isSelected ? 2.0 : (widget.node.isDragging || isHighlighted ? 1.8 : 1.0),
+                            ? AppColors.primary
+                            : (isHighlighted
+                                  ? baseColor
+                                  : baseColor.withValues(alpha: 0.65))),
+                  width: isSelected
+                      ? 2.0
+                      : (widget.node.isDragging || isHighlighted ? 1.8 : 1.0),
                 ),
                 boxShadow: [
                   BoxShadow(
                     color: isSelected
                         ? baseColor.withValues(alpha: 0.6)
                         : (isHighlighted
-                            ? baseColor.withValues(alpha: 0.35)
-                            : baseColor.withValues(alpha: 0.12)),
+                              ? baseColor.withValues(alpha: 0.35)
+                              : baseColor.withValues(alpha: 0.12)),
                     blurRadius: isSelected ? 12 : (isHighlighted ? 8 : 4),
                     offset: const Offset(0, 1),
                   ),
@@ -1073,12 +1149,14 @@ class _DraggableConceptNodeItemState extends State<_DraggableConceptNodeItem> {
                     c.label,
                     style: TextStyle(
                       fontSize: (10.5 * scale).clamp(8.5, 14.0),
-                      fontWeight: isSelected || isHighlighted ? FontWeight.w700 : FontWeight.w600,
+                      fontWeight: isSelected || isHighlighted
+                          ? FontWeight.w700
+                          : FontWeight.w600,
                       color: isSelected
                           ? Colors.white
                           : (isDark
-                              ? const Color(0xFFE2E8F0)
-                              : const Color(0xFF1E293B)),
+                                ? const Color(0xFFE2E8F0)
+                                : const Color(0xFF1E293B)),
                     ),
                   ),
                 ],
@@ -1212,7 +1290,10 @@ class _DraggableNodeItemState extends State<_DraggableNodeItem> {
             child: Container(
               width: width,
               height: height,
-              padding: EdgeInsets.symmetric(horizontal: (8 * scale).clamp(4.0, 12.0), vertical: (4 * scale).clamp(2.0, 8.0)),
+              padding: EdgeInsets.symmetric(
+                horizontal: (8 * scale).clamp(4.0, 12.0),
+                vertical: (4 * scale).clamp(2.0, 8.0),
+              ),
               decoration: BoxDecoration(
                 color: widget.isSelected ? color : AppColors.surface,
                 borderRadius: BorderRadius.circular(8 * scale.clamp(0.8, 1.4)),
@@ -1220,22 +1301,31 @@ class _DraggableNodeItemState extends State<_DraggableNodeItem> {
                   color: widget.isSelected
                       ? color
                       : (widget.isConceptRelated
-                          ? AppColors.primary
-                          : (widget.node.isDragging ? AppColors.primary : AppColors.border)),
-                  width: widget.isSelected || widget.node.isDragging || widget.isConceptRelated ? 2 : 1,
+                            ? AppColors.primary
+                            : (widget.node.isDragging
+                                  ? AppColors.primary
+                                  : AppColors.border)),
+                  width:
+                      widget.isSelected ||
+                          widget.node.isDragging ||
+                          widget.isConceptRelated
+                      ? 2
+                      : 1,
                 ),
                 boxShadow: [
                   BoxShadow(
                     color: widget.isSelected
                         ? Colors.black.withValues(alpha: 0.22)
                         : (widget.isConceptRelated
-                            ? AppColors.primary.withValues(alpha: 0.35)
-                            : (widget.node.isDragging
-                                ? Colors.black.withValues(alpha: 0.28)
-                                : Colors.black.withValues(alpha: 0.07))),
+                              ? AppColors.primary.withValues(alpha: 0.35)
+                              : (widget.node.isDragging
+                                    ? Colors.black.withValues(alpha: 0.28)
+                                    : Colors.black.withValues(alpha: 0.07))),
                     blurRadius: widget.isConceptRelated
                         ? 10
-                        : (widget.node.isDragging ? 14 : (widget.isSelected ? 8 : 4)),
+                        : (widget.node.isDragging
+                              ? 14
+                              : (widget.isSelected ? 8 : 4)),
                     offset: Offset(0, widget.node.isDragging ? 4 : 2),
                   ),
                 ],
@@ -1259,7 +1349,9 @@ class _DraggableNodeItemState extends State<_DraggableNodeItem> {
                       style: TextStyle(
                         fontSize: fontSize,
                         fontWeight: FontWeight.w700,
-                        color: widget.isSelected ? Colors.white : AppColors.textPrimary,
+                        color: widget.isSelected
+                            ? Colors.white
+                            : AppColors.textPrimary,
                       ),
                     ),
                   ),
@@ -1282,10 +1374,13 @@ class _DraggableNodeItemState extends State<_DraggableNodeItem> {
                       style: TextStyle(
                         fontSize: (tagFontSize - 0.5).clamp(7.5, 12.0),
                         fontWeight: FontWeight.w600,
-                        color: widget.isSelected ? Colors.white70 : AppColors.primary,
+                        color: widget.isSelected
+                            ? Colors.white70
+                            : AppColors.primary,
                       ),
                     ),
-                    if (widget.settings.showSemesterBadge) SizedBox(width: 4 * scale),
+                    if (widget.settings.showSemesterBadge)
+                      SizedBox(width: 4 * scale),
                   ],
                   if (widget.settings.showSemesterBadge)
                     Text(
@@ -1293,7 +1388,9 @@ class _DraggableNodeItemState extends State<_DraggableNodeItem> {
                       style: TextStyle(
                         fontSize: tagFontSize,
                         fontWeight: FontWeight.w600,
-                        color: widget.isSelected ? Colors.white70 : AppColors.textSecondary,
+                        color: widget.isSelected
+                            ? Colors.white70
+                            : AppColors.textSecondary,
                       ),
                     ),
                 ],
@@ -1362,16 +1459,27 @@ class _GraphEdgesPainter extends CustomPainter {
         if (hasHighlight) {
           if (e.isConceptLink) {
             final cId = e.to.isConcept ? e.to.concept?.id : e.from.concept?.id;
-            final sCode = e.from.subject != null ? e.from.subject?.code.toUpperCase() : e.to.subject?.code.toUpperCase();
+            final sCode = e.from.subject != null
+                ? e.from.subject?.code.toUpperCase()
+                : e.to.subject?.code.toUpperCase();
             if (selectedConceptId != null) {
-              isEdgeHighlighted = (cId == selectedConceptId && sCode != null && highlightedCodes.contains(sCode));
+              isEdgeHighlighted =
+                  (cId == selectedConceptId &&
+                  sCode != null &&
+                  highlightedCodes.contains(sCode));
             } else if (selectedSubjectCode != null) {
-              isEdgeHighlighted = (sCode == selectedSubjectCode!.toUpperCase() && cId != null && highlightedConceptIds.contains(cId));
+              isEdgeHighlighted =
+                  (sCode == selectedSubjectCode!.toUpperCase() &&
+                  cId != null &&
+                  highlightedConceptIds.contains(cId));
             }
           } else {
             final fromCode = e.from.subject?.code.toUpperCase();
             final toCode = e.to.subject?.code.toUpperCase();
-            if (fromCode != null && toCode != null && highlightedCodes.contains(fromCode) && highlightedCodes.contains(toCode)) {
+            if (fromCode != null &&
+                toCode != null &&
+                highlightedCodes.contains(fromCode) &&
+                highlightedCodes.contains(toCode)) {
               isEdgeHighlighted = true;
             }
           }
@@ -1405,13 +1513,19 @@ class _GraphEdgesPainter extends CustomPainter {
           final Color strokeColor;
           if (isEdgeHighlighted) {
             stroke = 2.0 * (edgeWidth / 1.5).clamp(0.8, 2.4);
-            strokeColor = isDark ? const Color(0xFF818CF8) : const Color(0xFF4F46E5);
+            strokeColor = isDark
+                ? const Color(0xFF818CF8)
+                : const Color(0xFF4F46E5);
           } else if (hasHighlight) {
             stroke = 0.8;
-            strokeColor = (isDark ? const Color(0xFF818CF8) : const Color(0xFF6366F1)).withValues(alpha: 0.08);
+            strokeColor =
+                (isDark ? const Color(0xFF818CF8) : const Color(0xFF6366F1))
+                    .withValues(alpha: 0.08);
           } else {
             stroke = 1.1 * (edgeWidth / 1.5).clamp(0.6, 1.8);
-            strokeColor = (isDark ? const Color(0xFF818CF8) : const Color(0xFF6366F1)).withValues(alpha: 0.45);
+            strokeColor =
+                (isDark ? const Color(0xFF818CF8) : const Color(0xFF6366F1))
+                    .withValues(alpha: 0.45);
           }
 
           final paint = Paint()
@@ -1432,8 +1546,13 @@ class _GraphEdgesPainter extends CustomPainter {
               : (isDark ? const Color(0xFFA5B4FC) : const Color(0xFF6366F1));
         } else if (hasHighlight) {
           stroke = 0.8;
-          strokeColor = (e.isHard ? AppColors.edgePrerequisite : (isDark ? const Color(0xFF5A5A6E) : const Color(0xFFA6A2B8)))
-              .withValues(alpha: 0.10);
+          strokeColor =
+              (e.isHard
+                      ? AppColors.edgePrerequisite
+                      : (isDark
+                            ? const Color(0xFF5A5A6E)
+                            : const Color(0xFFA6A2B8)))
+                  .withValues(alpha: 0.10);
         } else {
           stroke = (e.isHard ? 1.8 : 1.2) * (edgeWidth / 1.5);
           strokeColor = e.isHard
@@ -1450,7 +1569,8 @@ class _GraphEdgesPainter extends CustomPainter {
         canvas.drawLine(Offset(startX, startY), Offset(endX, endY), paint);
 
         if (showArrows) {
-          final arrowSize = (e.isHard ? 7.0 : 6.0) * (edgeWidth / 1.5).clamp(0.7, 2.0);
+          final arrowSize =
+              (e.isHard ? 7.0 : 6.0) * (edgeWidth / 1.5).clamp(0.7, 2.0);
           _drawArrowHead(canvas, endX, endY, ux, uy, paint.color, arrowSize);
         }
       }
@@ -1467,7 +1587,15 @@ class _GraphEdgesPainter extends CustomPainter {
     return math.min(distX, distY);
   }
 
-  void _drawArrowHead(Canvas canvas, double x, double y, double ux, double uy, Color color, double arrowSize) {
+  void _drawArrowHead(
+    Canvas canvas,
+    double x,
+    double y,
+    double ux,
+    double uy,
+    Color color,
+    double arrowSize,
+  ) {
     final arrowPaint = Paint()
       ..color = color
       ..style = PaintingStyle.fill;
@@ -1477,9 +1605,15 @@ class _GraphEdgesPainter extends CustomPainter {
 
     final path = Path();
     path.moveTo(x + ux * 2, y + uy * 2);
-    path.lineTo(x - ux * arrowSize + nx * (arrowSize * 0.55), y - uy * arrowSize + ny * (arrowSize * 0.55));
+    path.lineTo(
+      x - ux * arrowSize + nx * (arrowSize * 0.55),
+      y - uy * arrowSize + ny * (arrowSize * 0.55),
+    );
     path.lineTo(x - ux * (arrowSize * 0.65), y - uy * (arrowSize * 0.65));
-    path.lineTo(x - ux * arrowSize - nx * (arrowSize * 0.55), y - uy * arrowSize - ny * (arrowSize * 0.55));
+    path.lineTo(
+      x - ux * arrowSize - nx * (arrowSize * 0.55),
+      y - uy * arrowSize - ny * (arrowSize * 0.55),
+    );
     path.close();
 
     canvas.drawPath(path, arrowPaint);
@@ -1488,7 +1622,6 @@ class _GraphEdgesPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _GraphEdgesPainter oldDelegate) => true;
 }
-
 
 class _SemesterFilter extends StatelessWidget {
   final List<int> semesters;
@@ -1504,7 +1637,9 @@ class _SemesterFilter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = AppColors.isDark;
-    final validValue = (value == null || semesters.contains(value)) ? value : null;
+    final validValue = (value == null || semesters.contains(value))
+        ? value
+        : null;
     return Container(
       height: 32,
       width: 98,
@@ -1536,10 +1671,7 @@ class _SemesterFilter extends StatelessWidget {
               value: null,
               child: Text(
                 'Tất cả kỳ',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  color: AppColors.textPrimary,
-                ),
+                style: TextStyle(fontSize: 11.5, color: AppColors.textPrimary),
               ),
             ),
             for (final s in semesters)
@@ -1575,7 +1707,9 @@ class _CurriculumFilter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = AppColors.isDark;
-    final validValue = (value == null || groups.any((g) => g.code == value)) ? value : null;
+    final validValue = (value == null || groups.any((g) => g.code == value))
+        ? value
+        : null;
     return Container(
       height: 32,
       constraints: const BoxConstraints(minWidth: 100, maxWidth: 145),
@@ -1601,7 +1735,9 @@ class _CurriculumFilter extends StatelessWidget {
           style: TextStyle(
             fontSize: 11.5,
             fontWeight: FontWeight.w600,
-            color: validValue != null ? AppColors.primary : AppColors.textPrimary,
+            color: validValue != null
+                ? AppColors.primary
+                : AppColors.textPrimary,
           ),
           dropdownColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
           borderRadius: BorderRadius.circular(8),
@@ -1784,6 +1920,10 @@ class _GraphFloatingControls extends StatelessWidget {
   final VoidCallback onToggleSettings;
   final VoidCallback onToggleKnowledge;
   final VoidCallback onToggleRelated;
+
+  /// Ghim khung đang xem thành ô thu nhỏ trên thanh bên — đường không cần kéo
+  /// thả, cho cả chuột bi lẫn người dùng bàn phím.
+  final VoidCallback onPinMiniGraph;
   final VoidCallback onResetZoom;
   final VoidCallback onRefresh;
 
@@ -1794,6 +1934,7 @@ class _GraphFloatingControls extends StatelessWidget {
     required this.onToggleSettings,
     required this.onToggleKnowledge,
     required this.onToggleRelated,
+    required this.onPinMiniGraph,
     required this.onResetZoom,
     required this.onRefresh,
   });
@@ -1803,7 +1944,9 @@ class _GraphFloatingControls extends StatelessWidget {
     final isDark = AppColors.isDark;
     return Container(
       decoration: BoxDecoration(
-        color: (isDark ? const Color(0xFF1E1E24) : Colors.white).withValues(alpha: 0.94),
+        color: (isDark ? const Color(0xFF1E1E24) : Colors.white).withValues(
+          alpha: 0.94,
+        ),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: AppColors.border.withValues(alpha: 0.8)),
         boxShadow: [
@@ -1828,21 +1971,31 @@ class _GraphFloatingControls extends StatelessWidget {
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
             splashRadius: 16,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
             color: isDark ? const Color(0xFF25252E) : Colors.white,
             onSelected: (val) {
               if (val == 'reset_zoom') onResetZoom();
               if (val == 'refresh') onRefresh();
               if (val == 'toggle_related') onToggleRelated();
+              if (val == 'pin_mini') onPinMiniGraph();
             },
             itemBuilder: (context) => [
               PopupMenuItem(
                 value: 'reset_zoom',
                 child: Row(
                   children: [
-                    Icon(Icons.center_focus_strong, size: 16, color: AppColors.textSecondary),
+                    Icon(
+                      Icons.center_focus_strong,
+                      size: 16,
+                      color: AppColors.textSecondary,
+                    ),
                     const SizedBox(width: 8),
-                    const Text('Về zoom mặc định', style: TextStyle(fontSize: 12.5)),
+                    const Text(
+                      'Về zoom mặc định',
+                      style: TextStyle(fontSize: 12.5),
+                    ),
                   ],
                 ),
               ),
@@ -1850,9 +2003,33 @@ class _GraphFloatingControls extends StatelessWidget {
                 value: 'refresh',
                 child: Row(
                   children: [
-                    Icon(Icons.refresh, size: 16, color: AppColors.textSecondary),
+                    Icon(
+                      Icons.refresh,
+                      size: 16,
+                      color: AppColors.textSecondary,
+                    ),
                     const SizedBox(width: 8),
-                    const Text('Tải lại đồ thị', style: TextStyle(fontSize: 12.5)),
+                    const Text(
+                      'Tải lại đồ thị',
+                      style: TextStyle(fontSize: 12.5),
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'pin_mini',
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.push_pin_outlined,
+                      size: 16,
+                      color: AppColors.textSecondary,
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Ghim vào đồ thị thu nhỏ',
+                      style: TextStyle(fontSize: 12.5),
+                    ),
                   ],
                 ),
               ),
@@ -1867,7 +2044,9 @@ class _GraphFloatingControls extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      showRelated ? 'Ẩn quan hệ tham khảo' : 'Hiện quan hệ tham khảo',
+                      showRelated
+                          ? 'Ẩn quan hệ tham khảo'
+                          : 'Hiện quan hệ tham khảo',
                       style: const TextStyle(fontSize: 12.5),
                     ),
                   ],
@@ -1938,5 +2117,3 @@ class _FloatingIconButton extends StatelessWidget {
     );
   }
 }
-
-
