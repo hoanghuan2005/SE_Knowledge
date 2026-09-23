@@ -71,6 +71,8 @@ class SubjectChatService extends ChangeNotifier {
             'hỏi thêm về môn này.',
         includeKnowledgeContext: false,
         extraContext: context,
+        // Việc này chỉ cần 4 dòng chữ, không cần bộ quy tắc gia sư đầy đủ.
+        minimalPrompt: true,
       );
       _suggestions[subjectId] = _splitLines(answer.text);
     } catch (_) {

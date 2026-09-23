@@ -164,6 +164,14 @@ class AiService {
     /// thêm bộ quy tắc nhận xét năng lực. Đường Graph RAG tự suy ra được nên
     /// không cần truyền.
     bool extraContextHasGrades = false,
+
+    /// Dùng prompt hệ thống tối giản thay cho bộ quy tắc gia sư đầy đủ.
+    ///
+    /// Dành cho tác vụ phụ không phải trả lời người dùng — hiện chỉ có việc
+    /// sinh 4 câu hỏi gợi ý. Bộ quy tắc gia sư nặng ~380 token và bàn toàn
+    /// chuyện không liên quan tới việc đó (cách đánh số lộ trình, cách gắn
+    /// nhãn phần tự học, cách bọc mã môn cho tầng hiển thị bóc link).
+    bool minimalPrompt = false,
     void Function(GraphRagSummary summary)? onContext,
     void Function(String delta)? onDelta,
   }) async {
@@ -183,12 +191,15 @@ class AiService {
       onContext?.call(ragContext.summary);
     }
 
-    final systemPrompt = _systemPrompt(
-      extraContext ?? ragContext?.promptText ?? '',
-      hasGrades: extraContext != null
-          ? extraContextHasGrades
-          : (ragContext?.summary.includesTranscript ?? false),
-    );
+    final context = extraContext ?? ragContext?.promptText ?? '';
+    final systemPrompt = minimalPrompt
+        ? _minimalSystemPrompt(context)
+        : _systemPrompt(
+            context,
+            hasGrades: extraContext != null
+                ? extraContextHasGrades
+                : (ragContext?.summary.includesTranscript ?? false),
+          );
     final recent = _recentHistory(history);
 
     try {
@@ -227,6 +238,36 @@ class AiService {
     final usable = history.where((m) => !m.isError).toList();
     if (usable.length <= maxHistoryMessages) return usable;
     return usable.sublist(usable.length - maxHistoryMessages);
+  }
+
+  /// Prompt cho tác vụ phụ: chỉ giữ hai ràng buộc thật sự có tác dụng.
+  ///
+  /// Soi từng quy tắc trong [_systemPrompt] xem giúp được gì cho việc sinh 4
+  /// câu hỏi gợi ý: cách đánh số lộ trình, cách gắn nhãn phần tự học, cách
+  /// xử lý khi chương trình thiếu môn — đều vô can. Riêng quy tắc bọc mã môn
+  /// trong `[[...]]` còn có hại, vì gợi ý là nhãn nút chữ thuần chứ không đi
+  /// qua bộ bóc link, nên dấu ngoặc lòi ra nguyên xi.
+  ///
+  /// Còn lại đúng hai điều cần giữ: viết tiếng Việt ngắn gọn, và không bịa ra
+  /// môn không có trong dữ liệu.
+  String _minimalSystemPrompt(String context) {
+    final sb = StringBuffer()
+      ..writeln(
+        'Bạn đọc dữ liệu môn học của một sinh viên và làm đúng yêu cầu được '
+        'giao, không thêm lời dẫn hay giải thích ngoài yêu cầu đó.',
+      )
+      ..writeln('- Viết bằng tiếng Việt, ngắn gọn.')
+      ..writeln(
+        '- Chỉ dùng dữ liệu bên dưới, không nhắc tới môn học không có trong '
+        'đó.',
+      );
+    if (context.isNotEmpty) {
+      sb
+        ..writeln()
+        ..writeln('Dữ liệu môn học:')
+        ..writeln(context);
+    }
+    return sb.toString();
   }
 
   /// Prompt gia sư: ép AI bám đúng dữ liệu đồ thị của người dùng và trả lời
