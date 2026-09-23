@@ -826,7 +826,7 @@ class _ObsidianGraphCanvasState extends State<_ObsidianGraphCanvas>
                   onTap: () {
                     widget.onClearSelection?.call();
                   },
-                  child: const SizedBox.expand(),
+                  child: Container(color: Colors.transparent),
                 ),
               ),
 
@@ -1504,6 +1504,7 @@ class _SemesterFilter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = AppColors.isDark;
+    final validValue = (value == null || semesters.contains(value)) ? value : null;
     return Container(
       height: 32,
       width: 98,
@@ -1515,7 +1516,7 @@ class _SemesterFilter extends StatelessWidget {
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<int?>(
-          value: value,
+          value: validValue,
           isDense: true,
           isExpanded: true,
           icon: Icon(
@@ -1574,6 +1575,7 @@ class _CurriculumFilter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = AppColors.isDark;
+    final validValue = (value == null || groups.any((g) => g.code == value)) ? value : null;
     return Container(
       height: 32,
       constraints: const BoxConstraints(minWidth: 100, maxWidth: 145),
@@ -1582,13 +1584,13 @@ class _CurriculumFilter extends StatelessWidget {
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
-          color: value != null ? AppColors.primary : AppColors.border,
-          width: value != null ? 1.5 : 1.0,
+          color: validValue != null ? AppColors.primary : AppColors.border,
+          width: validValue != null ? 1.5 : 1.0,
         ),
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String?>(
-          value: value,
+          value: validValue,
           isDense: true,
           isExpanded: true,
           icon: Icon(
@@ -1599,7 +1601,7 @@ class _CurriculumFilter extends StatelessWidget {
           style: TextStyle(
             fontSize: 11.5,
             fontWeight: FontWeight.w600,
-            color: value != null ? AppColors.primary : AppColors.textPrimary,
+            color: validValue != null ? AppColors.primary : AppColors.textPrimary,
           ),
           dropdownColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
           borderRadius: BorderRadius.circular(8),

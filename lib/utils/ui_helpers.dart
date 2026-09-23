@@ -120,6 +120,8 @@ class PageHeader extends StatelessWidget {
               children: [
                 Text(
                   title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
@@ -131,6 +133,8 @@ class PageHeader extends StatelessWidget {
                     padding: const EdgeInsets.only(top: 1),
                     child: Text(
                       subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 11.5,
                         color: AppColors.textSecondary,

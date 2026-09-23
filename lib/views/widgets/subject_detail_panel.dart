@@ -245,22 +245,21 @@ class _Detail extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Flexible(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: color,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        subject.code,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13,
-                        ),
+                  Container(
+                    constraints: const BoxConstraints(maxWidth: 160),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      subject.code,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
                       ),
                     ),
                   ),
@@ -270,11 +269,11 @@ class _Detail extends StatelessWidget {
                     icon: const Icon(Icons.edit_outlined, size: 18),
                     splashRadius: 16,
                     padding: const EdgeInsets.all(4),
-                    constraints: const BoxConstraints(),
+                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                     color: AppColors.textSecondary,
                     onPressed: () => SubjectFormDialog.show(context, subject: subject),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 4),
                   IconButton(
                     tooltip: 'Xoá môn',
                     icon: const Icon(
@@ -284,7 +283,7 @@ class _Detail extends StatelessWidget {
                     ),
                     splashRadius: 16,
                     padding: const EdgeInsets.all(4),
-                    constraints: const BoxConstraints(),
+                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                     onPressed: () => _confirmDelete(context),
                   ),
                 ],

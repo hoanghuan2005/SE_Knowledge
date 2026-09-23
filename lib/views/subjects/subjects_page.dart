@@ -691,6 +691,7 @@ class _SemesterFilter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = AppColors.isDark;
+    final validValue = (value == null || semesters.contains(value)) ? value : null;
     return Container(
       height: 32,
       width: 105,
@@ -705,7 +706,7 @@ class _SemesterFilter extends StatelessWidget {
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<int?>(
-          value: value,
+          value: validValue,
           isDense: true,
           isExpanded: true,
           icon: Icon(
@@ -764,6 +765,7 @@ class _CurriculumFilter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = AppColors.isDark;
+    final validValue = (value == null || groups.any((g) => g.code == value)) ? value : null;
     return Container(
       height: 32,
       constraints: const BoxConstraints(minWidth: 110, maxWidth: 160),
@@ -772,15 +774,15 @@ class _CurriculumFilter extends StatelessWidget {
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
-          color: value != null
+          color: validValue != null
               ? AppColors.primary.withValues(alpha: 0.8)
               : AppColors.border.withValues(alpha: 0.5),
-          width: value != null ? 1.2 : 0.8,
+          width: validValue != null ? 1.2 : 0.8,
         ),
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String?>(
-          value: value,
+          value: validValue,
           isDense: true,
           isExpanded: true,
           icon: Icon(
@@ -791,7 +793,7 @@ class _CurriculumFilter extends StatelessWidget {
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
-            color: value != null ? AppColors.primary : AppColors.textPrimary,
+            color: validValue != null ? AppColors.primary : AppColors.textPrimary,
           ),
           dropdownColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
           borderRadius: BorderRadius.circular(8),

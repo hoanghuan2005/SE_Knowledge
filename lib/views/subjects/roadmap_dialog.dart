@@ -150,7 +150,9 @@ class _RoadmapDialogState extends State<RoadmapDialog> {
                     ),
                     child: DropdownButtonHideUnderline(
                       child: DropdownButton<int?>(
-                        value: _selectedSemesterFilter,
+                        value: (_selectedSemesterFilter == null || semesters.contains(_selectedSemesterFilter))
+                            ? _selectedSemesterFilter
+                            : null,
                         isDense: true,
                         dropdownColor: AppColors.obsidianCard,
                         style: TextStyle(
