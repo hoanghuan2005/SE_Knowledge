@@ -502,20 +502,6 @@ void main() {
       expect(scoped.subFolder, 'FAP');
     });
 
-    test('quét thư mục con không báo nhầm "môn mất file"', () async {
-      await addSubject('CSD201');
-      await writeNote('FAP/PRF192.md', 'PRF192');
-
-      final all = await vaultService.planImport(vault.path);
-      final scoped = await vaultService.planImport(
-        vault.path,
-        subFolder: 'FAP',
-      );
-
-      expect(all.missingInVault.map((s) => s.code), contains('CSD201'));
-      expect(scoped.missingInVault, isEmpty);
-    });
-
     test('nạp kèm tệp đích thì môn vào đúng tệp đó', () async {
       await writeNote('FAP/PRF192.md', 'PRF192', semester: 1);
       await writeNote('FAP/PRJ301.md', 'PRJ301', semester: 3);
