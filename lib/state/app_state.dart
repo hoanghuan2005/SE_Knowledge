@@ -12,6 +12,7 @@ import '../models/prerequisite.dart';
 import '../models/subject.dart';
 import '../models/curriculum.dart';
 import '../models/graph_settings.dart';
+import '../models/mini_graph_pin.dart';
 import '../models/transcript_entry.dart';
 import '../services/academic_analytics_service.dart';
 import '../services/db_service.dart';
@@ -105,7 +106,11 @@ class AppState extends ChangeNotifier {
   Subject? get activeNote => _activeNote;
 
   void openNoteTab(Subject subject) {
-    if (!_openNoteTabs.any((s) => s.id == subject.id || s.code.toUpperCase() == subject.code.toUpperCase())) {
+    if (!_openNoteTabs.any(
+      (s) =>
+          s.id == subject.id ||
+          s.code.toUpperCase() == subject.code.toUpperCase(),
+    )) {
       _openNoteTabs.add(subject);
     }
     _activeNote = subject;
@@ -114,8 +119,13 @@ class AppState extends ChangeNotifier {
   }
 
   void closeNoteTab(Subject subject) {
-    _openNoteTabs.removeWhere((s) => s.id == subject.id || s.code.toUpperCase() == subject.code.toUpperCase());
-    if (_activeNote?.id == subject.id || _activeNote?.code.toUpperCase() == subject.code.toUpperCase()) {
+    _openNoteTabs.removeWhere(
+      (s) =>
+          s.id == subject.id ||
+          s.code.toUpperCase() == subject.code.toUpperCase(),
+    );
+    if (_activeNote?.id == subject.id ||
+        _activeNote?.code.toUpperCase() == subject.code.toUpperCase()) {
       _activeNote = _openNoteTabs.isNotEmpty ? _openNoteTabs.last : null;
     }
     notifyListeners();
@@ -231,7 +241,8 @@ class AppState extends ChangeNotifier {
   /// Môn của khung đang lọc (hoặc khung duy nhất), để kế hoạch tính cả những
   /// môn bảng điểm FAP chưa liệt kê.
   List<PlannedSubject> _plannedFromCurriculum() {
-    final group = activeCurriculumGroup ??
+    final group =
+        activeCurriculumGroup ??
         (_curriculumGroups.where((g) => !g.isUnassigned).length == 1
             ? _curriculumGroups.firstWhere((g) => !g.isUnassigned)
             : null);
@@ -349,7 +360,9 @@ class AppState extends ChangeNotifier {
     final folder = sub.isEmpty ? vault : p.join(vault, sub);
     final path = p.join(
       folder,
-      KanbanBoardBuilder.fileNameFor(group.isUnassigned ? 'NGOAI_KHUNG' : group.code),
+      KanbanBoardBuilder.fileNameFor(
+        group.isUnassigned ? 'NGOAI_KHUNG' : group.code,
+      ),
     );
     await _vault.saveNote(
       path,
@@ -359,27 +372,87 @@ class AppState extends ChangeNotifier {
   }
 
   /// Dữ liệu đồ thị lọc theo Khung CTĐT đang hoạt động (null = Toàn bộ môn trong DB)
-  GraphData get currentGraph {
-    if (_activeCurriculumCode == null) return _graph;
+  /// Dữ liệu đồ thị lọc theo Khung CTĐT đang hoạt động (null = Toàn bộ môn).
+  GraphData get currentGraph => graphFor(_activeCurriculumCode);
+
+  /// Đồ thị của **một khung bất kỳ**, không phụ thuộc khung đang chọn.
+  ///
+  /// Tách khỏi [currentGraph] để thanh bên ghim được nhiều ô cùng lúc: mỗi ô
+  /// hỏi đồ thị của riêng mã khung nó giữ, nên đổi khung trên Graph view lớn
+  /// không kéo theo các ô đã ghim.
+  GraphData graphFor(String? curriculumCode) =>
+      filterGraph(_graph, _curriculumGroups, curriculumCode);
+
+  /// Phần lọc thuần, không chạm CSDL — tách static để kiểm thử được.
+  ///
+  /// Chỉ giữ lại cạnh có **cả hai đầu** nằm trong khung: một cạnh trỏ ra ngoài
+  /// khung sẽ thành mũi tên cụt, chỉ vào chỗ trống trên canvas.
+  static GraphData filterGraph(
+    GraphData full,
+    List<CurriculumGroup> groups,
+    String? curriculumCode,
+  ) {
+    if (curriculumCode == null) return full;
 
     CurriculumGroup? group;
-    for (final g in _curriculumGroups) {
-      if (g.code == _activeCurriculumCode) {
+    for (final g in groups) {
+      if (g.code == curriculumCode) {
         group = g;
         break;
       }
     }
-    if (group == null) return _graph;
+    // Mã không còn tồn tại (khung vừa bị xoá / đổi mã): lùi về toàn bộ đồ thị
+    // thay vì trả về rỗng, để màn hình không trắng trơn không rõ lý do.
+    if (group == null) return full;
 
-    final groupSubjects = group.semesters.values.expand((list) => list).toList();
-    final groupSubjectIds = groupSubjects.map((s) => s.id).whereType<int>().toSet();
+    final groupSubjects = group.semesters.values
+        .expand((list) => list)
+        .toList();
+    final groupSubjectIds = groupSubjects
+        .map((s) => s.id)
+        .whereType<int>()
+        .toSet();
 
-    final groupEdges = _graph.edges.where((e) {
+    final groupEdges = full.edges.where((e) {
       return groupSubjectIds.contains(e.subjectId) &&
           groupSubjectIds.contains(e.prerequisiteId);
     }).toList();
 
     return GraphData(subjects: groupSubjects, edges: groupEdges);
+  }
+
+  // ------------------------------------------------------------------
+  // Ô ĐỒ THỊ THU NHỎ GHIM TRÊN THANH BÊN
+  // ------------------------------------------------------------------
+
+  MiniGraphPins _pinnedMiniGraphs = MiniGraphPins.empty;
+
+  /// Các khung đang được ghim thành ô thu nhỏ; `null` = ô toàn bộ môn.
+  List<String?> get pinnedMiniGraphs =>
+      List.unmodifiable(_pinnedMiniGraphs.codes);
+
+  bool isMiniGraphPinned(String? code) => _pinnedMiniGraphs.contains(code);
+
+  /// Ghim một khung. Trả về `false` khi khung đó đã được ghim từ trước.
+  Future<bool> pinMiniGraph(String? curriculumCode) async {
+    final next = _pinnedMiniGraphs.pin(curriculumCode);
+    if (identical(next, _pinnedMiniGraphs)) return false;
+    await _applyPins(next);
+    return true;
+  }
+
+  Future<void> unpinMiniGraph(String? curriculumCode) =>
+      _applyPins(_pinnedMiniGraphs.unpin(curriculumCode));
+
+  Future<void> reorderMiniGraphs(int oldIndex, int newIndex) =>
+      _applyPins(_pinnedMiniGraphs.reorder(oldIndex, newIndex));
+
+  /// Báo thay đổi trước rồi mới ghi xuống đĩa: giao diện phải nhảy ngay theo
+  /// thao tác kéo thả, không đợi SharedPreferences.
+  Future<void> _applyPins(MiniGraphPins next) async {
+    _pinnedMiniGraphs = next;
+    notifyListeners();
+    await _settings.setPinnedMiniGraphs(next);
   }
 
   /// Nạp lần đầu khi app khởi động.
@@ -392,6 +465,9 @@ class AppState extends ChangeNotifier {
     _vaultPath = await _settings.getVaultPath();
     _graphSettings = await _settings.getGraphSettings();
     _targetGpa = await _settings.getTargetGpa();
+    // Nạp trước [refresh] để chính lần refresh đó dọn luôn những ô trỏ tới
+    // khung đã bị xoá từ phiên trước.
+    _pinnedMiniGraphs = await _settings.getPinnedMiniGraphs();
 
     // Dọn dẹp các node PLO rác cũ nếu có trong CSDL
     await _db.cleanInvalidPloSubjects();
@@ -431,6 +507,20 @@ class AppState extends ChangeNotifier {
           !_curriculumGroups.any((g) => g.code == _activeCurriculumCode)) {
         _activeCurriculumCode = null;
       }
+
+      // Cùng lý do đó cho các ô thu nhỏ đã ghim: một ô trỏ tới khung vừa bị
+      // xoá sẽ vẽ ra đồ thị của khung khác mà vẫn mang nhãn cũ.
+      //
+      // Chỉ dọn khi cây khung đọc được: nếu một lần nạp hụt trả về rỗng mà ta
+      // vẫn dọn thì toàn bộ ô người dùng ghim bị xoá vĩnh viễn khỏi đĩa.
+      if (_curriculumGroups.isNotEmpty) {
+        final available = {for (final g in _curriculumGroups) g.code};
+        final pruned = _pinnedMiniGraphs.pruneTo(available);
+        if (!identical(pruned, _pinnedMiniGraphs)) {
+          _pinnedMiniGraphs = pruned;
+          unawaited(_settings.setPinnedMiniGraphs(pruned));
+        }
+      }
     } finally {
       _loading = false;
       notifyListeners();
@@ -464,7 +554,8 @@ class AppState extends ChangeNotifier {
     return id;
   }
 
-  Future<void> updateCurriculum(int id, {
+  Future<void> updateCurriculum(
+    int id, {
     String? code,
     String? name,
     String? major,
@@ -661,10 +752,7 @@ class AppState extends ChangeNotifier {
     required int subjectId,
     required int prerequisiteId,
   }) async {
-    await _db.removeEdge(
-      subjectId: subjectId,
-      prerequisiteId: prerequisiteId,
-    );
+    await _db.removeEdge(subjectId: subjectId, prerequisiteId: prerequisiteId);
     await refresh();
   }
 
@@ -751,10 +839,7 @@ class AppState extends ChangeNotifier {
         'đúng file "StudentTranscript_<MSSV>.xls" từ FAP chưa.',
       );
     }
-    return _db.planTranscriptImport(
-      parsed.entries,
-      warnings: parsed.warnings,
-    );
+    return _db.planTranscriptImport(parsed.entries, warnings: parsed.warnings);
   }
 
   Future<TranscriptImportResult> applyTranscriptPlan(
@@ -958,7 +1043,9 @@ class AppState extends ChangeNotifier {
   CurriculumImportResult? get lastImportResult => _lastImportResult;
 
   /// Nạp đối tượng Curriculum vào CSDL SQLite và cập nhật toàn bộ đồ thị
-  Future<CurriculumImportResult> importCurriculumToDb(Curriculum curriculum) async {
+  Future<CurriculumImportResult> importCurriculumToDb(
+    Curriculum curriculum,
+  ) async {
     final res = await _db.importCurriculum(curriculum);
     _lastImportResult = res;
     await refresh();
