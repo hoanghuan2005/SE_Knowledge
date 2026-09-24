@@ -16,6 +16,7 @@ import 'notes/obsidian_note_editor_view.dart';
 import 'settings/settings_page.dart';
 import 'subjects/subject_form_dialog.dart';
 import 'vault/vault_page.dart';
+import 'widgets/floating_mini_graph.dart';
 import 'widgets/mini_graph_panel.dart';
 import 'widgets/subject_detail_panel.dart';
 import 'widgets/tree_context_menu.dart';
@@ -136,7 +137,7 @@ class _AppShellState extends State<AppShell> {
               autofocus: true,
               child: Scaffold(
                 backgroundColor: AppColors.shellWorkspace,
-                body: Row(
+                body: _withFloatingMiniGraph(Row(
                   children: [
                     // 1. Thanh Ribbon mép ngoài cùng (Obsidian Activity Bar)
                     _ObsidianRibbon(
@@ -309,12 +310,44 @@ class _AppShellState extends State<AppShell> {
                       ),
                     ),
                   ],
-                ),
+                )),
               ),
             ),
           ),
         );
       },
+    );
+  }
+
+  /// Chọn một môn từ đồ thị thu nhỏ: đánh dấu môn đó rồi mở Graph view.
+  void _selectSubjectFromMiniGraph(Subject subject) {
+    AppState.instance.select(subject.id);
+    AppState.instance.setActiveNote(null);
+    _switchTab(0);
+  }
+
+  /// Phủ cửa sổ đồ thị thu nhỏ nổi lên trên toàn bộ giao diện.
+  ///
+  /// Đặt ở đây — ngoài `IndexedStack` của các trang và ngoài thanh bên — thì
+  /// chuyển trang hay thu thanh bên, cửa sổ vẫn nằm nguyên chỗ cũ.
+  ///
+  /// Luôn bọc `Stack` kể cả khi không nổi: đổi hình dạng cây giữa hai trạng
+  /// thái thì Flutter coi cả vùng làm việc là widget mới, State của mọi trang
+  /// (vị trí cuộn, đồ thị đang mô phỏng, ô chat) bị dựng lại từ đầu mỗi lần
+  /// bấm tách/thu cửa sổ.
+  Widget _withFloatingMiniGraph(Widget content) {
+    return LayoutBuilder(
+      builder: (context, constraints) => Stack(
+        children: [
+          Positioned.fill(child: content),
+          if (AppState.instance.miniGraphFloating)
+            FloatingMiniGraphWindow(
+              area: constraints.biggest,
+              onSelectSubject: _selectSubjectFromMiniGraph,
+              onOpenGraphView: () => _switchTab(0),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -1614,7 +1647,10 @@ class _FilesSidebarContent extends StatelessWidget {
                   // tab 3 chưa có trên màn hình, icon này là đích duy nhất.
                   DragTarget<MiniGraphDragData>(
                     onAcceptWithDetails: (details) {
-                      AppState.instance.pinMiniGraph(
+                      // Cùng luật với thả vào cửa sổ: khung đã ghim thì chỉ
+                      // chuyển trang, đủ trang thì báo.
+                      MiniGraphPanel.pinWithFeedback(
+                        context,
                         details.data.curriculumCode,
                       );
                       onTabChanged(3);
@@ -1643,10 +1679,16 @@ class _FilesSidebarContent extends StatelessWidget {
               // Tab 3: Đồ thị thu nhỏ — danh sách các khung đã ghim, đồng thời
               // là vùng nhận khi kéo tab "Graph view" từ thanh trên xuống.
               Expanded(
-                child: MiniGraphPanel(
-                  onSelectSubject: onSelectSubject,
-                  onOpenGraphView: () => onNavigateToTab(0),
-                ),
+                // Đang nổi thì thanh bên chỉ để lại chỗ trống có nút thu về:
+                // hai bản cùng dựng một lúc là hai mô phỏng lực chạy song song
+                // cho cùng một đồ thị.
+                child: state.miniGraphFloating
+                    ? const _MiniGraphFloatingPlaceholder()
+                    : MiniGraphPanel(
+                        onSelectSubject: onSelectSubject,
+                        onOpenGraphView: () => onNavigateToTab(0),
+                        onPopOut: () => state.setMiniGraphFloating(true),
+                      ),
               )
             else if (activeTabIndex == 2)
               // Tab 2: Dấu trang (Bookmarks / Ghi chú đang mở)
@@ -2346,6 +2388,50 @@ class _FileItemTileState extends State<_FileItemTile> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Tab "Đồ thị thu nhỏ" của thanh bên lúc cửa sổ đang nổi trên màn hình.
+class _MiniGraphFloatingPlaceholder extends StatelessWidget {
+  const _MiniGraphFloatingPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.picture_in_picture_alt_outlined,
+              size: 28,
+              color: AppColors.obsidianTextMuted,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Đồ thị thu nhỏ đang nổi trên màn hình.\n'
+              'Kéo thanh tiêu đề của nó để di chuyển.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.4,
+                color: AppColors.obsidianTextMuted,
+              ),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.view_sidebar_outlined, size: 14),
+              label: const Text(
+                'Thu về thanh bên',
+                style: TextStyle(fontSize: 11),
+              ),
+              onPressed: () => AppState.instance.setMiniGraphFloating(false),
+            ),
+          ],
         ),
       ),
     );

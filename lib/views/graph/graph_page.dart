@@ -9,6 +9,7 @@ import '../../models/transcript_entry.dart';
 import '../../models/curriculum.dart';
 import '../../models/graph_settings.dart';
 import '../../models/knowledge.dart';
+import '../../models/mini_graph_pin.dart';
 import '../../services/graph_layout_cache.dart';
 import '../../services/chat_session_service.dart';
 import '../../state/app_state.dart';
@@ -19,6 +20,7 @@ import '../curriculum/fap_inbox_import.dart';
 import '../curriculum/semester_board_view.dart';
 import '../knowledge/knowledge_map_view.dart';
 import '../subjects/subject_form_dialog.dart';
+import '../widgets/mini_graph_panel.dart';
 import '../widgets/subject_detail_panel.dart';
 import 'graph_settings_panel.dart';
 
@@ -87,12 +89,20 @@ class _GraphPageState extends State<GraphPage> {
   Future<void> _pinCurrentToSidebar(AppState state) async {
     final code = state.activeCurriculumCode;
     final label = code ?? 'Toàn bộ môn';
-    final added = await state.pinMiniGraph(code);
+    // Đi chung đường với thao tác kéo thả để cùng một luật trang: trùng thì
+    // chỉ chuyển trang, đủ trang thì `pinWithFeedback` tự báo.
+    final result = await MiniGraphPanel.pinWithFeedback(context, code);
     if (!mounted) return;
-    if (added) {
-      Ui.success(context, 'Đã ghim "$label" vào đồ thị thu nhỏ ở thanh bên.');
-    } else {
-      Ui.toast(context, '"$label" đã có sẵn trong đồ thị thu nhỏ.');
+    switch (result) {
+      case MiniGraphPinResult.added:
+        Ui.success(
+          context,
+          'Đã ghim "$label" thành một trang của đồ thị thu nhỏ ở thanh bên.',
+        );
+      case MiniGraphPinResult.switched:
+        Ui.toast(context, 'Đồ thị thu nhỏ đã chuyển tới trang "$label".');
+      case MiniGraphPinResult.full:
+        break;
     }
   }
 
@@ -429,6 +439,9 @@ class _GraphPageState extends State<GraphPage> {
             },
             onToggleRelated: () => setState(() => _showRelated = !_showRelated),
             onPinMiniGraph: () => _pinCurrentToSidebar(state),
+            isMiniGraphPinned: state.isMiniGraphPinned(
+              state.activeCurriculumCode,
+            ),
             onResetZoom: _resetZoom,
             onRefresh: state.refresh,
           ),
@@ -1970,6 +1983,10 @@ class _GraphFloatingControls extends StatelessWidget {
   /// Ghim khung đang xem thành ô thu nhỏ trên thanh bên — đường không cần kéo
   /// thả, cho cả chuột bi lẫn người dùng bàn phím.
   final VoidCallback onPinMiniGraph;
+
+  /// Khung đang xem đã là một trang của cửa sổ thu nhỏ — đổi nhãn mục menu
+  /// để người dùng biết bấm vào chỉ chuyển trang chứ không thêm trang mới.
+  final bool isMiniGraphPinned;
   final VoidCallback onResetZoom;
   final VoidCallback onRefresh;
 
@@ -1981,6 +1998,7 @@ class _GraphFloatingControls extends StatelessWidget {
     required this.onToggleKnowledge,
     required this.onToggleRelated,
     required this.onPinMiniGraph,
+    required this.isMiniGraphPinned,
     required this.onResetZoom,
     required this.onRefresh,
   });
@@ -2067,14 +2085,18 @@ class _GraphFloatingControls extends StatelessWidget {
                 child: Row(
                   children: [
                     Icon(
-                      Icons.push_pin_outlined,
+                      isMiniGraphPinned
+                          ? Icons.push_pin
+                          : Icons.push_pin_outlined,
                       size: 16,
                       color: AppColors.textSecondary,
                     ),
                     const SizedBox(width: 8),
-                    const Text(
-                      'Ghim vào đồ thị thu nhỏ',
-                      style: TextStyle(fontSize: 12.5),
+                    Text(
+                      isMiniGraphPinned
+                          ? 'Đã ghim · chuyển tới trang này'
+                          : 'Ghim vào đồ thị thu nhỏ',
+                      style: const TextStyle(fontSize: 12.5),
                     ),
                   ],
                 ),

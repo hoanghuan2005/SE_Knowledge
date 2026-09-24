@@ -8,6 +8,7 @@ Mốc so sánh: từ commit `9a4aa22` (add note) tới `b56c90e`.
 - [Phần A — Đã commit: AI Chat + Graph RAG](#phần-a--đã-commit-ai-chat--graph-rag)
 - [Phần B — Đang làm dở: Backend Obsidian + Ràng buộc xoá](#phần-b--đang-làm-dở-backend-obsidian--ràng-buộc-xoá)
 - [Phần C — Góp ý của thầy: Khung chương trình, Bảng học kỳ, Mục tiêu GPA, Mạng tri thức](#phần-c--góp-ý-của-thầy-khung-chương-trình-bảng-học-kỳ-mục-tiêu-gpa-mạng-tri-thức)
+- [Phần D — Đồ thị thu nhỏ: một cửa sổ, nhiều trang](#phần-d--đồ-thị-thu-nhỏ-một-cửa-sổ-nhiều-trang)
 - [Trạng thái kiểm thử](#trạng-thái-kiểm-thử)
 - [Việc còn lại](#việc-còn-lại)
 
@@ -374,6 +375,55 @@ Chạy trong isolate phụ; 46 syllabus thật trong `fap_inbox` mất khoảng 
 | `test/goal_planner_test.dart` | TB cần đạt, xếp loại mục tiêu, môn trong khung chưa có điểm, xếp hạng học cải thiện, mô phỏng, số môn tối thiểu |
 | `test/kanban_board_builder_test.dart` | Front matter, cột theo kỳ, thẻ tích/tag, khối cài đặt, link cho mã có ký tự cấm |
 | `test/fap_markdown_parser_labels_test.dart` | Hai lỗi đọc nhãn ở trên |
+
+---
+
+## Phần D — Đồ thị thu nhỏ: một cửa sổ, nhiều trang
+
+Thanh bên chỉ còn **một** cửa sổ đồ thị thu nhỏ. Mỗi khung đã ghim là một trang
+trong cửa sổ đó, lật qua lại như tab. Tối đa `MiniGraphPins.maxPages` = 8 trang.
+Trước đây mỗi khung ghim là một ô riêng cao 220px, xếp chồng lên nhau.
+
+- **Mô hình** (`lib/models/mini_graph_pin.dart`): `MiniGraphPins` thêm
+  `activeIndex`, `activeCode`, `select`, `next`/`previous` (đi vòng) và
+  `selectCode`. Các phép đổi danh sách giữ đúng trang đang xem:
+  - `pin` một khung đã có thì chỉ chuyển sang trang đó.
+  - `unpin` trang đang xem thì lùi về trang bên trái.
+  - `reorder` và `pruneTo` giữ trang đang xem theo mã khung, không theo chỉ số.
+
+  `AppState.pinMiniGraph` trả về `MiniGraphPinResult` (`added`/`switched`/`full`).
+- **Lưu trữ** (`lib/services/settings_service.dart`): trang đang xem nằm ở khoá
+  riêng `pinned_mini_graphs_active`. Dữ liệu cũ chưa có khoá này thì mở trang đầu.
+- **Giao diện** (`lib/views/widgets/mini_graph_panel.dart`):
+  - Header gồm: ◀ · tên khung (bấm để mở danh sách trang) · `2/4` · ▶ · mở lớn · ✕.
+  - Dải chấm trang ở chân cửa sổ: bấm để chuyển trang, kéo một chấm thả lên chấm
+    khác để đổi thứ tự.
+  - Lật trang bằng Ctrl+←/→ khi chuột nằm trên cửa sổ, hoặc vuốt ngang touchpad.
+    Cuộn dọc vẫn dùng để zoom.
+  - Chuyển trang mờ dần 200ms. Chỉ trang đang xem chạy mô phỏng lực, trang đang
+    rời đi bị tắt ticker ngay.
+- **Cửa sổ nổi** (`lib/views/widgets/floating_mini_graph.dart`):
+  - Nút tách trên header của cửa sổ thu nhỏ biến nó thành một lớp nổi đè lên
+    giao diện. Lớp này nằm ở tầng `AppShell`, nên vẫn còn khi chuyển trang hay
+    mở ghi chú.
+  - Kéo thanh tiêu đề để di chuyển, kéo góc dưới phải để đổi cỡ (tối thiểu
+    220×200). Cửa sổ bị kẹp trong vùng ứng dụng. Có nút thu gọn chỉ còn thanh
+    tiêu đề (đồ thị bị gỡ khỏi cây, dừng ticker) và nút "Thu về thanh bên".
+  - Trong lúc nổi, tab thanh bên chỉ hiện chỗ giữ chỗ, để không chạy hai mô
+    phỏng cùng lúc.
+  - Chế độ nổi và vị trí/kích thước được lưu ở hai khoá `mini_graph_floating` và
+    `mini_graph_float_rect`.
+- **Ghim**: thả vào cửa sổ, thả lên icon tab và mục menu ⋮ của Graph view đều đi
+  qua `MiniGraphPanel.pinWithFeedback`.
+  - Thả lại khung đã có thì chỉ chuyển trang, kèm hiệu ứng nháy viền.
+  - Đã đủ 8 trang thì hiện SnackBar "Đã đủ 8 trang, hãy gỡ bớt".
+  - Khung đang xem đã ghim thì mục menu đổi nhãn thành
+    "Đã ghim · chuyển tới trang này".
+- **Kiểm thử**: `test/mini_graph_test.dart` gồm test mô hình và widget test:
+  - Mô hình: ghim trùng, quá 8 trang, gỡ trang giữa/đầu/cuối/duy nhất,
+    reorder/prune, lật vòng, encode/decode có và không có `activeIndex`.
+  - Widget: thả 2 khung thì chỉ có 1 cửa sổ và hiện 2/2; bấm ◀ về 1/2; thả lại
+    khung cũ không tăng số trang; Ctrl+←/→; chấm trang.
 
 ---
 

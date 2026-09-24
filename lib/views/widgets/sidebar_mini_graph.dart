@@ -13,13 +13,13 @@ import '../../utils/app_colors.dart';
 /// Mini Graph).
 ///
 /// Mỗi ô gắn với **một khung chương trình cụ thể** qua [curriculumCode] chứ
-/// không đọc `currentGraph`, nhờ vậy thanh bên ghim được nhiều khung cùng lúc
-/// và đổi khung trên Graph view lớn không kéo theo các ô đã ghim.
+/// không đọc `currentGraph`, nhờ vậy cửa sổ thu nhỏ có nhiều trang (mỗi trang
+/// một khung) và đổi khung trên Graph view lớn không kéo theo trang đang xem.
 ///
-/// Ticker mô phỏng lực chỉ sống cùng State này. Ô bị thu gọn hoặc cuộn ra
-/// ngoài màn hình được gỡ hẳn khỏi cây widget (xem `_PinnedMiniGraphCard` trong
-/// `app_shell.dart`), nên `dispose()` dừng luôn ticker — không cần cờ tạm dừng
-/// riêng, và cũng không có ô khuất nào còn ngốn CPU.
+/// Ticker mô phỏng lực chỉ sống cùng State này. `MiniGraphPanel` chỉ dựng ô
+/// của trang đang xem, trang khác bị gỡ hẳn khỏi cây widget, nên `dispose()`
+/// dừng luôn ticker — không cần cờ tạm dừng riêng, và cũng không có trang
+/// khuất nào còn ngốn CPU.
 class SidebarMiniGraph extends StatefulWidget {
   /// Khung chương trình mà ô này vẽ. `null` = toàn bộ môn trong CSDL.
   final String? curriculumCode;
@@ -38,6 +38,11 @@ class SidebarMiniGraph extends StatefulWidget {
   /// Obsidian) thay vì thêm một nút nữa vào hàng nút vốn đã chật.
   final VoidCallback? onToggleCollapse;
 
+  /// `false` khi nơi chứa tự vẽ header riêng — cửa sổ nhiều trang của
+  /// `MiniGraphPanel` giữ header đứng yên trong lúc lật trang, chỉ phần đồ
+  /// thị bên dưới chuyển cảnh. Khi đó số môn và nút căn giữa nổi ở góc ô.
+  final bool showHeader;
+
   const SidebarMiniGraph({
     super.key,
     this.curriculumCode,
@@ -46,6 +51,7 @@ class SidebarMiniGraph extends StatefulWidget {
     this.onOpenLarge,
     this.onClose,
     this.onToggleCollapse,
+    this.showHeader = true,
   });
 
   @override
@@ -392,7 +398,7 @@ class _SidebarMiniGraphState extends State<SidebarMiniGraph>
 
         return Column(
           children: [
-            _header(),
+            if (widget.showHeader) _header(),
 
             // Canvas chính tương tác Mini Graph
             Expanded(
@@ -467,6 +473,13 @@ class _SidebarMiniGraphState extends State<SidebarMiniGraph>
                         ),
                       ),
 
+                      if (!widget.showHeader)
+                        Positioned(
+                          top: 4,
+                          right: 4,
+                          child: _cornerInfo(),
+                        ),
+
                       // Floating Tooltip khi rê chuột vào node
                       if (_hoveredNode != null && _tooltipAt != null)
                         Positioned(
@@ -536,6 +549,38 @@ class _SidebarMiniGraphState extends State<SidebarMiniGraph>
           ],
         );
       },
+    );
+  }
+
+  /// Số môn · số liên kết và nút căn giữa, nổi ở góc khi ô không có header.
+  Widget _cornerInfo() {
+    return Container(
+      padding: const EdgeInsets.only(left: 6),
+      decoration: BoxDecoration(
+        color: AppColors.obsidianRibbon.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Tooltip(
+            message: 'Số môn · số liên kết trong khung',
+            child: Text(
+              '${_nodes.length} · ${_edges.length}',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: AppColors.obsidianTextMuted,
+              ),
+            ),
+          ),
+          _MiniIconBtn(
+            icon: Icons.center_focus_strong_outlined,
+            tooltip: 'Căn giữa đồ thị',
+            onTap: _centerView,
+          ),
+        ],
+      ),
     );
   }
 

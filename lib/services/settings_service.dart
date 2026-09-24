@@ -250,19 +250,59 @@ class SettingsService {
 
   static const String _keyPinnedMiniGraphs = 'pinned_mini_graphs';
 
-  /// Các ô đồ thị thu nhỏ người dùng đã ghim, giữ nguyên thứ tự.
+  /// Trang đang xem của cửa sổ đồ thị thu nhỏ. Khoá riêng thay vì nhét vào
+  /// danh sách trên để dữ liệu của bản cũ (chỉ có danh sách) vẫn đọc được.
+  static const String _keyPinnedMiniGraphsActive = 'pinned_mini_graphs_active';
+
+  /// Các trang đồ thị thu nhỏ người dùng đã ghim, giữ nguyên thứ tự, kèm
+  /// trang đang xem.
   ///
-  /// Ô "toàn bộ môn" được lưu bằng [MiniGraphPins.allSentinel] vì
+  /// Trang "toàn bộ môn" được lưu bằng [MiniGraphPins.allSentinel] vì
   /// `setStringList` không nhận phần tử null.
-  Future<MiniGraphPins> getPinnedMiniGraphs() async =>
-      MiniGraphPins.decode((await _p).getStringList(_keyPinnedMiniGraphs));
+  Future<MiniGraphPins> getPinnedMiniGraphs() async {
+    final prefs = await _p;
+    return MiniGraphPins.decode(
+      prefs.getStringList(_keyPinnedMiniGraphs),
+      prefs.getInt(_keyPinnedMiniGraphsActive),
+    );
+  }
 
   Future<void> setPinnedMiniGraphs(MiniGraphPins pins) async {
     final prefs = await _p;
     if (pins.isEmpty) {
       await prefs.remove(_keyPinnedMiniGraphs);
+      await prefs.remove(_keyPinnedMiniGraphsActive);
     } else {
       await prefs.setStringList(_keyPinnedMiniGraphs, pins.encode());
+      await prefs.setInt(_keyPinnedMiniGraphsActive, pins.activeIndex);
     }
   }
+
+  // --- Cửa sổ đồ thị thu nhỏ nổi trên màn hình ---
+
+  static const String _keyMiniGraphFloating = 'mini_graph_floating';
+  static const String _keyMiniGraphFloatRect = 'mini_graph_float_rect';
+
+  /// Đồ thị thu nhỏ đang nổi trên màn hình (`true`) hay nằm trong thanh bên.
+  Future<bool> getMiniGraphFloating() async =>
+      (await _p).getBool(_keyMiniGraphFloating) ?? false;
+
+  Future<void> setMiniGraphFloating(bool value) async =>
+      (await _p).setBool(_keyMiniGraphFloating, value);
+
+  /// Vị trí và kích thước cửa sổ nổi `[trái, trên, rộng, cao]`, tính theo
+  /// toạ độ vùng ứng dụng. `null` khi chưa từng kéo — cửa sổ tự đặt ở góc.
+  Future<List<double>?> getMiniGraphFloatRect() async {
+    final raw = (await _p).getStringList(_keyMiniGraphFloatRect);
+    if (raw == null || raw.length != 4) return null;
+    final values = raw.map(double.tryParse).toList();
+    if (values.any((v) => v == null || !v.isFinite)) return null;
+    return values.cast<double>();
+  }
+
+  Future<void> setMiniGraphFloatRect(List<double> ltwh) async =>
+      (await _p).setStringList(
+        _keyMiniGraphFloatRect,
+        [for (final v in ltwh) v.toStringAsFixed(1)],
+      );
 }

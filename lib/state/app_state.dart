@@ -427,18 +427,29 @@ class AppState extends ChangeNotifier {
 
   MiniGraphPins _pinnedMiniGraphs = MiniGraphPins.empty;
 
-  /// Các khung đang được ghim thành ô thu nhỏ; `null` = ô toàn bộ môn.
-  List<String?> get pinnedMiniGraphs =>
-      List.unmodifiable(_pinnedMiniGraphs.codes);
+  /// Các khung đang được ghim thành trang của cửa sổ thu nhỏ; `null` = trang
+  /// toàn bộ môn.
+  List<String?> get pinnedMiniGraphs => _pinnedMiniGraphs.codes;
+
+  /// Chỉ số trang đang xem trong cửa sổ thu nhỏ.
+  int get activeMiniGraphIndex => _pinnedMiniGraphs.activeIndex;
+
+  /// Mã khung của trang đang xem. Chưa ghim trang nào thì `null` — xét
+  /// [pinnedMiniGraphs] rỗng trước nếu cần tách với trang "toàn bộ môn".
+  String? get activeMiniGraphCode => _pinnedMiniGraphs.activeCode;
 
   bool isMiniGraphPinned(String? code) => _pinnedMiniGraphs.contains(code);
 
-  /// Ghim một khung. Trả về `false` khi khung đó đã được ghim từ trước.
-  Future<bool> pinMiniGraph(String? curriculumCode) async {
-    final next = _pinnedMiniGraphs.pin(curriculumCode);
-    if (identical(next, _pinnedMiniGraphs)) return false;
-    await _applyPins(next);
-    return true;
+  /// Ghim một khung thành trang của cửa sổ thu nhỏ. Khung đã có thì chỉ
+  /// chuyển tới trang đó; đủ [MiniGraphPins.maxPages] thì không làm gì.
+  Future<MiniGraphPinResult> pinMiniGraph(String? curriculumCode) async {
+    if (_pinnedMiniGraphs.contains(curriculumCode)) {
+      await _applyPins(_pinnedMiniGraphs.selectCode(curriculumCode));
+      return MiniGraphPinResult.switched;
+    }
+    if (_pinnedMiniGraphs.isFull) return MiniGraphPinResult.full;
+    await _applyPins(_pinnedMiniGraphs.pin(curriculumCode));
+    return MiniGraphPinResult.added;
   }
 
   Future<void> unpinMiniGraph(String? curriculumCode) =>
@@ -447,9 +458,52 @@ class AppState extends ChangeNotifier {
   Future<void> reorderMiniGraphs(int oldIndex, int newIndex) =>
       _applyPins(_pinnedMiniGraphs.reorder(oldIndex, newIndex));
 
+  Future<void> selectMiniGraphPage(int index) =>
+      _applyPins(_pinnedMiniGraphs.select(index));
+
+  Future<void> nextMiniGraphPage() => _applyPins(_pinnedMiniGraphs.next());
+
+  Future<void> previousMiniGraphPage() =>
+      _applyPins(_pinnedMiniGraphs.previous());
+
+  bool _miniGraphFloating = false;
+  Rect? _miniGraphFloatRect;
+
+  /// Đồ thị thu nhỏ đang là cửa sổ nổi đè lên giao diện — đi theo người dùng
+  /// qua mọi trang — thay vì nằm trong tab của thanh bên.
+  bool get miniGraphFloating => _miniGraphFloating;
+
+  /// Vị trí/kích thước cửa sổ nổi lần cuối; `null` thì cửa sổ tự đặt ở góc.
+  Rect? get miniGraphFloatRect => _miniGraphFloatRect;
+
+  Future<void> setMiniGraphFloating(bool value) async {
+    if (value == _miniGraphFloating) return;
+    _miniGraphFloating = value;
+    notifyListeners();
+    await _settings.setMiniGraphFloating(value);
+  }
+
+  /// Chỉ ghi khi người dùng thả chuột (kéo xong / đổi cỡ xong). Không báo
+  /// listener: cửa sổ tự giữ vị trí trong lúc kéo, dựng lại cả shell theo từng
+  /// pixel chuột là thừa.
+  Future<void> saveMiniGraphFloatRect(Rect rect) async {
+    _miniGraphFloatRect = rect;
+    await _settings.setMiniGraphFloatRect([
+      rect.left,
+      rect.top,
+      rect.width,
+      rect.height,
+    ]);
+  }
+
   /// Báo thay đổi trước rồi mới ghi xuống đĩa: giao diện phải nhảy ngay theo
   /// thao tác kéo thả, không đợi SharedPreferences.
+  ///
+  /// Phép nào không đổi gì (lật trang khi chỉ có một trang, chọn lại đúng
+  /// trang đang xem) trả về chính đối tượng cũ — bỏ qua cả lượt dựng lại lẫn
+  /// lượt ghi đĩa.
   Future<void> _applyPins(MiniGraphPins next) async {
+    if (identical(next, _pinnedMiniGraphs)) return;
     _pinnedMiniGraphs = next;
     notifyListeners();
     await _settings.setPinnedMiniGraphs(next);
@@ -468,6 +522,11 @@ class AppState extends ChangeNotifier {
     // Nạp trước [refresh] để chính lần refresh đó dọn luôn những ô trỏ tới
     // khung đã bị xoá từ phiên trước.
     _pinnedMiniGraphs = await _settings.getPinnedMiniGraphs();
+    _miniGraphFloating = await _settings.getMiniGraphFloating();
+    final rect = await _settings.getMiniGraphFloatRect();
+    _miniGraphFloatRect = rect == null
+        ? null
+        : Rect.fromLTWH(rect[0], rect[1], rect[2], rect[3]);
 
     // Dọn dẹp các node PLO rác cũ nếu có trong CSDL
     await _db.cleanInvalidPloSubjects();
