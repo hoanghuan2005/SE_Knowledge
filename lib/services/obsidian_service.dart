@@ -578,6 +578,7 @@ class ObsidianService {
   static const String prereqHeadingEn = '## Prerequisites';
   static const String unlockHeadingVi = '## Mở ra các môn';
   static const String noteHeadingVi = '## Ghi chú';
+  static const String syllabusHeadingVi = '## Đề cương môn học';
 
   static const String indexFileName = '_INDEX.md';
   static const String indexCode = 'INDEX';
@@ -826,6 +827,7 @@ class ObsidianService {
     List<Subject> unlocks = const [],
     String? extraBody,
     List<String> curriculumCodes = const [],
+    FapSyllabusImport? syllabus,
   }) {
     final sb = StringBuffer();
 
@@ -834,7 +836,11 @@ class ObsidianService {
     sb.writeln('# ${subject.code} — ${subject.name}');
     sb.writeln();
 
-    if (subject.description.trim().isNotEmpty) {
+    // Mô tả của môn nạp từ Syllabus chính là ô Description — đã nằm trong mục
+    // "Đề cương môn học" bên dưới, in thêm ở đây chỉ lặp lại cả trang chữ.
+    final hasSyllabusDescription =
+        syllabus != null && syllabus.description.trim().isNotEmpty;
+    if (!hasSyllabusDescription && subject.description.trim().isNotEmpty) {
       sb.writeln(subject.description.trim());
       sb.writeln();
     }
@@ -846,6 +852,11 @@ class ObsidianService {
     sb.writeln(unlockHeadingVi);
     sb.writeln(_buildLinkList(unlocks, '_Chưa có môn nào phụ thuộc_'));
     sb.writeln();
+
+    if (syllabus != null) {
+      sb.writeln(buildSyllabusSection(syllabus));
+      sb.writeln();
+    }
 
     sb.writeln(noteHeadingVi);
     sb.writeln((extraBody ?? '').trim());
@@ -866,6 +877,7 @@ class ObsidianService {
     List<Subject> prerequisites = const [],
     List<Subject> unlocks = const [],
     List<String> curriculumCodes = const [],
+    FapSyllabusImport? syllabus,
   }) {
     final (front, body) = MarkdownParser.splitFrontMatter(existingContent);
 
@@ -873,11 +885,23 @@ class ObsidianService {
     final out = <String>[];
     var seenPrereq = false;
     var seenUnlock = false;
+    var seenSyllabus = false;
 
     var i = 0;
     while (i < lines.length) {
       final line = lines[i];
       final heading = _headingTitleOf(line);
+
+      // Mục đề cương do app sinh ra, kèm các heading `###` con của nó: thay
+      // trọn cả khối bằng bản mới. CSDL chưa có đề cương thì giữ nguyên khối
+      // cũ — thiếu dữ liệu không phải lý do để xoá chữ trên đĩa.
+      if (syllabus != null && line.trim() == syllabusHeadingVi) {
+        seenSyllabus = true;
+        out.add(buildSyllabusSection(syllabus));
+        out.add('');
+        i = _skipSectionTree(lines, i + 1, 2);
+        continue;
+      }
 
       if (heading != null && MarkdownParser.isPrerequisiteHeading(heading)) {
         seenPrereq = true;
@@ -915,6 +939,17 @@ class ObsidianService {
         ..add(unlockHeadingVi)
         ..add(_buildLinkList(unlocks, '_Chưa có môn nào phụ thuộc_'))
         ..add('');
+    }
+    // File xuất từ bản cũ chưa có mục đề cương: chèn ngay trước "Ghi chú" để
+    // phần người dùng tự viết vẫn nằm cuối file.
+    if (syllabus != null && !seenSyllabus) {
+      final notesAt = out.indexWhere((l) => l.trim() == noteHeadingVi);
+      final block = ['', buildSyllabusSection(syllabus), ''];
+      if (notesAt == -1) {
+        out.addAll(block);
+      } else {
+        out.insertAll(notesAt, block);
+      }
     }
 
     final mergedBody = out.join('\n').replaceAll(RegExp(r'\n{3,}'), '\n\n');
@@ -1013,6 +1048,203 @@ class ObsidianService {
     return i;
   }
 
+  /// Như [_skipSectionBody] nhưng đi xuyên qua heading con: chỉ dừng ở
+  /// heading có cấp ≤ [level].
+  int _skipSectionTree(List<String> lines, int from, int level) {
+    var i = from;
+    while (i < lines.length) {
+      final m = RegExp(r'^(#{1,6})\s+').firstMatch(lines[i]);
+      if (m != null && m.group(1)!.length <= level) break;
+      i++;
+    }
+    return i;
+  }
+
+  // ------------------------------------------------------------------
+  // MỤC "ĐỀ CƯƠNG MÔN HỌC" — dựng từ bảng `syllabi` và các bảng con
+  // ------------------------------------------------------------------
+
+  /// Toàn bộ nội dung trang Syllabus Details đã nạp, viết lại thành Markdown
+  /// đọc được trong Obsidian.
+  ///
+  /// Cố ý không viết dòng `Source: ...` hay heading `# Syllabus Details`: hai
+  /// dấu hiệu đó khiến bộ quét fap_inbox nhận nhầm ghi chú này là trang FAP
+  /// thô và nạp lại nó bằng bộ đọc FAP.
+  String buildSyllabusSection(FapSyllabusImport syl) {
+    final sb = StringBuffer()..writeln(syllabusHeadingVi);
+
+    final source = syl.sourceUrl.trim();
+    if (source.isNotEmpty) {
+      final label = syl.fapSyllabusId != null
+          ? 'Syllabus ${syl.fapSyllabusId} trên FLM'
+          : 'Xem trên FLM';
+      sb
+        ..writeln()
+        ..writeln('> Nguồn: [$label]($source)');
+    }
+
+    String yesNo(bool v) => v ? 'Có' : 'Không';
+    String num(double? v) => v == null
+        ? ''
+        : (v == v.roundToDouble() ? v.toInt().toString() : v.toString());
+
+    final info = <(String, String)>[
+      ('Mã đề cương', syl.fapSyllabusId?.toString() ?? ''),
+      ('Tên tiếng Anh', syl.nameEn),
+      ('Tên tiếng Việt', syl.nameNative),
+      ('Bậc đào tạo', syl.degreeLevel),
+      ('Phương pháp dạy học', syl.learningTeachingMethod),
+      ('Phân bổ thời gian', syl.timeAllocation),
+      ('Môn tiên quyết (FAP)', syl.rawPrerequisiteText),
+      ('Công cụ', syl.tools),
+      ('Thang điểm', syl.scoringScale?.toString() ?? ''),
+      ('Điểm TB tối thiểu để qua', num(syl.minAvgMarkToPass)),
+      ('Quyết định', syl.decisionNo),
+      ('Ngày duyệt', syl.approvedDate),
+      ('Đã duyệt', yesNo(syl.isApproved)),
+      ('Tính điểm', yesNo(syl.isScored)),
+      ('Đang áp dụng', yesNo(syl.isActive)),
+    ].where((e) => e.$2.trim().isNotEmpty).toList();
+
+    sb
+      ..writeln()
+      ..writeln('### Thông tin chung')
+      ..writeln()
+      ..writeln(_mdTable(['Mục', 'Giá trị'], [
+        for (final e in info) [e.$1, e.$2],
+      ]));
+
+    void textBlock(String title, String text) {
+      if (text.trim().isEmpty) return;
+      sb
+        ..writeln()
+        ..writeln('### $title')
+        ..writeln()
+        ..writeln(_mdText(text));
+    }
+
+    textBlock('Mô tả môn học', syl.description);
+    textBlock('Nhiệm vụ của sinh viên', syl.studentTasks);
+    textBlock('Cách tính điểm', syl.note);
+
+    if (syl.assessments.isNotEmpty) {
+      sb
+        ..writeln()
+        ..writeln('### Đánh giá (${syl.assessments.length})')
+        ..writeln()
+        ..writeln(_mdTable(
+          [
+            '#', 'Hạng mục', 'Loại', 'Phần', 'Trọng số', 'Điều kiện',
+            'Thời lượng', 'CLO', 'Dạng câu hỏi', 'Số câu', 'Kiến thức/Kỹ năng',
+            'Hướng dẫn chấm', 'Ghi chú',
+          ],
+          [
+            for (final a in syl.assessments)
+              [
+                '${a.seqNo}', a.category, a.type, a.part?.toString() ?? '',
+                '${num(a.weightPercent)}%', a.completionCriteria, a.duration,
+                a.cloCodes.isNotEmpty ? a.cloCodes.join(', ') : a.rawClo,
+                a.questionType, a.noQuestion?.toString() ?? '',
+                a.knowledgeSkill, a.gradingGuide, a.note,
+              ],
+          ],
+        ));
+    }
+
+    if (syl.materials.isNotEmpty) {
+      sb
+        ..writeln()
+        ..writeln('### Tài liệu (${syl.materials.length})')
+        ..writeln()
+        ..writeln(_mdTable(
+          [
+            '#', 'Tài liệu', 'Tác giả', 'Nhà xuất bản', 'Năm', 'Lần xuất bản',
+            'ISBN', 'Chính', 'Bản cứng', 'Online', 'Ghi chú',
+          ],
+          [
+            for (final m in syl.materials)
+              [
+                '${m.seqNo}', m.description, m.author, m.publisher,
+                m.publishedDate, m.edition, m.isbn,
+                m.isMain ? '✔' : '', m.isHardCopy ? '✔' : '',
+                m.isOnline ? '✔' : '', m.note,
+              ],
+          ],
+        ));
+    }
+
+    if (syl.clos.isNotEmpty) {
+      sb
+        ..writeln()
+        ..writeln('### Chuẩn đầu ra (${syl.clos.length} CLO)')
+        ..writeln()
+        ..writeln(_mdTable(['CLO', 'Nội dung'], [
+          for (final c in syl.clos) [c.code, c.detail],
+        ]));
+    }
+
+    if (syl.sessions.isNotEmpty) {
+      sb
+        ..writeln()
+        ..writeln('### Lịch trình (${syl.sessions.length} buổi)')
+        ..writeln()
+        ..writeln(_mdTable(
+          [
+            'Buổi', 'Chủ đề', 'Hình thức', 'CLO', 'ITU', 'Tài liệu',
+            'Tải về', 'Nhiệm vụ', 'Link',
+          ],
+          [
+            for (final s in syl.sessions)
+              [
+                '${s.sessionNo}', s.topic, s.teachingType,
+                s.cloCodes.isNotEmpty ? s.cloCodes.join(', ') : s.rawLo,
+                s.itu, s.studentMaterials, s.downloadUrl, s.studentTasks,
+                s.urls,
+              ],
+          ],
+        ));
+    }
+
+    return sb.toString().trimRight();
+  }
+
+  /// Bảng GFM. Cột nào rỗng ở mọi hàng thì bỏ hẳn, để bảng tài liệu 11 cột
+  /// không thành một dải ô trống khi FAP chỉ điền 3 cột.
+  String _mdTable(List<String> header, List<List<String>> rows) {
+    final keep = [
+      for (var c = 0; c < header.length; c++)
+        if (c == 0 || rows.any((r) => c < r.length && r[c].trim().isNotEmpty))
+          c,
+    ];
+    String line(List<String> cells) =>
+        '| ${keep.map((c) => _mdCell(c < cells.length ? cells[c] : '')).join(' | ')} |';
+    return [
+      line(header),
+      '| ${keep.map((_) => '---').join(' | ')} |',
+      for (final r in rows) line(r),
+    ].join('\n');
+  }
+
+  /// Một ô bảng: `|` phải escape, xuống dòng thành `<br>` (Obsidian hiểu).
+  String _mdCell(String text) => text
+      .trim()
+      .replaceAll('\r', '')
+      .replaceAll('|', r'\|')
+      .split('\n')
+      .map((l) => l.trim())
+      .where((l) => l.isNotEmpty)
+      .join('<br>');
+
+  /// Đoạn văn nhiều dòng. Dòng mở đầu bằng `#` sẽ bị Obsidian đọc thành
+  /// heading và cắt ngang mục đề cương, nên escape dấu đó.
+  String _mdText(String text) => text
+      .replaceAll('\r', '')
+      .split('\n')
+      .map((l) => l.trim())
+      .where((l) => l.isNotEmpty)
+      .map((l) => l.startsWith('#') ? '\\$l' : l)
+      .join('\n');
+
   /// Ký tự Windows cấm trong tên file, cộng nhóm ký tự điều khiển.
   static final RegExp _forbiddenInFileName = RegExp(r'[<>:"/\\|?*\x00-\x1f]');
 
@@ -1071,6 +1303,10 @@ class ObsidianService {
         curriculumCodes ??
         (await _db.curriculumCodesBySubjectId())[subject.id!] ??
         const <String>[];
+    // Đề cương đã nạp từ trang Syllabus Details (mô tả, tài liệu, CLO, lịch
+    // trình, đánh giá). Thiếu bước này thì file ra Vault chỉ còn tên môn và
+    // hai danh sách liên kết, dù CSDL có đủ cả trang.
+    final syllabus = await _db.getSyllabusDetail(subjectId: subject.id);
 
     // Ưu tiên ghi đè đúng file cũ nếu môn này đã từng liên kết với một file.
     final target = _resolveTargetPath(
@@ -1088,12 +1324,14 @@ class ObsidianService {
             prerequisites: prereqs,
             unlocks: opens,
             curriculumCodes: currs,
+            syllabus: syllabus,
           )
         : buildMarkdown(
             subject: subject,
             prerequisites: prereqs,
             unlocks: opens,
             curriculumCodes: currs,
+            syllabus: syllabus,
           );
 
     await saveNote(target, content);

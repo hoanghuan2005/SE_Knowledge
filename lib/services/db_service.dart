@@ -79,7 +79,18 @@ class DbService {
   /// nguyên cho migration lo, vì ở đó im lặng tạo bù sẽ giấu mất lỗi thật.
   Future<void> _onOpen(Database db) async {
     await _createTranscriptTable(db);
+    await _ensureSyllabusNoteColumn(db);
     await _fixSemesterZero(db);
+  }
+
+  /// Cột `syllabi.note` (ô "Note:" — cơ cấu điểm, điều kiện qua môn) có sau
+  /// bảng. Thuần cộng thêm nên vá bù ở mỗi lần mở như bảng điểm, khỏi nâng
+  /// [dbVersion]. File chưa có bảng `syllabi` thì để migration v3 lo.
+  Future<void> _ensureSyllabusNoteColumn(Database db) async {
+    final cols = await db.rawQuery('PRAGMA table_info(syllabi)');
+    if (cols.isEmpty) return;
+    if (cols.any((c) => c['name'] == 'note')) return;
+    await db.execute('ALTER TABLE syllabi ADD COLUMN note TEXT');
   }
 
   /// Tự động khắc phục các môn Kỳ 0 bị gán nhầm sang Kỳ 1 trong CSDL cũ.
@@ -369,6 +380,7 @@ class DbService {
         approved_date            TEXT,
         raw_prerequisite_text    TEXT,
         source_url               TEXT,
+        note                     TEXT,
         synced_at                TEXT    NOT NULL,
         FOREIGN KEY (subject_id) REFERENCES subjects (id) ON DELETE CASCADE
       )
@@ -2452,6 +2464,7 @@ class DbService {
         'approved_date': data.approvedDate.isNotEmpty ? data.approvedDate : null,
         'raw_prerequisite_text': data.rawPrerequisiteText.isNotEmpty ? data.rawPrerequisiteText : null,
         'source_url': data.sourceUrl.isNotEmpty ? data.sourceUrl : null,
+        'note': data.note.isNotEmpty ? data.note : null,
         'synced_at': now,
       };
 
@@ -3033,6 +3046,7 @@ class DbService {
       approvedDate: (syl['approved_date'] as String?) ?? '',
       rawPrerequisiteText: (syl['raw_prerequisite_text'] as String?) ?? '',
       sourceUrl: (syl['source_url'] as String?) ?? '',
+      note: (syl['note'] as String?) ?? '',
       materials: materials,
       clos: clos,
       sessions: sessions,

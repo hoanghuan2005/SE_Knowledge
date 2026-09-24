@@ -205,6 +205,9 @@ class FapSyllabusImport {
   final String rawPrerequisiteText;
   final String sourceUrl;
 
+  /// Ô "Note:" của trang — FAP ghi cơ cấu điểm và điều kiện qua môn ở đây.
+  final String note;
+
   final List<FapMaterialRow> materials;
   final List<FapCloRow> clos;
   final List<FapSessionRow> sessions;
@@ -231,6 +234,7 @@ class FapSyllabusImport {
     required this.approvedDate,
     required this.rawPrerequisiteText,
     required this.sourceUrl,
+    this.note = '',
     required this.materials,
     required this.clos,
     required this.sessions,
@@ -367,7 +371,7 @@ class FapMarkdownParser {
     if (sourceUrl.contains('SyllabusDetails?sylID=') ||
         sourceUrl.contains('SyllabusDetails.aspx') ||
         lines.any((l) => l.startsWith('# Syllabus Details'))) {
-      final syllabus = _parseSyllabus(lines, sourceUrl);
+      final syllabus = _parseSyllabus(lines, sourceUrl, _gfmTables(markdown));
       return FapParseResult(
         kind: FapPageKind.syllabus,
         message: 'Trang Đề cương môn học (Syllabus Details): ${syllabus.subjectCode}',
@@ -518,8 +522,9 @@ class FapMarkdownParser {
 
   static FapSyllabusImport _parseSyllabus(
     List<String> lines,
-    String sourceUrl,
-  ) {
+    String sourceUrl, [
+    List<_GfmTable> tables = const [],
+  ]) {
     final sylIdMatch = RegExp(r'[?&]sylID=(\d+)', caseSensitive: false).firstMatch(sourceUrl);
     final fapSyllabusId = int.tryParse(sylIdMatch?.group(1) ?? '') ??
         int.tryParse(_valueAfterLabel(lines, 'Syllabus ID:'));
@@ -548,17 +553,24 @@ class FapMarkdownParser {
     final approvedDate = unescapeTurndown(_valueAfterLabel(lines, 'ApprovedDate:'));
     final decisionDate = decisionDateMatch?.group(1) ?? approvedDate;
 
+    // Ô nhiều dòng của bảng khoá–giá trị: đọc trọn ô từ bảng GFM. Đường làm
+    // phẳng chỉ giữ dòng đầu (Time Allocation, Tools...) hoặc phải đoán điểm
+    // dừng theo nhãn kế tiếp (Description, Note).
+    final kv = _gfmKeyValues(tables);
+    String multi(String label, String Function() fallback) =>
+        kv[label.toLowerCase()] ?? fallback();
+
     return FapSyllabusImport(
       fapSyllabusId: fapSyllabusId,
       subjectCode: subjectCode,
       nameEn: nameEn,
       nameNative: nameNative,
       degreeLevel: unescapeTurndown(_valueAfterLabel(lines, 'Degree Level:')),
-      learningTeachingMethod: unescapeTurndown(_valueAfterLabel(lines, 'Learning-Teaching Method:')),
-      timeAllocation: unescapeTurndown(_valueAfterLabel(lines, 'Time Allocation:')),
-      description: unescapeTurndown(_valueBetween(lines, 'Description:', ['StudentTasks:', "Student's Tasks:", 'Tools:', 'Scoring Scale:'])),
-      studentTasks: unescapeTurndown(_valueBetween(lines, 'StudentTasks:', ['Tools:', 'Scoring Scale:'])),
-      tools: unescapeTurndown(_valueAfterLabel(lines, 'Tools:')),
+      learningTeachingMethod: multi('Learning-Teaching Method:', () => unescapeTurndown(_valueAfterLabel(lines, 'Learning-Teaching Method:'))),
+      timeAllocation: multi('Time Allocation:', () => unescapeTurndown(_valueAfterLabel(lines, 'Time Allocation:'))),
+      description: multi('Description:', () => unescapeTurndown(_valueBetween(lines, 'Description:', ['StudentTasks:', "Student's Tasks:", 'Tools:', 'Scoring Scale:']))),
+      studentTasks: multi('StudentTasks:', () => unescapeTurndown(_valueBetween(lines, 'StudentTasks:', ['Tools:', 'Scoring Scale:']))),
+      tools: multi('Tools:', () => unescapeTurndown(_valueAfterLabel(lines, 'Tools:'))),
       scoringScale: int.tryParse(_valueAfterLabel(lines, 'Scoring Scale:')),
       decisionNo: decisionRaw,
       decisionDate: decisionDate,
@@ -571,10 +583,19 @@ class FapMarkdownParser {
       approvedDate: approvedDate,
       rawPrerequisiteText: unescapeTurndown(_prerequisiteFromLines(lines)),
       sourceUrl: sourceUrl,
-      materials: _parseMaterials(lines),
-      clos: _parseClos(lines),
-      sessions: _parseSessions(lines),
-      assessments: _parseAssessments(lines),
+      note: multi('Note:', () => unescapeTurndown(_valueBetween(
+        lines,
+        'Note:',
+        ['Is Scored:', 'MinAvgMarkToPass:', 'IsActive:', 'ApprovedDate:'],
+        after: 'IsApproved:',
+      ))),
+      // Bảng GFM giữ nguyên ranh giới ô nên đọc theo tên cột là chính xác —
+      // ô nhiều dòng (`<br>`) không còn tràn sang cột khác. Chỉ trang dạng
+      // turndown "trần" (không có bảng) mới phải đoán hàng bằng neo như cũ.
+      materials: _gfmMaterials(tables) ?? _parseMaterials(lines),
+      clos: _gfmClos(tables) ?? _parseClos(lines),
+      sessions: _gfmSessions(tables) ?? _parseSessions(lines),
+      assessments: _gfmAssessments(tables) ?? _parseAssessments(lines),
     );
   }
 
@@ -620,10 +641,24 @@ class FapMarkdownParser {
   }
 
 
-  static String _valueBetween(List<String> lines, String startLabel, List<String> stopLabels) {
+  /// [after] khác null thì chỉ tìm [startLabel] phía sau dòng mở đầu bằng
+  /// nhãn đó — nhãn ngắn như `Note:` dễ trùng một dòng trong ô Description.
+  static String _valueBetween(
+    List<String> lines,
+    String startLabel,
+    List<String> stopLabels, {
+    String? after,
+  }) {
     final startNeedle = startLabel.toLowerCase();
+    var from = 0;
+    if (after != null) {
+      final a = lines.indexWhere(
+        (l) => l.toLowerCase().startsWith(after.toLowerCase()),
+      );
+      if (a != -1) from = a + 1;
+    }
     var startIndex = -1;
-    for (var i = 0; i < lines.length; i++) {
+    for (var i = from; i < lines.length; i++) {
       if (lines[i].toLowerCase().startsWith(startNeedle)) {
         startIndex = i;
         break;
@@ -1186,4 +1221,242 @@ class FapMarkdownParser {
       return raw.trim();
     }
   }
+
+  // ------------------------------------------------------------------
+  // Bảng GFM — đọc theo ô thay vì theo dòng đã làm phẳng
+  // ------------------------------------------------------------------
+
+  /// Mọi bảng GFM (hàng header + hàng gạch ngăn + các hàng dữ liệu) trong
+  /// trang. Mỗi ô giữ nguyên nội dung nhiều dòng: `<br>` thành `\n`.
+  ///
+  /// [_significantLines] làm phẳng mỗi ô thành từng dòng, nên một ô Topic có
+  /// 6 dòng `<br>` bị coi như 6 ô: dòng đầu thành chủ đề, 5 dòng sau rơi vào
+  /// "Student Materials". Đọc theo ô thì không còn phải đoán.
+  static List<_GfmTable> _gfmTables(String markdown) {
+    final lines = markdown.split('\n').map((l) => l.trim()).toList();
+    final tables = <_GfmTable>[];
+    var i = 0;
+    while (i < lines.length) {
+      if (_isTableRow(lines[i]) &&
+          i + 1 < lines.length &&
+          _isTableSeparatorRow(lines[i + 1])) {
+        final headerRaw = _splitRow(lines[i]).map(_gfmCell).toList();
+        final rows = <List<String>>[];
+        i += 2;
+        while (i < lines.length && _isTableRow(lines[i])) {
+          rows.add(_splitRow(lines[i]).map(_gfmCell).toList());
+          i++;
+        }
+        tables.add(_GfmTable(
+          headerRaw.map((c) => c.toLowerCase()).toList(),
+          rows,
+          headerRaw,
+        ));
+      } else {
+        i++;
+      }
+    }
+    return tables;
+  }
+
+  static String _gfmCell(String raw) => raw
+      .replaceAll(r'\|', '|')
+      .replaceAll(_brTag, '\n')
+      .split('\n')
+      .map((l) => _stripBold(unescapeTurndown(l.trim())))
+      .where((l) => l.isNotEmpty)
+      .join('\n');
+
+  /// Các bảng khoá–giá trị (`| Time Allocation: | ... |`) gộp thành một map
+  /// `nhãn thường -> giá trị nguyên ô`. Nhãn trùng thì giữ lần đầu.
+  static Map<String, String> _gfmKeyValues(List<_GfmTable> tables) {
+    final out = <String, String>{};
+    void put(List<String> row) {
+      if (row.length < 2) return;
+      final key = row[0].trim().toLowerCase();
+      if (!key.endsWith(':')) return;
+      out.putIfAbsent(key, () => row[1]);
+    }
+
+    for (final t in tables) {
+      if (t.headerRaw.length != 2 || !t.header[0].endsWith(':')) continue;
+      put(t.headerRaw);
+      t.rows.forEach(put);
+    }
+    return out;
+  }
+
+  static _GfmTable? _findTable(
+    List<_GfmTable> tables,
+    bool Function(List<String> header) test,
+  ) {
+    for (final t in tables) {
+      if (test(t.header)) return t;
+    }
+    return null;
+  }
+
+  static bool _isTrue(String v) => v.toLowerCase().contains('true');
+
+  static List<FapMaterialRow>? _gfmMaterials(List<_GfmTable> tables) {
+    final t = _findTable(
+      tables,
+      (h) => h.any((c) => c.contains('material description')),
+    );
+    if (t == null) return null;
+    final no = t.col((c) => c == 'no.' || c == 'no' || c == '#');
+    final desc = t.col((c) => c.contains('material description'));
+    final author = t.col((c) => c == 'author');
+    final publisher = t.col((c) => c == 'publisher');
+    final date = t.col((c) => c.contains('published date'));
+    final edition = t.col((c) => c == 'edition');
+    final isbn = t.col((c) => c == 'isbn');
+    final main = t.col((c) => c.contains('is main'));
+    final hard = t.col((c) => c.contains('hard copy'));
+    final online = t.col((c) => c.contains('is online'));
+    final note = t.col((c) => c == 'note');
+
+    final out = <FapMaterialRow>[];
+    for (var r = 0; r < t.rows.length; r++) {
+      final row = t.rows[r];
+      final description = t.cell(row, desc);
+      if (description.isEmpty) continue;
+      out.add(FapMaterialRow(
+        seqNo: int.tryParse(t.cell(row, no)) ?? r + 1,
+        description: description,
+        author: t.cell(row, author),
+        publisher: t.cell(row, publisher),
+        publishedDate: t.cell(row, date),
+        edition: t.cell(row, edition),
+        isbn: t.cell(row, isbn),
+        isMain: _isTrue(t.cell(row, main)),
+        isHardCopy: _isTrue(t.cell(row, hard)),
+        isOnline: _isTrue(t.cell(row, online)),
+        note: t.cell(row, note),
+      ));
+    }
+    return out;
+  }
+
+  static List<FapCloRow>? _gfmClos(List<_GfmTable> tables) {
+    final t = _findTable(
+      tables,
+      (h) => h.any((c) => c.contains('clo name') || c.contains('clo details')),
+    );
+    if (t == null) return null;
+    final name = t.col((c) => c.contains('clo name'));
+    final detail = t.col((c) => c.contains('clo details'));
+    final codeRe = RegExp(r'^(?:CLO|LO)\s*(\d+)$', caseSensitive: false);
+
+    final out = <FapCloRow>[];
+    for (final row in t.rows) {
+      final raw = t.cell(row, name).trim();
+      if (raw.isEmpty) continue;
+      final m = codeRe.firstMatch(raw);
+      out.add(FapCloRow(
+        code: m != null ? 'CLO${m.group(1)}' : raw.toUpperCase(),
+        detail: t.cell(row, detail),
+      ));
+    }
+    return out;
+  }
+
+  static List<FapSessionRow>? _gfmSessions(List<_GfmTable> tables) {
+    final t = _findTable(
+      tables,
+      (h) => h.contains('session') && h.contains('topic'),
+    );
+    if (t == null) return null;
+    final sess = t.col((c) => c == 'session');
+    final topic = t.col((c) => c == 'topic');
+    final type = t.col((c) => c.contains('teaching type'));
+    final lo = t.col((c) => c == 'lo' || c == 'clo');
+    final itu = t.col((c) => c == 'itu');
+    final mats = t.col((c) => c.contains('student materials'));
+    final download = t.col((c) => c.contains('download'));
+    final tasks = t.col((c) => c.contains('task'));
+    final urls = t.col((c) => c == 'urls' || c == 'url');
+
+    final out = <FapSessionRow>[];
+    for (var r = 0; r < t.rows.length; r++) {
+      final row = t.rows[r];
+      final rawLo = t.cell(row, lo);
+      out.add(FapSessionRow(
+        sessionNo: int.tryParse(t.cell(row, sess)) ?? r + 1,
+        topic: t.cell(row, topic),
+        teachingType: t.cell(row, type),
+        rawLo: rawLo,
+        cloCodes: _extractCloCodes(rawLo),
+        itu: t.cell(row, itu),
+        studentMaterials: t.cell(row, mats),
+        downloadUrl: t.cell(row, download),
+        studentTasks: t.cell(row, tasks),
+        urls: t.cell(row, urls),
+      ));
+    }
+    return out;
+  }
+
+  static List<FapAssessmentRow>? _gfmAssessments(List<_GfmTable> tables) {
+    final t = _findTable(
+      tables,
+      (h) => h.contains('weight') && h.any((c) => c.contains('category')),
+    );
+    if (t == null) return null;
+    final no = t.col((c) => c == '#' || c == 'no.' || c == 'no');
+    final category = t.col((c) => c.contains('category'));
+    final type = t.col((c) => c == 'type');
+    final part = t.col((c) => c == 'part');
+    final weight = t.col((c) => c == 'weight');
+    final criteria = t.col((c) => c.contains('completion criteria'));
+    final duration = t.col((c) => c == 'duration');
+    final clo = t.col((c) => c == 'clo' || c == 'lo');
+    final qType = t.col((c) => c.contains('question type'));
+    final qNo = t.col((c) => c.contains('no question'));
+    final skill = t.col((c) => c.contains('knowledge'));
+    final guide = t.col((c) => c.contains('grading guide'));
+    final note = t.col((c) => c == 'note');
+
+    final out = <FapAssessmentRow>[];
+    for (var r = 0; r < t.rows.length; r++) {
+      final row = t.rows[r];
+      final rawClo = t.cell(row, clo);
+      final w = RegExp(r'(\d+(?:\.\d+)?)').firstMatch(t.cell(row, weight));
+      out.add(FapAssessmentRow(
+        seqNo: int.tryParse(t.cell(row, no)) ?? r + 1,
+        category: t.cell(row, category),
+        type: t.cell(row, type),
+        part: int.tryParse(t.cell(row, part)),
+        weightPercent: double.tryParse(w?.group(1) ?? '') ?? 0,
+        completionCriteria: t.cell(row, criteria),
+        duration: t.cell(row, duration),
+        rawClo: rawClo,
+        cloCodes: _extractCloCodes(rawClo),
+        questionType: t.cell(row, qType),
+        noQuestion: int.tryParse(t.cell(row, qNo)),
+        knowledgeSkill: t.cell(row, skill),
+        gradingGuide: t.cell(row, guide),
+        note: t.cell(row, note),
+      ));
+    }
+    return out;
+  }
+}
+
+/// Một bảng GFM: header đã hạ chữ thường, mỗi ô giữ nguyên nội dung nhiều dòng.
+class _GfmTable {
+  final List<String> header;
+  final List<List<String>> rows;
+
+  /// Hàng header nguyên văn (chưa hạ chữ). Bảng khoá–giá trị của FAP
+  /// (`| Syllabus ID: | 14468 |`) dùng luôn hàng đầu làm header.
+  final List<String> headerRaw;
+
+  const _GfmTable(this.header, this.rows, this.headerRaw);
+
+  /// Chỉ số cột đầu tiên có header thoả [test], `-1` nếu không có.
+  int col(bool Function(String header) test) => header.indexWhere(test);
+
+  String cell(List<String> row, int index) =>
+      index >= 0 && index < row.length ? row[index] : '';
 }
