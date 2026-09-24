@@ -496,6 +496,22 @@ class AiService {
         '- Khi chương trình không có môn nào dạy chủ đề được hỏi, nói thẳng '
         'điều đó trước, rồi mới gợi ý môn nền tảng gần nhất trong chương '
         'trình và hướng tự học bổ sung.',
+      )
+      // Dữ liệu tài liệu học tập kèm link thật (Coursera, trang sách của tác
+      // giả, trang đề cương gốc trên FLM). Model hay tóm tắt gọn rồi bỏ link
+      // đi, mà link chính là thứ sinh viên cần nhất ở câu hỏi "tài liệu nào".
+      ..writeln(
+        '- Chép nguyên văn mọi đường dẫn http/https có trong dữ liệu, không '
+        'rút gọn và không bỏ đi. Ứng dụng sẽ biến chúng thành liên kết bấm '
+        'được. Tuyệt đối không tự bịa đường dẫn không có trong dữ liệu.',
+      )
+      // Dữ liệu đề cương có lúc là bản rút gọn, có lúc là bản đầy đủ. Bản
+      // rút gọn vẫn có mục tài liệu, nên nói "dữ liệu không cung cấp tài
+      // liệu" trong khi mục đó đang nằm ngay trong prompt là sai sự thật.
+      ..writeln(
+        '- Trước khi nói dữ liệu thiếu thứ gì, hãy đọc lại phần đề cương bên '
+        'dưới — có cả bản đầy đủ lẫn bản rút gọn. Chỉ nói là thiếu khi thật '
+        'sự không tìm thấy, và nói rõ thiếu ở môn nào.',
       );
 
     // Bộ quy tắc riêng cho lúc ngữ cảnh có điểm. Không có điểm mà vẫn nhét

@@ -125,7 +125,8 @@ Câu hỏi
   │
   ├─ 5. Chấm điểm từng môn
   │     mã môn 4đ  >  tên môn 2đ  >  mô tả 1đ
-  │     khớp ở MÔ TẢ chỉ được tính khi khái niệm đủ hiếm (mục 3.5)
+  │     khớp ở MÔ TẢ, và âm tiết lẻ khớp TÊN, chỉ được tính điểm
+  │     khi khái niệm đủ hiếm (mục 3.5)
   │     giữ môn ≥ 2/3 điểm cao nhất, tối đa 5 hạt giống
   │     hoà điểm → xếp theo mã môn (kết quả ổn định)
   │     nếu câu hỏi ĐÃ có mã môn đầy đủ → chỉ nhận thêm môn khớp chắc chắn
@@ -136,7 +137,8 @@ Câu hỏi
   └─ 7. Dựng prompt
         • mỗi môn: mã, tên, kỳ, tín chỉ, tiên quyết, mô tả (≤160 ký tự)
         • + điểm của sinh viên nếu bật công tắc
-        • + đề cương ĐẦY ĐỦ cho tối đa 2 môn đủ tin
+        • + đề cương ĐẦY ĐỦ cho tối đa 2 môn đủ tin (kèm tài liệu + link)
+        • + đề cương RÚT GỌN cho tối đa 5 môn khi không môn nào đủ tin
         • + cảnh báo nếu viết tắt trỏ vào nhiều môn (mục 3.3)
 ```
 
@@ -196,21 +198,54 @@ VOV114.description = "Mục tiêu: Học phần là trang bị cho sinh viên
 
 Hàng trăm chữ như vậy thì môn nào có đề cương cũng gần như chắc chắn chứa mấy từ chung chung của câu hỏi — *đánh giá*, *trình độ*, *kiến thức*, *sinh viên*. Thang 1 điểm cho mô tả vốn đã thấp nhất, nhưng vẫn đủ để chen vào 5 suất hạt giống khi câu hỏi không có mã môn.
 
-Sửa hai lớp:
+Sửa ba lớp:
 
-1. **Khớp ở mô tả chỉ được tính khi khái niệm đủ hiếm** (≤2 môn, tức cờ `specific` ở bước 4). `cấu trúc dữ liệu` thì nhận, `đánh giá` rải khắp mọi đề cương thì không.
-2. Thêm *đánh / giá / năng / kiến / thức* vào stopword.
+**1. Khớp ở mô tả chỉ được CỘNG ĐIỂM khi khái niệm đủ hiếm** (≤2 môn, tức cờ `specific` ở bước 4). `cấu trúc dữ liệu` thì nhận, `nội dung` rải khắp mọi đề cương thì không.
+
+Vòng đầu chỉ chặn ở **mức tin cậy** mà quên chặn ở **điểm**, nên lỗi quay lại dưới dạng khác: hỏi *"JPD học những nội dung gì? Tài liệu nào"* vẫn lôi về `VOV114`, `VOV134`. Đo từng từ một thì không từ nào đủ sức kéo môn võ vào — chính **tích luỹ** mới làm được. Mỗi cú khớp lẻ (*học*, *những*, *nội dung*, *nội*, *dung*) cộng 1 điểm, và một đề cương 1300 chữ gom đủ số điểm lẻ để vượt ngưỡng 2/3 rồi chen vào 5 suất hạt giống. Đây là bài học thật: chặn *nhãn* mà không chặn *điểm* thì chỉ giấu triệu chứng.
+
+**2. Âm tiết lẻ khớp tên môn cũng chưa đủ.** Tên môn vốn được miễn trừ vì đó là chỗ tín hiệu thật nằm — nhưng một âm tiết tiếng Việt đứng lẻ (*tạo*, *nhân*, *học*) gần như không mang nghĩa, nghĩa nằm ở cả cụm. Hỏi *"trí tuệ nhân tạo"* từng trả về `MLN111`, `MLN122`, `OJT202` chỉ vì tên chúng có *nhân* hoặc *tạo*.
+
+Ngưỡng là **5 ký tự sau khi bỏ dấu**, tách được hai nhóm mà không cần bảng tra: âm tiết lẻ phải là cụm hiếm mới được tính, còn `database`, `software`, `engineering` khớp thẳng tên môn thì vẫn nhận như cũ. Mã môn miễn trừ — gõ `csd` là cố ý gọi tên môn, không phải trùng âm.
+
+**3.** Thêm *đánh / giá / năng / kiến / thức* vào stopword.
 
 Đo lại trên dữ liệu thật:
 
 | Câu hỏi | Trước | Sau |
 |---|---|---|
+| `JPD học những nội dung gì? Tài liệu nào` | JPD133, JPD316, **VOV114, VOV134** (võ), JPD113 | **đủ 5 môn JPD** |
 | `đánh giá kỹ năng lập trình` | **DNH103** (nhạc cụ), SSG104, JPD316, ENW493C, PRF192 | **PRF192, PRM393, PRO192, PRO192C** + ENW493C |
 | `trình độ tiếng Nhật` | JPD316, **VOV114/124/134** (võ), JIS401 | **JIS401, JPD113, JPD123** |
+| `môn nào dạy trí tuệ nhân tạo` | GRC490, MLN111, MLN122, OJT202, PRF192 | **rỗng** |
+
+Ca cuối **rỗng là đúng**: CSDL không có môn AI nào (mục 8.3). Rỗng thì rơi về nhánh toàn đồ thị và AI nói thẳng chương trình không có môn này — tốt hơn hẳn việc bịa ra 5 môn không liên quan để lấp chỗ.
 
 Siết được ở mô tả vì chỉ **17/64 môn** có đề cương — bước này gần như không mất tín hiệu thật, chỉ chặn nhiễu.
 
-`ENW493C` (*Kỹ năng viết học thuật*) còn sót ở câu đầu, và **cố ý để nguyên**: nó khớp ở **tên môn**, tức đúng chỗ tín hiệu thật nằm. Muốn chặn nó thì phải đòi tên môn cũng khớp cụm hiếm — mà `tiếng nhật` có ở 5 môn, `kỹ năng` 5 môn, `giao tiếp` 3 môn, siết vào đó là mất luôn cả nhóm JPD. Đổi một dòng thừa ~20 token lấy nguy cơ đó thì không đáng. Nó cũng không đủ tin nên không kéo theo đề cương.
+`ENW493C` (*Kỹ năng viết học thuật*) còn sót ở câu thứ hai, và **cố ý để nguyên**: nó khớp bằng cụm `kỹ năng` vào **tên môn**, tức đúng chỗ tín hiệu thật nằm. Muốn chặn nó thì phải đòi tên môn cũng khớp cụm hiếm — mà `tiếng nhật` có ở 5 môn, `kỹ năng` 5 môn, `giao tiếp` 3 môn, siết vào đó là mất luôn cả nhóm JPD. Đổi một dòng thừa ~20 token lấy nguy cơ đó thì không đáng. Nó cũng không đủ tin nên không kéo theo đề cương.
+
+### 3.5b Khi mã viết tắt trỏ nhiều môn, vẫn phải gửi đề cương rút gọn
+
+Hỏi *"JPD học những nội dung gì? Tài liệu nào"*, AI trả lời:
+
+> *"Về tài liệu học tập: Dữ liệu khung chương trình hiện tại không cung cấp tên giáo trình/tài liệu cụ thể cho các môn JPD."*
+
+**Sai sự thật** — CSDL có đủ 5 giáo trình của `JPD113`, và hỏi riêng `JPD113` thì AI liệt kê ra được hết. Vấn đề nằm ở chỗ nối: đề cương chỉ được đính cho môn **đủ tin**, mà mã viết tắt trỏ nhiều môn thì không môn nào đủ tin (mục 3.4) — nên ngữ cảnh không có lấy một dòng tài liệu, và AI kết luận dữ liệu thiếu.
+
+Đây là dạng lỗi nguy hiểm hơn nhiễu: nhiễu thì người dùng nhìn ra, còn câu này nghe rất thuyết phục.
+
+Sửa: không môn nào đủ tin thì gửi **bản rút gọn của cả nhóm** (tối đa 5 môn) thay vì không gửi gì. Cộng thêm một quy tắc trong prompt: *trước khi nói dữ liệu thiếu thứ gì, đọc lại phần đề cương bên dưới — có cả bản đầy đủ lẫn bản rút gọn*.
+
+Chi phí đo trên câu hỏi thật: **1062 → 1249 token** (+187). Phần lớn mức tăng được bù lại bằng cách cắt nhãn đầu điểm trong bản rút gọn xuống 40 ký tự — trường `category` của FAP có môn nhét cả đoạn điều kiện thi vào, để nguyên thì riêng dòng đó nặng hơn cả phần mô tả (đo được 1678 → 1249).
+
+### 3.5c Tài liệu học tập và link
+
+**112/271 tài liệu trong CSDL có kèm link** — Coursera, trang sách của tác giả, tài liệu online. Và **mọi đề cương đều có `source_url`** trỏ tới trang gốc trên FLM. Trước đây bản dựng prompt bỏ hết: chỉ lấy tên tài liệu và tác giả, không lấy `note` (nơi chứa link) cũng không lấy `source_url`.
+
+Nay cả hai bản dựng đều có mục tài liệu kèm link, và có một quy tắc prompt riêng: *chép nguyên văn mọi đường dẫn http/https, không rút gọn, không bỏ đi; tuyệt đối không bịa đường dẫn*. Vế sau quan trọng ngang vế trước — model rất sẵn lòng chế ra một URL nhìn hợp lý.
+
+Tầng UI biến chúng thành link bấm được: `LinkedAnswerText` bắt cả URL viết trần, cắt dấu câu dính ở cuối (*"xem tại https://a.vn/b."* — để nguyên thì bấm ra 404), và mở bằng trình duyệt ngoài qua `url_launcher`. Không dùng WebView: app là desktop local-first, nhúng trình duyệt vào chỉ thêm bề mặt tấn công.
 
 ### 3.6 Bảng điểm trong ngữ cảnh
 
@@ -370,16 +405,16 @@ Câu *"tôi muốn làm AI Engineer nên học gì"*: **~4610 → ~866 token**, 
 
 | File | Số test | Phủ gì |
 |---|---|---|
-| `graph_rag_test.dart` | 32 | Chọn hạt giống, lọc từ phổ thông, mức tin cậy, viết tắt mã môn, hỏi lại khi mơ hồ, đề cương rút gọn |
+| `graph_rag_test.dart` | 39 | Chọn hạt giống, lọc từ phổ thông, chặn nhiễu từ đề cương, mức tin cậy, viết tắt mã môn, hỏi lại khi mơ hồ, đề cương rút gọn, tài liệu + link gốc |
 | `sse_event_test.dart` | 21 | Gom sự kiện SSE, lọc `thought`, `finishReason`, phân loại lỗi tạm thời, xếp hàng model dự phòng |
 | `suggestion_lines_test.dart` | 6 | Làm sạch 4 câu gợi ý |
 | `academic_ai_cache_test.dart` | 6 | Cache nhận xét học lực, bỏ cache khi dữ liệu đổi, chịu được dữ liệu lưu hỏng |
-| `linked_answer_markdown_test.dart` | 12 | Đổi `[[MÃ]]` và mã viết rời thành link, bỏ alias/neo, mã không có thật, escape `*`/`_`, chừa khối code và link sẵn có |
+| `linked_answer_markdown_test.dart` | 18 | Đổi `[[MÃ]]` và mã viết rời thành link, bỏ alias/neo, mã không có thật, escape `*`/`_`, chừa khối code và link sẵn có, URL viết trần thành link bấm được |
 | `openai_provider_test.dart` | 10 | Tham số theo họ model GPT-5/6, tính nhất quán của ba danh sách model |
 | `ai_provider_keys_test.dart` | 6 | Mỗi nhà cung cấp giữ API key / model / model phụ riêng |
-| **Tổng phần AI** | **93** | |
+| **Tổng phần AI** | **106** | |
 
-Toàn dự án: **356 test — 351 pass / 5 fail**, **không lỗi nào thuộc phân hệ AI**:
+Toàn dự án: **369 test — 364 pass / 5 fail**, **không lỗi nào thuộc phân hệ AI**:
 
 | Nhóm | Nguyên nhân |
 |---|---|
@@ -417,6 +452,7 @@ Cả hai đều thuần chuyện sắp xếp code, không đổi gì với ngư�
 
 - **CSDL không có môn AI nào.** `artificial intelligence` khớp 0/64 môn. Mọi câu hỏi định hướng AI đều phải trả lời "chương trình không có môn này" — đúng nhưng nghèo. Thuộc khâu nhập dữ liệu FAP.
 - **Rác trong danh mục môn**: có mục tên `CURRICULUM DETAILS BIT_IS_K20D` bị coi là một môn học và lọt vào ngữ cảnh gửi AI.
+- **Ba môn mất hẳn tên**: `VOV114`, `VOV124`, `VOV134` có `name = "Subject Code:"` — khâu nhập FAP lấy nhầm nhãn của ô thay vì giá trị. Hậu quả cho phân hệ AI: ba môn này không còn tên để khớp, nên **toàn bộ tín hiệu của chúng dồn vào phần mô tả** — đúng cái trường nhiễu nhất (mục 3.5). Chúng cũng là ba môn hay lọt vào ngữ cảnh sai nhất trong mọi lần đo. Việc lọc đã chặn được, nhưng gốc nằm ở khâu nhập.
 - **3 test đỏ** vì thiếu file fixture bảng điểm.
 - **Test `md_intake_service` đọc SharedPreferences thật của máy** thay vì bản giả, nên hai ca đỏ tuỳ theo thư mục FAP người dùng đang đặt. Cách sửa: gọi `SharedPreferences.setMockInitialValues({})` trong `setUp`, giống `academic_ai_cache_test.dart` đang làm.
 - **Thành viên khác sửa thẳng vào file của phân hệ AI.** Commit `ac94586` thêm lọc theo khung chương trình (`detectCurriculum`, tham số `curriculumCode`) vào `graph_rag_service.dart` (+170 dòng) và `ai_service.dart`, viết lại phần lớn `ai_chat_page.dart`. Git gộp sạch, không mất gì, và ý tưởng lọc theo khung chương trình hợp lý — nhưng phần này **chưa được người phụ trách phân hệ AI rà lại**, và chưa có test nào khoá nó. Cùng lúc đó hai người cùng sửa một lỗi hiển thị trong cùng một file mà không ai biết, dẫn tới xung đột phải giải tay. Nhóm nên chốt ranh giới file trước khi chia việc tiếp.

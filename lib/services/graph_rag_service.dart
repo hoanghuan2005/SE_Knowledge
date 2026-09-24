@@ -98,6 +98,13 @@ class GraphRagService {
   /// token, chỉ đính cho vài môn khớp mạnh nhất chứ không cho cả subgraph.
   static const int maxSyllabi = 2;
 
+  /// Số đề cương RÚT GỌN gửi kèm khi không môn nào đủ tin.
+  /// Bản rút gọn chỉ ~150 token nên 5 môn vẫn rẻ hơn một đề cương đầy đủ.
+  static const int maxOutlineSyllabi = 5;
+
+  /// Chặn trên cho nhãn một đầu điểm trong bản rút gọn.
+  static const int maxOutlineAssessmentChars = 40;
+
   /// Cắt bớt mô tả từng môn khi liệt kê. Mô tả dài chỉ cần vài dòng đầu là đủ
   /// để AI biết môn đó dạy gì.
   static const int maxDescriptionChars = 160;
@@ -137,6 +144,18 @@ class GraphRagService {
   /// khỏi ngữ cảnh: khớp rộng vẫn đáng đưa vào danh sách, chỉ là không đáng
   /// trả giá nghìn token cho mỗi đề cương.
   static const int maxMatchesForSpecific = 2;
+
+  /// Độ dài tối đa còn coi là "một âm tiết tiếng Việt đứng lẻ".
+  ///
+  /// Âm tiết tiếng Việt bỏ dấu hầu hết dài 2–5 ký tự (`tao`, `nhan`, `truong`
+  /// là ngoại lệ dài hơn), còn từ tiếng Anh trong tên môn thì dài hơn hẳn:
+  /// `database`, `software`, `engineering`. Ngưỡng 5 vì thế tách được hai
+  /// nhóm mà không cần bảng tra: âm tiết lẻ phải là cụm hiếm mới được tính,
+  /// còn `database` khớp thẳng tên môn thì vẫn nhận như cũ.
+  static const int maxLooseSyllableChars = 5;
+
+  /// Nhận URL trong dữ liệu đề cương để quyết định có giữ ghi chú hay không.
+  static final RegExp _urlPattern = RegExp(r'https?://\S+');
 
   /// Nhận diện xem câu hỏi có nhắc tới khung chương trình hoặc chuyên ngành cụ thể nào không
   static CurriculumGroup? detectCurriculum(String question, List<CurriculumGroup> groups) {
@@ -285,6 +304,18 @@ class GraphRagService {
       seedMatches.where((s) => s.confident).map((s) => s.subject).take(maxSyllabi),
     );
 
+    // Không môn nào đủ tin (gõ "jpd" khớp cả 5 môn tiếng Nhật) thì trước đây
+    // ngữ cảnh không có lấy một dòng đề cương, nên AI trả lời "dữ liệu khung
+    // chương trình không cung cấp tên giáo trình cho các môn JPD" — sai, vì
+    // dữ liệu có đủ, chỉ là chưa ai đưa vào prompt. Hỏi thiếu tự tin thì gửi
+    // bản rút gọn của cả nhóm: nhẹ hơn bản đầy đủ khoảng một bậc, nhưng đủ
+    // nội dung và tài liệu để trả lời câu hỏi chung cho cả nhóm.
+    final outlines = syllabi.isEmpty
+        ? await _loadSyllabiFor(
+            seedMatches.map((s) => s.subject).take(maxOutlineSyllabi),
+          )
+        : const <FapSyllabusImport>[];
+
     // Tính toán tiến độ sinh viên đối với khung chương trình nếu có bảng điểm
     String? curriculumProgressText;
     if (targetGroup != null && grades.isNotEmpty) {
@@ -313,6 +344,7 @@ class GraphRagService {
       grades.byCode,
       grades.profile,
       ambiguousCodeMatches(seedMatches),
+      outlines,
       curriculum: targetGroup,
       curriculumProgressText: curriculumProgressText,
     );
@@ -580,18 +612,38 @@ class GraphRagService {
       }
       if (hitForm == null) continue;
 
+      // Trường `description` thực chất chứa nguyên văn đề cương, dài hàng
+      // trăm chữ — môn nào có đề cương là gần như chắc chắn chứa mấy từ
+      // chung chung của câu hỏi ("học", "những", "nội dung"). Vì vậy khớp ở
+      // đó chỉ được tính khi cụm từ đủ hiếm: "cấu trúc dữ liệu" (1-2 môn)
+      // thì nhận, còn "nội dung" (rải khắp mọi đề cương) thì không.
+      //
+      // Điều kiện này phải chặn cả ĐIỂM chứ không riêng mức tin cậy. Chặn
+      // mỗi mức tin cậy thì từng cú khớp lẻ vẫn cộng 1 điểm, và một đề cương
+      // 1300 chữ gom đủ số điểm lẻ để vượt ngưỡng 2/3 rồi chen vào 5 suất
+      // hạt giống — đúng cách `VOV114` (môn võ) lọt vào câu hỏi về môn JPD.
+      if (!inStrongField && !concept.specific) continue;
+
+      // Một âm tiết tiếng Việt đứng lẻ ("tạo", "nhân", "học") gần như không
+      // mang nghĩa — nghĩa nằm ở cả cụm. Khớp kiểu đó vào TÊN môn vẫn được 2
+      // điểm nên đủ sức chen vào top 5: hỏi "trí tuệ nhân tạo" từng lôi về
+      // MLN111, MLN122, OJT202 chỉ vì tên chúng có "nhân" hoặc "tạo".
+      //
+      // Mã môn miễn trừ: gõ "csd" là cố ý gọi tên môn, không phải trùng âm.
+      if (points != scoreCodeHit &&
+          !concept.specific &&
+          hitForm.length <= maxLooseSyllableChars &&
+          !hitForm.contains(' ')) {
+        continue;
+      }
+
       score += points!;
       // Chỉ khớp bằng từ đặc hiệu vào mã/tên môn mới đủ chắc để đính đề
       // cương. "engineer" khớp tên 4 môn kỹ thuật không nói lên câu hỏi đang
       // nhắm vào môn nào trong số đó.
       if (inStrongField && concept.specific) matchedStrongField = true;
 
-      // Trường `description` thực chất chứa nguyên văn đề cương, dài hàng
-      // trăm chữ — môn nào có đề cương là gần như chắc chắn chứa mấy từ
-      // chung chung của câu hỏi ("đánh giá", "trình độ", "kiến thức"). Vì
-      // vậy khớp ở đó chỉ được tính khi cụm từ đủ hiếm: "cấu trúc dữ liệu"
-      // (1-2 môn) thì nhận, còn "đánh giá" (rải khắp mọi đề cương) thì không.
-      if (inStrongField || (hitForm.contains(' ') && concept.specific)) {
+      if (inStrongField || hitForm.contains(' ')) {
         reliable = true;
       }
     }
@@ -726,7 +778,8 @@ class GraphRagService {
     List<FapSyllabusImport> syllabi,
     Map<String, TranscriptEntry> gradeByCode,
     AcademicProfile? profile,
-    List<String> ambiguousCodes, {
+    List<String> ambiguousCodes,
+    List<FapSyllabusImport> outlines, {
     CurriculumGroup? curriculum,
     String? curriculumProgressText,
   }) {
@@ -774,7 +827,8 @@ class GraphRagService {
           'LƯU Ý: mã môn viết tắt trong câu hỏi khớp nhiều môn cùng lúc: '
           '${ambiguousCodes.join(", ")}. Nếu câu hỏi nhắm tới một môn cụ thể, '
           'hãy hỏi lại người dùng muốn môn nào trong số đó thay vì tự chọn. '
-          'Nếu câu hỏi áp dụng cho cả nhóm thì cứ trả lời cho cả nhóm.',
+          'Nếu câu hỏi áp dụng cho cả nhóm thì cứ trả lời cho cả nhóm, dựa '
+          'trên phần đề cương rút gọn bên dưới.',
         )
         ..writeln();
     }
@@ -840,13 +894,22 @@ class GraphRagService {
         ..writeln('Đề cương chi tiết của ${syl.subjectCode}:')
         ..writeln(renderSyllabusForPrompt(syl));
     }
+
+    for (final syl in outlines) {
+      sb
+        ..writeln()
+        ..writeln('Đề cương rút gọn của ${syl.subjectCode}:')
+        ..writeln(renderSyllabusOutlineForPrompt(syl));
+    }
     return sb.toString();
   }
 
-  String _shorten(String text) {
+  String _shorten(String text) => _shortenTo(text, maxDescriptionChars);
+
+  String _shortenTo(String text, int maxChars) {
     final clean = text.trim().replaceAll(RegExp(r'\s+'), ' ');
-    if (clean.length <= maxDescriptionChars) return clean;
-    return '${clean.substring(0, maxDescriptionChars)}…';
+    if (clean.length <= maxChars) return clean;
+    return '${clean.substring(0, maxChars)}…';
   }
 
   /// Dựng đề cương FAP thành văn bản gọn để nhét vào prompt.
@@ -883,15 +946,65 @@ class GraphRagService {
       sb.writeln('Môn có ${syl.clos.length} chuẩn đầu ra (CLO).');
     }
     if (syl.assessments.isNotEmpty) {
+      // Trường `category` trong dữ liệu FAP không phải lúc nào cũng là nhãn
+      // ngắn: có môn nhét cả đoạn điều kiện thi vào đó ("40' CLO1~CLO4 Trắc
+      // nghiệm+ Speaking Phần MC (từ vựng...)..."). Ở bản rút gọn chỉ cần
+      // biết có những đầu điểm nào và chiếm bao nhiêu phần trăm, nên cắt
+      // ngắn — để nguyên thì riêng dòng này đã nặng hơn cả phần mô tả.
       final parts = syl.assessments
-          .map((a) => '${a.category} ${a.weightPercent}%')
+          .map((a) => '${_shortenTo(a.category, maxOutlineAssessmentChars)} '
+              '${a.weightPercent}%')
           .join(', ');
       sb.writeln('Các đầu điểm đánh giá: $parts.');
     }
     if (syl.sessions.isNotEmpty) {
       sb.writeln('Lịch trình gồm ${syl.sessions.length} buổi học.');
     }
+    // Bản rút gọn giờ còn dùng cho câu hỏi chung của cả nhóm môn, mà "học
+    // những gì, tài liệu nào" là dạng hỏi phổ biến nhất — thiếu mục này thì
+    // AI tưởng dữ liệu không có và nói thẳng ra như vậy.
+    _writeMaterials(sb, syl, withDetail: false);
+    _writeSourceUrl(sb, syl);
     return sb.toString();
+  }
+
+  /// Viết mục tài liệu học tập, dùng chung cho bản đầy đủ và bản rút gọn.
+  ///
+  /// Giữ nguyên URL trong `description` và `note`: 112/271 tài liệu trong CSDL
+  /// có kèm link (Coursera, trang sách của tác giả…), mà đó thường đúng thứ
+  /// sinh viên cần nhất. Tầng UI sẽ biến chúng thành link bấm được.
+  void _writeMaterials(
+    StringBuffer sb,
+    FapSyllabusImport syl, {
+    required bool withDetail,
+  }) {
+    if (syl.materials.isEmpty) return;
+    sb.writeln('Tài liệu học tập:');
+    for (final m in syl.materials.take(maxSyllabusMaterials)) {
+      final parts = <String>[
+        '${m.isMain ? '[Chính] ' : ''}${m.description.trim()}',
+        if (withDetail && m.author.trim().isNotEmpty) m.author.trim(),
+        if (withDetail && m.publisher.trim().isNotEmpty) m.publisher.trim(),
+        // Ghi chú chỉ lấy khi có link — phần còn lại là chú thích nội bộ,
+        // không đáng token.
+        if (m.note.trim().isNotEmpty && _urlPattern.hasMatch(m.note))
+          m.note.trim(),
+      ];
+      sb.writeln('- ${parts.join(" — ")}');
+    }
+    if (syl.materials.length > maxSyllabusMaterials) {
+      sb.writeln(
+        '- (còn ${syl.materials.length - maxSyllabusMaterials} tài liệu nữa)',
+      );
+    }
+  }
+
+  /// Link tới trang đề cương gốc trên FLM. Mọi đề cương trong CSDL đều có, và
+  /// đây là chỗ sinh viên xem được bản đầy đủ khi prompt đã lược bớt.
+  void _writeSourceUrl(StringBuffer sb, FapSyllabusImport syl) {
+    final url = syl.sourceUrl.trim();
+    if (url.isEmpty) return;
+    sb.writeln('Đề cương gốc: $url');
   }
 
   String renderSyllabusForPrompt(FapSyllabusImport syl) {
@@ -939,14 +1052,8 @@ class GraphRagService {
       }
     }
 
-    if (syl.materials.isNotEmpty) {
-      sb.writeln('Tài liệu học tập:');
-      for (final m in syl.materials.take(maxSyllabusMaterials)) {
-        final tag = m.isMain ? '[Chính] ' : '';
-        final author = m.author.trim().isEmpty ? '' : ' — ${m.author.trim()}';
-        sb.writeln('- $tag${m.description.trim()}$author');
-      }
-    }
+    _writeMaterials(sb, syl, withDetail: true);
+    _writeSourceUrl(sb, syl);
 
     if (syl.sessions.isNotEmpty) {
       sb.writeln('Lịch trình học (${syl.sessions.length} buổi):');

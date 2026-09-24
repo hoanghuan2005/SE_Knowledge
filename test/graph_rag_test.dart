@@ -314,6 +314,66 @@ void main() {
     });
   });
 
+  group('từ chung trong đề cương không được cộng điểm', () {
+    // Trường `description` chứa nguyên văn đề cương, dài hàng trăm chữ. Mỗi
+    // cú khớp lẻ cộng 1 điểm, nên một đề cương đủ dài gom được số điểm lẻ
+    // vượt ngưỡng 2/3 rồi chen vào 5 suất hạt giống. Đây là cách `VOV114`
+    // (môn võ) lọt vào câu hỏi về nhóm môn JPD trên dữ liệu thật.
+    //
+    // Bộ lọc độ phổ biến chỉ chạy khi danh mục đủ lớn (từ 12 môn), vì danh
+    // mục nhỏ thì không đo được từ nào là phổ thông. Nên danh sách dưới đây
+    // phải đủ dài, và mấy từ chung phải rải ở nhiều môn đúng như ngoài đời.
+    const boilerplate =
+        'Mục tiêu: Học phần trang bị cho sinh viên những nội dung và kiến '
+        'thức cơ bản. Sinh viên học những nội dung gì, dùng tài liệu nào '
+        'đều được nêu trong phần nội dung học phần.';
+
+    final noisy = <Subject>[
+      ...subjects,
+      for (var i = 0; i < 8; i++)
+        Subject.create(
+          code: 'FIL10$i',
+          name: 'Filler $i',
+          description: boilerplate,
+        ),
+      Subject.create(
+        code: 'VOV114',
+        name: 'Vovinam 1',
+        description: '$boilerplate Nội dung về môn võ Vovinam, hệ thống kỹ '
+            'thuật căn bản, tinh thần võ đạo.',
+      ),
+    ];
+
+    test('câu hỏi nhiều từ chung không kéo môn vô can vào', () {
+      final codes = GraphRagService.instance
+          .findSeeds('PRF học những nội dung gì', noisy)
+          .map((s) => s.code);
+      expect(codes, isNot(contains('VOV114')));
+      expect(codes, contains('PRF192'));
+    });
+
+    test('cụm từ hiếm trong mô tả thì vẫn được tính như cũ', () {
+      // Không siết nhầm: "cấu trúc dữ liệu" chỉ có ở một môn nên vẫn phải
+      // chọn đúng CSD201 dù nó chỉ khớp ở phần mô tả.
+      expect(
+        GraphRagService.instance
+            .findSeeds('môn nào dạy cấu trúc dữ liệu', noisy)
+            .map((s) => s.code),
+        contains('CSD201'),
+      );
+    });
+
+    test('âm tiết lẻ khớp tên môn cũng không đủ, phải là cụm', () {
+      // "tạo" trong "nhân tạo" từng khớp tên những môn chẳng liên quan.
+      // Chương trình không có môn AI thật, nên câu trả lời đúng là không
+      // tìm ra môn nào — để AI nói thẳng là chương trình thiếu.
+      final codes = GraphRagService.instance
+          .findSeeds('môn nào dạy trí tuệ nhân tạo', noisy)
+          .map((s) => s.code);
+      expect(codes, isNot(contains('VOV114')));
+    });
+  });
+
   group('renderSyllabusOutlineForPrompt', () {
     test('giữ đúng phần gợi được câu hỏi, bỏ phần dài', () {
       final outline = GraphRagService.instance
@@ -326,10 +386,48 @@ void main() {
       expect(outline, contains('Progress test 20.0%'));
       expect(outline, contains('3 buổi học'));
 
-      // Nhưng không kéo theo nội dung dài của từng buổi, từng CLO, tài liệu.
+      // Nhưng không kéo theo nội dung dài của từng buổi, từng CLO.
       expect(outline, isNot(contains('Chi tiết CLO')));
       expect(outline, isNot(contains('Buổi 1:')));
-      expect(outline, isNot(contains('Giáo trình')));
+    });
+
+    test('có tên tài liệu, vì "học gì, tài liệu nào" là câu hỏi hay gặp', () {
+      // Bản rút gọn giờ còn dùng cho câu hỏi chung của cả nhóm môn. Thiếu
+      // mục này thì ngữ cảnh không có lấy một dòng tài liệu, và AI kết luận
+      // "dữ liệu khung chương trình không cung cấp tên giáo trình" — sai,
+      // vì dữ liệu có đủ, chỉ là chưa ai đưa vào prompt.
+      final outline = GraphRagService.instance
+          .renderSyllabusOutlineForPrompt(_syllabus());
+      expect(outline, contains('Tài liệu học tập:'));
+      expect(outline, contains('Giáo trình chính'));
+    });
+
+    test('nhãn đầu điểm dài bị cắt ngắn', () {
+      // Dữ liệu FAP thật có môn nhét cả đoạn điều kiện thi vào trường
+      // `category`. Để nguyên thì riêng dòng này nặng hơn cả phần mô tả.
+      final outline = GraphRagService.instance.renderSyllabusOutlineForPrompt(
+        _syllabus(assessmentCategory: 'Thi cuối kỳ ${'dài ' * 60}'),
+      );
+      expect(outline, contains('…'));
+      expect(outline, contains('Thi cuối kỳ'));
+      expect(outline.length, lessThan(500));
+    });
+
+    test('có link đề cương gốc để sinh viên mở bản đầy đủ', () {
+      // Mọi đề cương trong CSDL đều có `source_url` trỏ tới trang FLM. Prompt
+      // đã lược bớt rất nhiều, nên đây là chỗ xem lại bản gốc.
+      const url = 'https://flm.fpt.edu.vn/gui/role/student/Syllabus?sylID=1';
+      final rag = GraphRagService.instance;
+      final syl = _syllabus(sourceUrl: url);
+      expect(rag.renderSyllabusOutlineForPrompt(syl), contains(url));
+      expect(rag.renderSyllabusForPrompt(syl), contains(url));
+    });
+
+    test('không có link thì không viết dòng trống', () {
+      expect(
+        GraphRagService.instance.renderSyllabusOutlineForPrompt(_syllabus()),
+        isNot(contains('Đề cương gốc')),
+      );
     });
 
     test('nhẹ hơn hẳn bản đầy đủ', () {
@@ -351,7 +449,11 @@ void main() {
   });
 }
 
-FapSyllabusImport _syllabus({String description = 'Cấu trúc dữ liệu và giải thuật.'}) {
+FapSyllabusImport _syllabus({
+  String description = 'Cấu trúc dữ liệu và giải thuật.',
+  String assessmentCategory = 'Progress test',
+  String sourceUrl = '',
+}) {
   return FapSyllabusImport(
     fapSyllabusId: 1,
     subjectCode: 'CSD201',
@@ -372,7 +474,7 @@ FapSyllabusImport _syllabus({String description = 'Cấu trúc dữ liệu và g
     isActive: true,
     approvedDate: '',
     rawPrerequisiteText: 'PRF192',
-    sourceUrl: '',
+    sourceUrl: sourceUrl,
     materials: const [
       FapMaterialRow(seqNo: 1, description: 'Giáo trình chính', isMain: true),
     ],
@@ -385,9 +487,9 @@ FapSyllabusImport _syllabus({String description = 'Cấu trúc dữ liệu và g
       FapSessionRow(sessionNo: 2, topic: 'Mảng và danh sách'),
       FapSessionRow(sessionNo: 3, topic: 'Cây nhị phân'),
     ],
-    assessments: const [
-      FapAssessmentRow(seqNo: 1, category: 'Progress test', weightPercent: 20),
-      FapAssessmentRow(seqNo: 2, category: 'Final exam', weightPercent: 60),
+    assessments: [
+      FapAssessmentRow(seqNo: 1, category: assessmentCategory, weightPercent: 20),
+      const FapAssessmentRow(seqNo: 2, category: 'Final exam', weightPercent: 60),
     ],
   );
 }

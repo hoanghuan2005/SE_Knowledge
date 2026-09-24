@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
@@ -27,8 +28,13 @@ final RegExp _tokenPattern = RegExp(
   r'|`[^`\n]*`' // code trong dòng
   r'|\[\[([^\[\]]+?)\]\]' // [[MÃ MÔN]], kèm cả bí danh và neo
   r'|\[[^\]\n]*\]\([^)\n]*\)' // link Markdown đã có sẵn
+  r'|(https?://[^\s<>()\[\]]+)' // URL viết trần
   r'|\b([A-Z]{2,4}\d{2,4}[A-Z0-9_]*)\b', // mã môn viết rời
 );
+
+/// Dấu câu dính vào cuối URL khi model viết "... xem tại https://a.vn/b."
+/// Không cắt thì dấu chấm bị nuốt vào link và bấm ra trang 404.
+final RegExp _trailingPunctuation = RegExp(r'[.,;:!?]+$');
 
 /// Đổi mã môn trong [text] thành liên kết Markdown trỏ vào [subjectLinkScheme].
 ///
@@ -58,7 +64,15 @@ String wikiLinksToMarkdown(String text, Set<String> knownCodes) {
       return knownCodes.contains(code) ? link(code) : escape(wiki);
     }
 
-    final bare = match.group(2);
+    final url = match.group(2);
+    if (url != null) {
+      final trailing = _trailingPunctuation.stringMatch(url) ?? '';
+      final clean = url.substring(0, url.length - trailing.length);
+      if (clean.isEmpty) return whole;
+      return '[$clean]($clean)$trailing';
+    }
+
+    final bare = match.group(3);
     if (bare != null) {
       return knownCodes.contains(bare) ? link(bare) : whole;
     }
@@ -87,9 +101,19 @@ class LinkedAnswerText extends StatelessWidget {
       selectable: true,
       styleSheet: _sheet(context),
       onTapLink: (label, href, title) {
-        if (href == null || !href.startsWith(subjectLinkScheme)) return;
-        final subject = byCode[href.substring(subjectLinkScheme.length)];
-        if (subject != null) AppState.instance.openNoteTab(subject);
+        if (href == null) return;
+        if (href.startsWith(subjectLinkScheme)) {
+          final subject = byCode[href.substring(subjectLinkScheme.length)];
+          if (subject != null) AppState.instance.openNoteTab(subject);
+          return;
+        }
+        // Link tài liệu học tập trong đề cương (Coursera, trang sách, trang
+        // đề cương gốc trên FLM). Mở bằng trình duyệt ngoài — app là desktop
+        // local-first, không có WebView và cũng không nên có.
+        final uri = Uri.tryParse(href);
+        if (uri == null) return;
+        if (uri.scheme != 'http' && uri.scheme != 'https') return;
+        launchUrl(uri, mode: LaunchMode.externalApplication);
       },
     );
   }

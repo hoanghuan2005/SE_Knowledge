@@ -53,6 +53,7 @@ void main() {
   });
 
   _bareCodes();
+  _urls();
 
   test('không có mã nào thì trả về y nguyên', () {
     const markdown = '### Lộ trình\n\n1. **Toán nền tảng**\n2. Lập trình';
@@ -92,5 +93,48 @@ void _bareCodes() {
 
   test('mã viết thường không bị nhận nhầm', () {
     expect(convert('môn prf192 là gì'), 'môn prf192 là gì');
+  });
+}
+
+/// Link trong đề cương (Coursera, trang sách, trang FLM gốc) phải bấm được
+/// ngay trong chat — đó là thứ sinh viên cần nhất ở câu hỏi "tài liệu nào".
+void _urls() {
+  const known = {'CSD201', 'PRF192'};
+  String convert(String text) => wikiLinksToMarkdown(text, known);
+
+  test('URL viết trần thành liên kết', () {
+    expect(
+      convert('Xem tại https://flm.fpt.edu.vn/gui/Syllabus?sylID=1 nhé'),
+      'Xem tại [https://flm.fpt.edu.vn/gui/Syllabus?sylID=1]'
+          '(https://flm.fpt.edu.vn/gui/Syllabus?sylID=1) nhé',
+    );
+  });
+
+  test('dấu câu cuối câu không bị nuốt vào link', () {
+    // "... xem tại https://a.vn/b." — để nguyên thì bấm ra trang 404.
+    expect(
+      convert('Tài liệu ở https://a.vn/b.'),
+      'Tài liệu ở [https://a.vn/b](https://a.vn/b).',
+    );
+  });
+
+  test('link Markdown có sẵn thì không bọc lại', () {
+    const done = '[Coursera](https://www.coursera.org/learn/x)';
+    expect(convert(done), done);
+  });
+
+  test('URL trong khối code để yên', () {
+    expect(convert('`https://a.vn/b`'), '`https://a.vn/b`');
+  });
+
+  test('mã môn và URL cùng câu đều thành link', () {
+    expect(
+      convert('[[CSD201]] xem https://a.vn/b'),
+      '[CSD201](se-subject:CSD201) xem [https://a.vn/b](https://a.vn/b)',
+    );
+  });
+
+  test('không đụng vào chữ giống link nhưng thiếu scheme', () {
+    expect(convert('vào flm.fpt.edu.vn'), 'vào flm.fpt.edu.vn');
   });
 }
