@@ -2,7 +2,7 @@
 
 > **Dự án:** SE Knowledge — bản đồ tri thức môn học FPTU-SE, desktop local-first
 > **Phạm vi tài liệu:** toàn bộ phần AI (3 màn hình dùng AI + tầng dịch vụ phía sau)
-> **Cập nhật:** 2026-09-23 · mọi con số trong file đều đo trên CSDL thật 64 môn / 47 dòng điểm
+> **Cập nhật:** 2026-09-24 · mọi con số trong file đều đo trên CSDL thật 64 môn / 47 dòng điểm
 
 ---
 
@@ -40,6 +40,14 @@ Ba ràng buộc thiết kế xuyên suốt:
 ```
 
 Cả ba đi qua **cùng một hàm** `AiService.ask()`, nên streaming, retry, dự phòng model, thông báo bị cắt đều áp dụng đồng nhất — sửa một chỗ là cả ba được.
+
+Và cả ba hiển thị câu trả lời bằng **cùng một widget** `LinkedAnswerText`, vì lý do y hệt: ba bản sao thì sửa một chỗ quên hai chỗ kia. Widget này làm hai việc — render Markdown (`MarkdownBody`) và biến `[[MÃ MÔN]]` thành link mở note.
+
+Trước đây nó vẽ chữ thô, nên `**đậm**`, `### tiêu đề`, gạch đầu dòng mà model viết ra hiện nguyên dấu sao — câu trả lời đầy `*` rất khó đọc. `flutter_markdown` vốn đã có sẵn trong `pubspec` nhưng chưa dùng tới.
+
+Chỗ dễ sót: mã môn thật có dạng `SE_COM*2`, `PHE_COM*1` — chứa đúng hai ký tự Markdown dùng cho in đậm/nghiêng. Không thoát thì nhãn link vỡ, nên hàm `wikiLinksToMarkdown()` escape `*` và `_` trong nhãn mà vẫn giữ mã gốc trong URL. Hàm thuần, tách khỏi widget để test được mà không cần dựng UI.
+
+Cỡ tiêu đề bị ghi đè nhỏ lại (`h1`..`h4` chỉ nhỉnh hơn chữ thường 0–3pt): khung chat hẹp, để cỡ mặc định của theme thì một dòng `###` chiếm gần hết bề ngang.
 
 ### 2.1 Chat tổng quát
 
@@ -104,7 +112,7 @@ Câu hỏi
   │
   ├─ 3. Tách khái niệm
   │     • bỏ dấu tiếng Việt, tách từ
-  │     • lọc 91 stopword
+  │     • lọc 96 stopword
   │     • cụm 2 từ liền nhau (vì bỏ dấu xong "đồ"/"đó" đều thành "do")
   │     • bảng viết tắt: AI → artificial intelligence, CSDL → database…
   │       (viết tắt 2 chữ chỉ bung khi gõ HOA: "hướng AI" ✓, "Ai là ai" ✗)
@@ -115,6 +123,7 @@ Câu hỏi
   │
   ├─ 5. Chấm điểm từng môn
   │     mã môn 4đ  >  tên môn 2đ  >  mô tả 1đ
+  │     khớp ở MÔ TẢ chỉ được tính khi khái niệm đủ hiếm (mục 3.5)
   │     giữ môn ≥ 2/3 điểm cao nhất, tối đa 5 hạt giống
   │     hoà điểm → xếp theo mã môn (kết quả ổn định)
   │     nếu câu hỏi ĐÃ có mã môn đầy đủ → chỉ nhận thêm môn khớp chắc chắn
@@ -172,7 +181,36 @@ Kiểm chứng trên dữ liệu thật:
 | `học về software thì sao` | không — hỏi rộng theo chủ đề |
 | `gợi ý lộ trình học` | không — toàn cục |
 
-### 3.5 Bảng điểm trong ngữ cảnh
+### 3.5 Trường `description` chứa nguyên văn đề cương, không phải mô tả ngắn
+
+Hỏi *"đánh giá kỹ năng lập trình"* thì ngữ cảnh trích cả `DNH103` — môn nhạc cụ. Hỏi *"trình độ tiếng Nhật"* thì trích `VOV114/124/134` — môn võ Vovinam.
+
+Nguyên nhân không nằm ở thuật toán mà ở **dữ liệu**. Cái tên `description` gợi ý một dòng mô tả ngắn, nhưng khâu nhập FAP đổ nguyên đề cương vào đó:
+
+```
+VOV114.description = "Mục tiêu: Học phần là trang bị cho sinh viên
+                      những tri thức cơ bản về môn võ Vov..."
+```
+
+Hàng trăm chữ như vậy thì môn nào có đề cương cũng gần như chắc chắn chứa mấy từ chung chung của câu hỏi — *đánh giá*, *trình độ*, *kiến thức*, *sinh viên*. Thang 1 điểm cho mô tả vốn đã thấp nhất, nhưng vẫn đủ để chen vào 5 suất hạt giống khi câu hỏi không có mã môn.
+
+Sửa hai lớp:
+
+1. **Khớp ở mô tả chỉ được tính khi khái niệm đủ hiếm** (≤2 môn, tức cờ `specific` ở bước 4). `cấu trúc dữ liệu` thì nhận, `đánh giá` rải khắp mọi đề cương thì không.
+2. Thêm *đánh / giá / năng / kiến / thức* vào stopword.
+
+Đo lại trên dữ liệu thật:
+
+| Câu hỏi | Trước | Sau |
+|---|---|---|
+| `đánh giá kỹ năng lập trình` | **DNH103** (nhạc cụ), SSG104, JPD316, ENW493C, PRF192 | **PRF192, PRM393, PRO192, PRO192C** + ENW493C |
+| `trình độ tiếng Nhật` | JPD316, **VOV114/124/134** (võ), JIS401 | **JIS401, JPD113, JPD123** |
+
+Siết được ở mô tả vì chỉ **17/64 môn** có đề cương — bước này gần như không mất tín hiệu thật, chỉ chặn nhiễu.
+
+`ENW493C` (*Kỹ năng viết học thuật*) còn sót ở câu đầu, và **cố ý để nguyên**: nó khớp ở **tên môn**, tức đúng chỗ tín hiệu thật nằm. Muốn chặn nó thì phải đòi tên môn cũng khớp cụm hiếm — mà `tiếng nhật` có ở 5 môn, `kỹ năng` 5 môn, `giao tiếp` 3 môn, siết vào đó là mất luôn cả nhóm JPD. Đổi một dòng thừa ~20 token lấy nguy cơ đó thì không đáng. Nó cũng không đủ tin nên không kéo theo đề cương.
+
+### 3.6 Bảng điểm trong ngữ cảnh
 
 Chỉ gửi khi công tắc *"Gửi bảng điểm kèm câu hỏi"* trong Cài đặt còn bật — kiểm tra ngay tại nguồn, không chỉ ẩn nút ở UI.
 
@@ -226,17 +264,24 @@ Chọn sai cũng không mất tính năng: 404/400 → lùi về model chính ng
 Hoàn toàn **tự động, không cấu hình**: 503 ập tới giữa buổi demo thì không ai kịp vào Cài đặt.
 
 ```
-model chính → 503 → thử lại 0.8s → 2s → vẫn hỏng
-  → gemini-3.5-flash  → 404 (key không có quyền)? đi tiếp
-  → gemini-2.5-flash  → OK → trả lời + ghi chú model nào đã viết
-  → hết ứng viên      → ném lại lỗi 503 gốc
+model chính → 503 (hoặc hết 45s không ra chữ nào)
+            → thử lại 0.8s → 2s → vẫn hỏng
+  → gemini-3.5-flash  → 404 (key không có quyền)? ghi vào "đã thử", đi tiếp
+  → gemini-2.5-flash  → OK → trả lời + ghi chú model nào viết, đã thử những gì
+  → hết ứng viên      → ném lại lỗi gốc
 ```
 
-Cố ý **không** dùng chung ô "model tác vụ phụ": ô đó chọn theo rẻ/nhanh, còn chỗ này thay model chính trả lời người dùng nên cần model mạnh. Danh sách dự phòng xếp Flash đầy đủ trước Flash-Lite.
+Cố ý **không** dùng chung ô "model tác vụ phụ": ô đó chọn theo rẻ/nhanh, còn chỗ này thay model chính trả lời người dùng nên cần model mạnh. Danh sách dự phòng xếp Flash đầy đủ trước Flash-Lite. Hai thứ tách bạch hoàn toàn — chọn `gemini-2.5-flash-lite` cho tác vụ phụ không hề làm đường dự phòng đổi thứ tự.
 
-Chỉ đổi model với lỗi quá tải (429/5xx). Sai key, request hỏng, sai tên model thì đổi cũng vô ích.
+Chỉ đổi model với lỗi quá tải (429/5xx) **và timeout**. Sai key, request hỏng, sai tên model thì đổi cũng vô ích.
 
-**Luôn ghi rõ model nào đã trả lời** — im lặng còn tệ hơn báo lỗi, vì người dùng sẽ tưởng model mình chọn viết dở.
+Timeout được tính là quá tải sau khi quan sát thực tế: model chính chậm tới mức hết 45s mà chưa ra chunk nào thì về bản chất cũng là đang quá tải, nhưng `TimeoutException` trước đây bị bắt ở tầng ngoài — nằm **sau** nhánh dự phòng — nên người dùng nhận khung đỏ *"Nhà cung cấp AI phản hồi quá chậm"* trong khi vẫn còn hai model rảnh chưa ai thử. Nay cả hai nhánh lỗi cùng gọi một closure `runFallback()`.
+
+**Luôn ghi rõ model nào đã trả lời, và những model nào đã thử mà hỏng** — im lặng còn tệ hơn báo lỗi. Thiếu vế thứ hai thì nhìn như app nhảy cóc qua `gemini-3.5-flash` xuống thẳng `gemini-2.5-flash`, trong khi thật ra nó có thử và bị từ chối.
+
+Trang Cài đặt in nguyên chuỗi này ngay dưới ô chọn model, kèm dòng nói rõ danh sách cố định và model nào key không dùng được thì tự bỏ qua — để khi ghi chú kia hiện lên giữa buổi demo thì người dùng đã biết trước nó là gì.
+
+**Đã xác nhận chạy thật**: gặp 503 trong lúc dùng, câu trả lời trả về kèm dòng *"(Model chính đang quá tải nên câu trả lời này do gemini-2.5-flash viết.)"*
 
 ---
 
@@ -256,7 +301,7 @@ Chỉ đổi model với lỗi quá tải (429/5xx). Sai key, request hỏng, sa
 
 | Hằng số | Giá trị | Ý nghĩa |
 |---|---|---|
-| `timeout` | 45s | Khoảng chờ **giữa hai chunk**, không phải tổng — câu dài không bị cắt oan |
+| `timeout` | 45s | Khoảng chờ **giữa hai chunk**, không phải tổng — câu dài không bị cắt oan. Hết giờ ⇒ coi như quá tải, chuyển model dự phòng |
 | `maxOutputTokens` | 4096 | |
 | `maxHistoryMessages` | 8 | Chỉ gửi lại 8 tin gần nhất, **lọc bỏ tin báo lỗi cũ** |
 | `maxRetryAttempts` | 2 | Giãn 0.8s → 2s |
@@ -305,13 +350,14 @@ Câu *"tôi muốn làm AI Engineer nên học gì"*: **~4610 → ~866 token**, 
 | `sse_event_test.dart` | 21 | Gom sự kiện SSE, lọc `thought`, `finishReason`, phân loại lỗi tạm thời, xếp hàng model dự phòng |
 | `suggestion_lines_test.dart` | 6 | Làm sạch 4 câu gợi ý |
 | `academic_ai_cache_test.dart` | 6 | Cache nhận xét học lực, bỏ cache khi dữ liệu đổi, chịu được dữ liệu lưu hỏng |
-| **Tổng phần AI** | **65** | |
+| `linked_answer_markdown_test.dart` | 7 | Đổi `[[MÃ]]` thành link Markdown, bỏ alias/neo, mã không có thật, escape `*`/`_` |
+| **Tổng phần AI** | **72** | |
 
-Toàn dự án: **328 test — 325 pass / 3 fail**. Ba lỗi đều thuộc nhóm bảng điểm (`academic_analytics`, `transcript_db`, `transcript_parser`), nguyên nhân chung là thiếu file `test/fixtures/transcript/StudentTranscript_SE193040.xls`. **Không thuộc phân hệ AI.**
+Toàn dự án: **335 test — 332 pass / 3 fail**. Ba lỗi đều thuộc nhóm bảng điểm (`academic_analytics`, `transcript_db`, `transcript_parser`), nguyên nhân chung là thiếu file `test/fixtures/transcript/StudentTranscript_SE193040.xls`. **Không thuộc phân hệ AI.**
 
 `flutter analyze`: sạch.
 
-Nguyên tắc khi viết test: mọi logic quyết định được tách thành **hàm thuần** để test không cần mạng hay DB — `sseEventPayloads`, `geminiVisibleText`, `isTransientAiStatus`, `fallbackModelOrder`, `ambiguousCodeMatches`, `findSeeds`, `cleanSuggestionLines`.
+Nguyên tắc khi viết test: mọi logic quyết định được tách thành **hàm thuần** để test không cần mạng hay DB — `sseEventPayloads`, `geminiVisibleText`, `isTransientAiStatus`, `fallbackModelOrder`, `ambiguousCodeMatches`, `findSeeds`, `cleanSuggestionLines`, `wikiLinksToMarkdown`.
 
 ---
 
@@ -319,11 +365,13 @@ Nguyên tắc khi viết test: mọi logic quyết định được tách thành
 
 ### 8.1 Giới hạn thiết kế đã biết
 
-**Ngữ cảnh chi tiết vẫn cắt ở 20 môn khi có điểm.** Điểm của những môn bị cắt nay đã được gửi kèm dạng dòng gọn (mục 3.5), nên câu hỏi so sánh trả lời đúng được. Nhưng phần **mô tả, quan hệ tiên quyết, đề cương** của chúng thì vẫn không có — hỏi sâu về một môn nằm ngoài subgraph thì AI chỉ biết mỗi điểm số.
+**Ngữ cảnh chi tiết vẫn cắt ở 20 môn khi có điểm.** Điểm của những môn bị cắt nay đã được gửi kèm dạng dòng gọn (mục 3.6), nên câu hỏi so sánh trả lời đúng được. Nhưng phần **mô tả, quan hệ tiên quyết, đề cương** của chúng thì vẫn không có — hỏi sâu về một môn nằm ngoài subgraph thì AI chỉ biết mỗi điểm số.
 
 **Streaming chỉ chạy thật trên Desktop.** `package:http` trên web dùng `BrowserClient` gom trọn response rồi mới trả, nên `response.stream` chỉ phát một lần ở cuối. Hiện chưa phải vấn đề vì app chốt là desktop (SQLite FFI + `path_provider` vốn không chạy web), chỉ thành vấn đề nếu nhóm quay lại làm bản Web.
 
-**Chọn hạt giống vẫn còn nhiễu ở câu hỏi không có mã môn.** Bước lọc mới chỉ áp dụng khi câu hỏi đã ghi rõ mã (mục 3.3). Câu hỏi thuần chủ đề vẫn có thể kéo vài môn khớp mờ — chúng không đủ tin nên không tốn đề cương, chỉ thêm vài dòng.
+**Chọn hạt giống vẫn còn nhiễu nhẹ ở câu hỏi không có mã môn.** Nhiễu nặng đã hết: khớp ở phần mô tả nay phải là cụm hiếm (mục 3.5), nên môn nhạc cụ và môn võ không còn lọt vào. Còn lại là nhiễu **khớp ở tên môn** qua từ chung — hỏi *"kỹ năng lập trình"* vẫn kéo theo `ENW493C` (*Kỹ năng viết học thuật*) vì chữ "kỹ năng" nằm trong tên nó.
+
+Đây là **đánh đổi cố ý, không phải lỗi bỏ sót**. Tên môn là chỗ tín hiệu thật nằm; đòi tên môn cũng khớp cụm hiếm thì mất luôn `tiếng nhật` (5 môn), `kỹ năng` (5 môn), `giao tiếp` (3 môn). Những môn này không đủ tin nên không kéo theo đề cương — giá phải trả là một dòng, khoảng 20 token.
 
 ### 8.2 Nợ cấu trúc
 
@@ -347,6 +395,8 @@ Cả hai đều thuần chuyện sắp xếp code, không đổi gì với ngư�
 
 **Điểm mạnh nhất** không nằm ở số tính năng mà ở chỗ mọi quyết định đều **đo được và có test khoá lại**: 4610→866 token cho chat tổng quát, 2500→292 cho lời gọi phụ, 47/47 dòng điểm khớp đúng, ba lỗi streaming tìm ra bằng cách đo trên dữ liệu thật chứ không đoán.
 
-**Rủi ro còn lại đã thu hẹp đáng kể.** Ba màn hình đều đã chạy thử với API thật. Thứ duy nhất chưa chứng minh được bằng thực nghiệm là **đường dự phòng model** — nó chỉ kích hoạt khi nhà cung cấp trả 503 thật, không tạo ra chủ động được; logic có test nhưng đường end-to-end chưa từng thực thi.
+**Rủi ro còn lại đã thu hẹp đáng kể.** Ba màn hình đều đã chạy thử với API thật, và **đường dự phòng model nay cũng đã chạy thật** — 503 ập tới trong lúc dùng, app tự lùi sang `gemini-2.5-flash` và nói rõ điều đó trong câu trả lời. Đây từng là hạng mục duy nhất chỉ có test mà chưa có bằng chứng end-to-end.
+
+Chính lần chạy thật đó lộ ra một lỗ còn lại: `TimeoutException` không kích hoạt dự phòng (mục 4.2). Đáng ghi lại vì nó minh hoạ đúng giới hạn của test đơn vị — `fallbackModelOrder()` đúng, nhưng chỗ gọi nó thì thiếu một nhánh.
 
 Những gì còn lại trong mục 8 đều **không chặn việc nộp bài**: giới hạn thiết kế đã được ghi rõ và có cách giảm nhẹ, nợ cấu trúc thuần chuyện sắp xếp code, còn bốn mục ở 8.3 nằm ngoài phân hệ AI và cần người phụ trách phần đó xử lý.

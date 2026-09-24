@@ -714,7 +714,57 @@ class _SettingsPageState extends State<SettingsPage> {
             color: AppColors.textSecondary,
           ),
         ),
+        const SizedBox(height: 12),
+        _fallbackChainNote(),
       ],
+    );
+  }
+
+  /// Nói rõ chuỗi model dự phòng, vì nó chạy tự động và không có ô cấu hình
+  /// nào — không ghi ra thì người dùng thấy câu trả lời do model lạ viết mà
+  /// không hiểu ở đâu ra.
+  Widget _fallbackChainNote() {
+    final chain = AppConstants.fallbackModelsOf(_provider);
+    if (chain.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.shield_outlined, size: 15, color: AppColors.primary),
+              const SizedBox(width: 6),
+              Text(
+                'Khi model chính quá tải',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'App thử lại 2 lần, vẫn hỏng thì lần lượt chuyển sang: '
+            '${chain.join(" → ")}. Model nào tài khoản bạn không dùng được '
+            'thì tự bỏ qua. Câu trả lời sẽ ghi rõ model nào đã viết. '
+            'Danh sách này cố định, không cần cấu hình.',
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.5,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

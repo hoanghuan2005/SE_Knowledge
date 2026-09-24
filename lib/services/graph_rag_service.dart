@@ -472,7 +472,15 @@ class GraphRagService {
       // cương. "engineer" khớp tên 4 môn kỹ thuật không nói lên câu hỏi đang
       // nhắm vào môn nào trong số đó.
       if (inStrongField && concept.specific) matchedStrongField = true;
-      if (inStrongField || hitForm.contains(' ')) reliable = true;
+
+      // Trường `description` thực chất chứa nguyên văn đề cương, dài hàng
+      // trăm chữ — môn nào có đề cương là gần như chắc chắn chứa mấy từ
+      // chung chung của câu hỏi ("đánh giá", "trình độ", "kiến thức"). Vì
+      // vậy khớp ở đó chỉ được tính khi cụm từ đủ hiếm: "cấu trúc dữ liệu"
+      // (1-2 môn) thì nhận, còn "đánh giá" (rải khắp mọi đề cương) thì không.
+      if (inStrongField || (hitForm.contains(' ') && concept.specific)) {
+        reliable = true;
+      }
     }
     return (
       score: score,
@@ -848,6 +856,10 @@ class GraphRagService {
     // bình", nên để lại chỉ tổ khớp bừa vào tên/mô tả rồi chen chỗ của môn
     // thật — đúng ca "điểm trung bình csd và swr" đã gặp.
     'diem', 'trung', 'binh',
+    // Động từ và danh từ chung của chính câu hỏi. "đánh giá", "kỹ năng",
+    // "trình độ" có mặt trong tên hoặc đề cương của rất nhiều môn, nên giữ
+    // lại thì hỏi "kỹ năng lập trình" lại ra môn "Kỹ năng giao tiếp".
+    'danh', 'gia', 'nang', 'kien', 'thuc',
   };
 
   /// Dấu hiệu câu hỏi nhắm tới cả chương trình chứ không tới một môn nào.
