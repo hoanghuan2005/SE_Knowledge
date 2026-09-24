@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/chat_message.dart';
 import 'ai_service.dart';
@@ -11,9 +14,99 @@ import 'ai_service.dart';
 /// Obsidian Vault nếu đã xuất ra, hoặc mô tả lưu trong CSDL nếu chưa) — nên
 /// gọi `AiService.ask(..., extraContext: ...)` thay vì bật Graph RAG.
 ///
-/// Lưu theo bộ nhớ (`Map<subjectId, ...>`), không ghi xuống đĩa: mất khi tắt
-/// app, giống một "phiên hỏi nhanh" chứ không phải lịch sử chat lâu dài như
-/// `ChatSessionService`.
+/// Chat được **ghi xuống đĩa** qua `SharedPreferences`, mở lại app vẫn còn.
+/// App là "second brain" local-first, nên hỏi AI về một môn rồi tuần sau quay
+/// lại thấy trắng trơn là mâu thuẫn với chính tiền đề đó.
+///
+/// Nhưng có trần, vì `SharedPreferences` nạp TOÀN BỘ vào RAM lúc khởi động:
+/// không chặn thì sau vài tuần dùng, 64 môn × chat dài thành một chuỗi JSON
+/// vài trăm KB phải decode mỗi lần mở app. Xem [trimForStorage].
+///
+/// Câu hỏi gợi ý và đoạn chữ đang stream thì KHÔNG lưu: gợi ý phải đổi theo
+/// đề cương nên cần vân tay dữ liệu mới lưu đúng được (giống cache bên tab
+/// Học lực), còn đoạn stream dở vốn đã thành tin nhắn hoàn chỉnh.
+
+/// Số tin nhắn giữ lại cho mỗi môn.
+///
+/// `AiService.maxHistoryMessages` = 8, tức chỉ 8 tin cuối được gửi cho AI.
+/// Giữ nhiều hơn chỉ có giá trị đọc lại, nên 12 (6 lượt hỏi đáp) là đủ.
+const int maxStoredMessagesPerSubject = 12;
+
+/// Số môn giữ lại, tính theo môn có hoạt động gần nhất.
+const int maxStoredSubjects = 12;
+
+/// Cắt bớt lịch sử chat cho vừa trần trước khi ghi xuống đĩa.
+///
+/// Giữ **tin mới nhất** trong mỗi môn, và giữ **môn có hoạt động gần nhất**
+/// — đo bằng thời điểm của tin cuối cùng, chứ không phải thứ tự trong Map.
+/// Môn rỗng bị bỏ hẳn để không chiếm suất của môn có chat thật.
+///
+/// Hàm thuần, tách khỏi service để test được mà không cần SharedPreferences.
+Map<int, List<ChatMessage>> trimForStorage(
+  Map<int, List<ChatMessage>> messages,
+) {
+  final withContent = <int, List<ChatMessage>>{};
+  for (final entry in messages.entries) {
+    if (entry.value.isEmpty) continue;
+    withContent[entry.key] = entry.value.length <= maxStoredMessagesPerSubject
+        ? List<ChatMessage>.from(entry.value)
+        : entry.value
+            .sublist(entry.value.length - maxStoredMessagesPerSubject)
+            .toList();
+  }
+
+  if (withContent.length <= maxStoredSubjects) return withContent;
+
+  final byRecency = withContent.keys.toList()
+    ..sort((a, b) {
+      final at = withContent[a]!.last.at;
+      final bt = withContent[b]!.last.at;
+      final byTime = bt.compareTo(at);
+      // Hai môn cùng mốc thời gian (test, hoặc hai tin trong cùng mili giây)
+      // thì xếp theo id để kết quả không phụ thuộc thứ tự duyệt Map.
+      return byTime != 0 ? byTime : a.compareTo(b);
+    });
+
+  return {
+    for (final id in byRecency.take(maxStoredSubjects)) id: withContent[id]!,
+  };
+}
+
+/// Bóc chuỗi JSON đã lưu thành lịch sử chat theo môn.
+///
+/// Dữ liệu hỏng thì trả về rỗng chứ không ném lỗi: mất lịch sử chat khó chịu
+/// hơn nhiều nếu nó làm app không mở lên được. Bỏ qua từng khoá hỏng thay vì
+/// vứt cả tệp, để một môn lỗi không kéo theo các môn còn lại.
+///
+/// Hàm thuần, tách khỏi service để test được mà không cần SharedPreferences.
+Map<int, List<ChatMessage>> parseStoredHistory(String? raw) {
+  if (raw == null || raw.isEmpty) return {};
+  final Map<String, dynamic> decoded;
+  try {
+    final value = jsonDecode(raw);
+    if (value is! Map<String, dynamic>) return {};
+    decoded = value;
+  } catch (_) {
+    return {};
+  }
+
+  final result = <int, List<ChatMessage>>{};
+  for (final entry in decoded.entries) {
+    final id = int.tryParse(entry.key);
+    if (id == null) continue;
+    try {
+      final list = entry.value as List;
+      final messages = [
+        for (final m in list) ChatMessage.fromJson(m as Map<String, dynamic>),
+      ];
+      if (messages.isNotEmpty) result[id] = messages;
+    } catch (_) {
+      continue;
+    }
+  }
+  return result;
+}
+
 class SubjectChatService extends ChangeNotifier {
   SubjectChatService._();
   static final SubjectChatService instance = SubjectChatService._();
@@ -28,6 +121,11 @@ class SubjectChatService extends ChangeNotifier {
   /// Để ở service chứ không ở state của panel: người dùng bấm sang môn khác
   /// giữa chừng rồi quay lại thì vẫn thấy đúng đoạn đang chạy dở.
   final Map<int, String> _streamingText = {};
+
+  static const String _storageKey = 'subject_chat_history_v1';
+
+  /// Chặn nạp lại đè lên tin nhắn vừa gửi trong phiên này.
+  bool _restored = false;
 
   List<ChatMessage> messagesOf(int subjectId) =>
       List.unmodifiable(_messages[subjectId] ?? const []);
@@ -51,6 +149,47 @@ class SubjectChatService extends ChangeNotifier {
     _suggestions.remove(subjectId);
     _streamingText.remove(subjectId);
     notifyListeners();
+    _save();
+  }
+
+  /// Nạp lịch sử chat đã lưu. Gọi một lần lúc khởi động app.
+  ///
+  /// Đọc đĩa hỏng thì bỏ qua và đi tiếp — xem [parseStoredHistory].
+  Future<void> restore() async {
+    if (_restored) return;
+    _restored = true;
+    try {
+      final raw =
+          (await SharedPreferences.getInstance()).getString(_storageKey);
+      _messages.addAll(parseStoredHistory(raw));
+      notifyListeners();
+    } catch (_) {
+      // Không đọc được SharedPreferences thì mở app với lịch sử rỗng.
+    }
+  }
+
+  /// Ghi xuống đĩa sau khi cắt cho vừa trần.
+  ///
+  /// Không `await` ở chỗ gọi: người dùng không cần đợi đĩa mới thấy tin nhắn
+  /// hiện ra, và lỗi ghi cũng không nên chặn cuộc hội thoại.
+  Future<void> _save() async {
+    try {
+      final trimmed = trimForStorage(_messages);
+      final prefs = await SharedPreferences.getInstance();
+      if (trimmed.isEmpty) {
+        await prefs.remove(_storageKey);
+        return;
+      }
+      await prefs.setString(
+        _storageKey,
+        jsonEncode({
+          for (final e in trimmed.entries)
+            '${e.key}': [for (final m in e.value) m.toJson()],
+        }),
+      );
+    } catch (_) {
+      // Ghi hỏng thì thôi, phiên hiện tại vẫn chạy bình thường trong RAM.
+    }
   }
 
   /// Sinh 4 câu hỏi gợi ý từ nội dung môn học. Chỉ chạy MỘT LẦN cho mỗi môn:
@@ -129,6 +268,10 @@ class SubjectChatService extends ChangeNotifier {
       _streamingText.remove(subjectId);
       _sending.remove(subjectId);
       notifyListeners();
+      // Ghi ở `finally` để cả câu trả lời lẫn tin báo lỗi đều được lưu —
+      // mở lại app mà thấy câu hỏi treo lơ lửng không có hồi đáp thì khó
+      // hiểu hơn là thấy đúng thông báo lỗi đã hiện lúc đó.
+      _save();
     }
   }
 

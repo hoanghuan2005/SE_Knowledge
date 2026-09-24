@@ -5,6 +5,7 @@ import 'services/chat_session_service.dart';
 import 'services/db_service.dart';
 import 'services/md_intake_service.dart';
 import 'services/settings_service.dart';
+import 'services/subject_chat_service.dart';
 import 'state/app_state.dart';
 import 'utils/app_constants.dart';
 import 'utils/app_theme.dart';
@@ -28,6 +29,7 @@ Future<void> main(List<String> args) async {
 
   await SettingsService.instance.init();
   await ChatSessionService.instance.init();
+  await SubjectChatService.instance.restore();
   await AppState.instance.bootstrap();
 
   // Cổng nhận markdown từ extension Chrome. Hỏng thì chỉ ghi `lastError`,

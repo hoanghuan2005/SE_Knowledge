@@ -10,6 +10,7 @@ import '../../services/obsidian_service.dart';
 import '../../services/subject_chat_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/ui_helpers.dart';
 import 'linked_answer_text.dart';
 
 /// Khung chat AI thu gọn, gắn theo TỪNG môn học — hiện trong sidebar bên phải
@@ -298,6 +299,8 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
 
         return Column(
           children: [
+            if (subjectId != null && messages.isNotEmpty)
+              _historyBar(subjectId, messages.length),
             Expanded(
               child: _loadingContext
                   ? const Center(
@@ -330,6 +333,54 @@ class _SubjectChatPanelState extends State<SubjectChatPanel> {
         );
       },
     );
+  }
+
+  /// Thanh nhỏ trên đầu khung chat: nói rõ lịch sử được lưu lại, và cho xoá.
+  ///
+  /// Chỉ hiện khi đã có tin nhắn — môn chưa hỏi gì thì thanh này chỉ chiếm
+  /// chỗ của khối câu hỏi gợi ý.
+  ///
+  /// Có nút xoá vì lịch sử nay nằm trên đĩa: không có nút thì muốn bỏ chat
+  /// một môn chỉ còn cách xoá dữ liệu cả app.
+  Widget _historyBar(int subjectId, int count) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        border: Border(bottom: BorderSide(color: AppColors.border)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.history, size: 13, color: AppColors.textSecondary),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '$count tin nhắn · đã lưu trên máy',
+              style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Xoá chat của môn này',
+            icon: const Icon(Icons.delete_outline, size: 15),
+            visualDensity: VisualDensity.compact,
+            color: AppColors.textSecondary,
+            onPressed: () => _clearChat(subjectId),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _clearChat(int subjectId) async {
+    final ok = await Ui.confirm(
+      context,
+      title: 'Xoá chat của ${widget.subject.code}?',
+      message: 'Toàn bộ hội thoại đã lưu của môn này sẽ bị xoá khỏi máy. '
+          'Chat của các môn khác không bị ảnh hưởng.',
+      confirmLabel: 'Xoá',
+      destructive: true,
+    );
+    if (ok) SubjectChatService.instance.clear(subjectId);
   }
 
   Widget _suggestionsBlock(int? subjectId) {

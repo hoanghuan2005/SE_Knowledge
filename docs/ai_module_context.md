@@ -74,7 +74,23 @@ Khi có cả (3) và (4), prompt chèn thêm dòng dặn **lấy đề cương l
 
 **Bốn câu hỏi gợi ý** tự sinh khi mở môn, cache theo môn trong RAM (mỗi môn gọi AI đúng 1 lần/phiên). Lời gọi này dùng đường riêng rẻ hơn — xem mục 4.
 
-**Phiên chat giữ trong RAM** (`Map<subjectId, …>`), gồm cả phần chữ đang stream — chuyển sang môn khác rồi quay lại vẫn thấy đoạn đang chảy dở.
+**Phiên chat giữ theo `Map<subjectId, …>`**, gồm cả phần chữ đang stream — chuyển sang môn khác rồi quay lại vẫn thấy đoạn đang chảy dở. Map nằm ở service chứ không ở state của panel, chính vì vậy.
+
+**Lịch sử chat được ghi xuống đĩa, có trần.** Trước đây chỉ nằm trong RAM và mất khi tắt app. App là "second brain" local-first, nên hỏi AI về một môn rồi tuần sau mở lại thấy trắng trơn là mâu thuẫn với chính tiền đề đó — mà chat tổng quát thì đã lưu rồi, để lệch nhau còn khó giải thích hơn.
+
+Trần cần thiết vì `SharedPreferences` nạp **toàn bộ** vào RAM lúc khởi động: không chặn thì sau vài tuần dùng, 64 môn × chat dài thành một chuỗi JSON vài trăm KB phải decode mỗi lần mở app.
+
+| | Giá trị | Vì sao |
+|---|---|---|
+| Tin nhắn mỗi môn | **12** | `maxHistoryMessages` = 8, tức chỉ 8 tin cuối được gửi cho AI; giữ nhiều hơn chỉ có giá trị đọc lại |
+| Số môn | **12** | Theo môn có hoạt động gần nhất, đo bằng mốc thời gian tin cuối |
+| Xấu nhất | ~145KB | Một câu trả lời AI cỡ 1200 ký tự |
+
+Không lưu **câu hỏi gợi ý**: chúng phải đổi theo đề cương, muốn lưu đúng thì cần vân tay dữ liệu như cache bên tab Học lực — việc riêng, chưa làm. Cũng không lưu đoạn chữ đang stream, vì nó đã thành tin nhắn hoàn chỉnh rồi.
+
+Ghi ở `finally`, nên cả câu trả lời lẫn tin báo lỗi đều được lưu — mở lại app mà thấy câu hỏi treo lơ lửng không có hồi đáp thì khó hiểu hơn là thấy đúng thông báo lỗi đã hiện lúc đó.
+
+**Nút xoá chat từng môn** nằm trên thanh đầu khung chat, kèm số tin nhắn và dòng *"đã lưu trên máy"*. Hàm `clear()` có sẵn từ trước nhưng chưa nút nào gọi; khi lịch sử còn nằm trong RAM thì thiếu nút cũng không sao, nhưng đã ghi xuống đĩa mà không có cách xoá thì muốn bỏ chat một môn chỉ còn cách xoá dữ liệu cả app.
 
 ### 2.3 Phân tích học lực
 
@@ -408,13 +424,14 @@ Câu *"tôi muốn làm AI Engineer nên học gì"*: **~4610 → ~866 token**, 
 | `graph_rag_test.dart` | 39 | Chọn hạt giống, lọc từ phổ thông, chặn nhiễu từ đề cương, mức tin cậy, viết tắt mã môn, hỏi lại khi mơ hồ, đề cương rút gọn, tài liệu + link gốc |
 | `sse_event_test.dart` | 21 | Gom sự kiện SSE, lọc `thought`, `finishReason`, phân loại lỗi tạm thời, xếp hàng model dự phòng |
 | `suggestion_lines_test.dart` | 6 | Làm sạch 4 câu gợi ý |
+| `subject_chat_history_test.dart` | 12 | Cắt trần theo tin/theo môn, bóc dữ liệu hỏng, vòng lưu–nạp lại |
 | `academic_ai_cache_test.dart` | 6 | Cache nhận xét học lực, bỏ cache khi dữ liệu đổi, chịu được dữ liệu lưu hỏng |
 | `linked_answer_markdown_test.dart` | 18 | Đổi `[[MÃ]]` và mã viết rời thành link, bỏ alias/neo, mã không có thật, escape `*`/`_`, chừa khối code và link sẵn có, URL viết trần thành link bấm được |
 | `openai_provider_test.dart` | 10 | Tham số theo họ model GPT-5/6, tính nhất quán của ba danh sách model |
 | `ai_provider_keys_test.dart` | 6 | Mỗi nhà cung cấp giữ API key / model / model phụ riêng |
-| **Tổng phần AI** | **106** | |
+| **Tổng phần AI** | **118** | |
 
-Toàn dự án: **369 test — 364 pass / 5 fail**, **không lỗi nào thuộc phân hệ AI**:
+Toàn dự án: **381 test — 376 pass / 5 fail**, **không lỗi nào thuộc phân hệ AI**:
 
 | Nhóm | Nguyên nhân |
 |---|---|
@@ -423,7 +440,7 @@ Toàn dự án: **369 test — 364 pass / 5 fail**, **không lỗi nào thuộc 
 
 `flutter analyze`: sạch.
 
-Nguyên tắc khi viết test: mọi logic quyết định được tách thành **hàm thuần** để test không cần mạng hay DB — `sseEventPayloads`, `geminiVisibleText`, `isTransientAiStatus`, `fallbackModelOrder`, `ambiguousCodeMatches`, `findSeeds`, `cleanSuggestionLines`, `wikiLinksToMarkdown`, `openAiUsesReasoningParams`, `openAiRequestBody`.
+Nguyên tắc khi viết test: mọi logic quyết định được tách thành **hàm thuần** để test không cần mạng hay DB — `sseEventPayloads`, `geminiVisibleText`, `isTransientAiStatus`, `fallbackModelOrder`, `ambiguousCodeMatches`, `findSeeds`, `cleanSuggestionLines`, `wikiLinksToMarkdown`, `openAiUsesReasoningParams`, `openAiRequestBody`, `trimForStorage`, `parseStoredHistory`.
 
 ---
 
@@ -447,6 +464,8 @@ Nguyên tắc khi viết test: mọi logic quyết định được tách thành
 - Câu hỏi 4 phần của màn Học lực (`_analysisQuestion`) nằm trong `AcademicPage`.
 
 Cả hai đều thuần chuyện sắp xếp code, không đổi gì với người dùng, và có rủi ro làm gãy thứ đang chạy tốt. Đáng làm nếu được chấm điểm kiến trúc, không đáng nếu sắp hết thời gian.
+
+**Chat tổng quát chưa có trần nào.** `ChatSessionService` ghi mọi đoạn chat vào một khoá `SharedPreferences` duy nhất, không giới hạn số đoạn lẫn số tin trong mỗi đoạn. Đây đúng rủi ro mà chat theo môn vừa chặn bằng `trimForStorage` (mục 2.2), nhưng ở surface đang được dùng nhiều hơn. Chưa thành vấn đề vì dữ liệu còn nhỏ, và sửa thì đụng vào các đoạn chat người dùng đang có nên cần cân nhắc cách cắt. Dùng lại được `trimForStorage` gần như nguyên vẹn.
 
 ### 8.3 Ngoài phân hệ AI nhưng ảnh hưởng trực tiếp
 
