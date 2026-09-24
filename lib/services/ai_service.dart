@@ -93,6 +93,46 @@ List<String> fallbackModelOrder({
 bool isTransientAiStatus(int status) =>
     status == 429 || (status >= 500 && status <= 599);
 
+/// Dòng model suy luận của OpenAI có hợp đồng tham số khác dòng cũ.
+///
+/// Từ GPT-5 và các dòng `o` trở đi, `/chat/completions` **từ chối** `max_tokens`
+/// (phải đổi sang `max_completion_tokens`) và chỉ nhận `temperature` mặc định.
+/// Gửi sai thì API trả 400 — mà 400 bị [isModelUnavailableStatus] coi là "model
+/// không dùng được", nên triệu chứng ngoài app là chọn model nào cũng lặng lẽ
+/// tụt về model chính, chứ không hiện ra là lỗi tham số.
+///
+/// Nhận diện theo họ model chứ không theo danh sách tên cụ thể, để bản mới ra
+/// sau không phải sửa code.
+bool openAiUsesReasoningParams(String model) {
+  final id = model.trim().toLowerCase();
+  if (RegExp(r'^o\d').hasMatch(id)) return true;
+  final match = RegExp(r'^gpt-(\d+)').firstMatch(id);
+  if (match == null) return false;
+  return int.parse(match.group(1)!) >= 5;
+}
+
+/// Dựng phần thân request cho `/chat/completions`, tách theo họ model.
+///
+/// Hàm thuần, tách khỏi [AiService] để test được mà không cần gọi mạng.
+Map<String, Object?> openAiRequestBody({
+  required String model,
+  required List<Map<String, String>> messages,
+  required int maxOutputTokens,
+}) {
+  final reasoning = openAiUsesReasoningParams(model);
+  return {
+    'model': model,
+    'messages': messages,
+    // Dòng suy luận chỉ chấp nhận temperature mặc định, gửi kèm là 400.
+    if (!reasoning) 'temperature': 0.4,
+    if (reasoning)
+      'max_completion_tokens': maxOutputTokens
+    else
+      'max_tokens': maxOutputTokens,
+    'stream': true,
+  };
+}
+
 /// Lấy phần chữ **hiển thị được** từ một chunk SSE của Gemini.
 ///
 /// Model đời mới trả kèm những `parts` gắn cờ `thought: true` — đó là phần
@@ -195,7 +235,10 @@ class AiService {
   Future<AiAnswer> ask({
     required String question,
     List<ChatMessage> history = const [],
+    /// Khung chương trình đào tạo cụ thể được chọn cho phiên chat này.
+    String? curriculumCode,
     bool includeKnowledgeContext = true,
+
     /// Ngữ cảnh cố định do màn hình gọi tự cung cấp (ví dụ nội dung file .md
     /// của một môn cụ thể). Khi có giá trị này, Graph RAG bị bỏ qua hoàn
     /// toàn — dùng cho chat theo từng môn học (xem `SubjectChatService`),
@@ -242,7 +285,10 @@ class AiService {
 
     GraphRagContext? ragContext;
     if (extraContext == null && includeKnowledgeContext) {
-      ragContext = await _graphRag.buildContext(question);
+      ragContext = await _graphRag.buildContext(
+        question,
+        curriculumCode: curriculumCode,
+      );
       onContext?.call(ragContext.summary);
     }
 
@@ -251,6 +297,7 @@ class AiService {
         ? _minimalSystemPrompt(context)
         : _systemPrompt(
             context,
+            major: ragContext?.summary.curriculumName,
             hasGrades: extraContext != null
                 ? extraContextHasGrades
                 : (ragContext?.summary.includesTranscript ?? false),
@@ -278,8 +325,34 @@ class AiService {
     }
 
     try {
-      String text;
+      String? text;
       String? answeredByFallback;
+      final skipped = <String>[];
+
+      /// Thử lần lượt các model dự phòng, dừng ở cái đầu tiên trả lời được.
+      ///
+      /// Cố tình KHÔNG dùng model tác vụ phụ làm ứng viên: ô đó được chọn
+      /// theo tiêu chí rẻ và nhanh vì chỉ sinh câu hỏi gợi ý, còn chỗ này
+      /// phải thay model chính trả lời người dùng nên cần model mạnh. Danh
+      /// sách mặc định đã xếp sẵn theo độ mạnh.
+      Future<void> runFallback() async {
+        final order = fallbackModelOrder(
+          mainModel: mainModel,
+          candidates: AppConstants.fallbackModelsOf(provider),
+        );
+        for (final backup in order) {
+          try {
+            text = await dispatch(backup);
+            answeredByFallback = backup;
+            return;
+          } catch (_) {
+            // Ứng viên này không xong: key không được cấp model đó (404, trả
+            // về tức thì), hoặc chính nó cũng đang nghẽn. Ghi lại để nói cho
+            // người dùng biết đã thử những gì, rồi đi tiếp.
+            skipped.add(backup);
+          }
+        }
+      }
 
       try {
         text = await dispatch(usingLight ? lightModel : mainModel);
@@ -299,41 +372,27 @@ class AiService {
           // Việc chính chỉ đổi model khi nhà cung cấp quá tải. Sai key hay
           // request hỏng thì đổi model cũng vẫn hỏng, chỉ tổ chờ thêm.
           if (!isTransientAiStatus(e.statusCode ?? 0)) rethrow;
-
-          // Cố tình KHÔNG dùng model tác vụ phụ làm ứng viên dự phòng: ô đó
-          // được chọn theo tiêu chí rẻ và nhanh vì chỉ sinh câu hỏi gợi ý,
-          // còn chỗ này phải thay model chính trả lời người dùng nên cần
-          // model mạnh. Danh sách mặc định đã xếp sẵn theo độ mạnh.
-          final order = fallbackModelOrder(
-            mainModel: mainModel,
-            candidates: AppConstants.fallbackModelsOf(provider),
-          );
-
-          String? succeeded;
-          String? recovered;
-          for (final backup in order) {
-            try {
-              recovered = await dispatch(backup);
-              succeeded = backup;
-              break;
-            } on AiException {
-              // Ứng viên này không xong (key không có quyền, hoặc cũng đang
-              // nghẽn) — đi tiếp. Ca thường gặp nhất là 404 vì tài khoản
-              // không được cấp model đó, và 404 trả về ngay nên bước sang
-              // ứng viên sau gần như không tốn thêm thời gian.
-              continue;
-            }
-          }
+          await runFallback();
           // Hết ứng viên: ném lại đúng lỗi gốc của model chính, vì đó mới là
           // thứ người dùng cần biết.
-          if (succeeded == null || recovered == null) rethrow;
-          text = recovered;
-          answeredByFallback = succeeded;
+          if (text == null) rethrow;
+        }
+      } on TimeoutException {
+        // Model chậm tới mức hết giờ cũng là một kiểu quá tải, chỉ khác cách
+        // nhà cung cấp biểu hiện. Trước đây ca này rơi thẳng xuống khung lỗi
+        // đỏ trong khi các model khác vẫn rảnh.
+        if (usingLight) {
+          text = await dispatch(mainModel);
+        } else {
+          await runFallback();
+          if (text == null) {
+            throw AiException('Nhà cung cấp AI phản hồi quá chậm, thử lại sau.');
+          }
         }
       }
 
       return AiAnswer(
-        text: _appendFallbackNotice(text, answeredByFallback),
+        text: _appendFallbackNotice(text!, answeredByFallback, skipped),
         ragSummary: ragContext?.summary,
       );
     } on AiException {
@@ -391,12 +450,18 @@ class AiService {
   /// Quy tắc viết mã môn trong `[[...]]` là điều kiện để Citation Linker ở
   /// tầng UI biến chúng thành link bấm được — bỏ dòng đó thì AI trả về chữ
   /// thường và không còn link nào để bóc.
-  String _systemPrompt(String context, {bool hasGrades = false}) {
+  String _systemPrompt(
+    String context, {
+    String? major,
+    bool hasGrades = false,
+  }) {
+    final audience = (major != null && major.isNotEmpty)
+        ? 'sinh viên ngành $major FPTU'
+        : 'sinh viên FPTU';
     final sb = StringBuffer()
       ..writeln(
-        'Bạn là gia sư học tập trong ứng dụng SE Knowledge, giúp sinh viên '
-        'ngành Kỹ thuật phần mềm FPTU lập lộ trình học dựa trên đồ thị môn '
-        'tiên quyết của chính họ.',
+        'Bạn là gia sư học tập trong ứng dụng SE Knowledge, giúp $audience '
+        'lập lộ trình học dựa trên đồ thị môn tiên quyết của chính họ.',
       )
       ..writeln()
       ..writeln('Quy tắc trả lời:')
@@ -561,13 +626,13 @@ class AiService {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $apiKey',
       },
-      body: jsonEncode({
-        'model': model,
-        'messages': messages,
-        'temperature': 0.4,
-        'max_tokens': maxOutputTokens,
-        'stream': true,
-      }),
+      body: jsonEncode(
+        openAiRequestBody(
+          model: model,
+          messages: messages,
+          maxOutputTokens: maxOutputTokens,
+        ),
+      ),
       onDelta: onDelta,
       extract: (chunk) {
         final choices = chunk['choices'] as List?;
@@ -593,10 +658,19 @@ class AiService {
   /// Ghi chú được nhét thẳng vào nội dung tin nhắn chứ không để riêng ngoài
   /// UI, nhờ vậy cả ba màn hình dùng AI đều hiện được mà không phải sửa gì,
   /// và nó còn theo tin nhắn khi lưu lại phiên chat.
-  String _appendFallbackNotice(String text, String? fallbackModel) {
+  String _appendFallbackNotice(
+    String text,
+    String? fallbackModel,
+    List<String> skipped,
+  ) {
     if (fallbackModel == null) return text;
+    // Nêu cả những model đã thử mà không được: không có dòng này thì người
+    // dùng thấy app "nhảy cóc" qua model đứng trước trong danh sách mà không
+    // hiểu vì sao.
+    final tried = skipped.isEmpty ? '' : ' (đã thử ${skipped.join(", ")})';
     return '$text\n\n_(Model chính đang quá tải nên câu trả lời này do '
-        '$fallbackModel viết. Hỏi lại sau ít phút để dùng model chính.)_';
+        '$fallbackModel viết$tried. Hỏi lại sau ít phút để dùng model '
+        'chính.)_';
   }
 
   /// Nói thẳng khi câu trả lời bị cắt giữa chừng.

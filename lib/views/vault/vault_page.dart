@@ -109,28 +109,112 @@ class _VaultPageState extends State<VaultPage> {
                   ? state.vaultPath!
                   : 'Chưa chọn thư mục Vault',
               actions: [
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.folder_open, size: 18),
-                  label: Text(state.hasVault ? 'Đổi thư mục' : 'Chọn thư mục'),
-                  onPressed: _busy ? null : _pickVault,
+                SizedBox(
+                  height: 32,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.folder_open, size: 15),
+                    label: Text(
+                      state.hasVault ? 'Đổi thư mục' : 'Chọn thư mục',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(
+                        color: AppColors.border.withValues(alpha: 0.7),
+                        width: 0.8,
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 0,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                    onPressed: _busy ? null : _pickVault,
+                  ),
                 ),
                 const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('Quét lại'),
-                  onPressed: _busy || !state.hasVault ? null : _scan,
+                SizedBox(
+                  height: 32,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.refresh, size: 15),
+                    label: const Text(
+                      'Quét lại',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(
+                        color: AppColors.border.withValues(alpha: 0.7),
+                        width: 0.8,
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 0,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                    onPressed: _busy || !state.hasVault ? null : _scan,
+                  ),
                 ),
                 const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.upload_file, size: 18),
-                  label: const Text('Ghi ra Vault'),
-                  onPressed: _busy || !state.hasVault ? null : _export,
+                SizedBox(
+                  height: 32,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.upload_file, size: 15),
+                    label: const Text(
+                      'Ghi ra Vault',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(
+                        color: AppColors.border.withValues(alpha: 0.7),
+                        width: 0.8,
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 0,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                    onPressed: _busy || !state.hasVault ? null : _export,
+                  ),
                 ),
                 const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.download, size: 18),
-                  label: const Text('Nạp vào CSDL'),
-                  onPressed: _busy || !state.hasVault ? null : _import,
+                SizedBox(
+                  height: 32,
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.download, size: 15),
+                    label: const Text(
+                      'Nạp vào CSDL',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 0,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                    onPressed: _busy || !state.hasVault ? null : _import,
+                  ),
                 ),
               ],
             ),

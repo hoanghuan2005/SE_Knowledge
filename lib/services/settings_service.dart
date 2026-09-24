@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/graph_settings.dart';
+import '../models/mini_graph_pin.dart';
 import '../utils/app_constants.dart';
 
 /// Lưu cấu hình cục bộ: đường dẫn Obsidian Vault, nhà cung cấp AI, API key.
@@ -31,7 +34,8 @@ class SettingsService {
     if (legacyKey == null && legacyModel == null) return;
 
     final provider =
-        prefs.getString(AppConstants.keyAiProvider) ?? AppConstants.providerGemini;
+        prefs.getString(AppConstants.keyAiProvider) ??
+        AppConstants.providerGemini;
     if (legacyKey != null) {
       await prefs.setString(_apiKeyStorageKey(provider), legacyKey);
       await prefs.remove(AppConstants.keyAiApiKey);
@@ -42,8 +46,10 @@ class SettingsService {
     }
   }
 
-  String _apiKeyStorageKey(String provider) => '${AppConstants.keyAiApiKey}_$provider';
-  String _modelStorageKey(String provider) => '${AppConstants.keyAiModel}_$provider';
+  String _apiKeyStorageKey(String provider) =>
+      '${AppConstants.keyAiApiKey}_$provider';
+  String _modelStorageKey(String provider) =>
+      '${AppConstants.keyAiModel}_$provider';
   String _lightModelStorageKey(String provider) =>
       '${AppConstants.keyAiLightModel}_$provider';
 
@@ -149,6 +155,48 @@ class SettingsService {
     }
   }
 
+  // --- Cache nhận xét học lực của AI ---
+
+  static const String _keyAcademicAiCache = 'ACADEMIC_AI_CACHE';
+
+  /// Nhận xét AI đã sinh, kèm theo dấu vân tay của dữ liệu lúc sinh ra chúng.
+  ///
+  /// Đây là lời gọi nặng nhất trong app (gửi cả hồ sơ học lực), mà bảng điểm
+  /// thì hiếm khi đổi — mở lại tab rồi bấm lại là tốn tiền cho đúng một câu
+  /// trả lời y hệt. Trả về rỗng khi [signature] không khớp, tức dữ liệu đã
+  /// đổi và nhận xét cũ không còn đúng nữa.
+  Future<Map<String, String>> getAcademicAiAnswers(String signature) async {
+    final raw = (await _p).getString(_keyAcademicAiCache);
+    if (raw == null || raw.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map || decoded['signature'] != signature) return const {};
+      final answers = decoded['answers'];
+      if (answers is! Map) return const {};
+      return {
+        for (final entry in answers.entries)
+          if (entry.value is String) '${entry.key}': entry.value as String,
+      };
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  Future<void> setAcademicAiAnswers(
+    String signature,
+    Map<String, String> answers,
+  ) async {
+    final prefs = await _p;
+    if (answers.isEmpty) {
+      await prefs.remove(_keyAcademicAiCache);
+      return;
+    }
+    await prefs.setString(
+      _keyAcademicAiCache,
+      jsonEncode({'signature': signature, 'answers': answers}),
+    );
+  }
+
   // --- Theme ---
 
   Future<String> getThemeMode() async =>
@@ -197,5 +245,24 @@ class SettingsService {
 
   Future<void> setTargetGpa(double value) async =>
       (await _p).setDouble('target_gpa', value);
-}
 
+  // --- Đồ thị thu nhỏ ghim trên thanh bên ---
+
+  static const String _keyPinnedMiniGraphs = 'pinned_mini_graphs';
+
+  /// Các ô đồ thị thu nhỏ người dùng đã ghim, giữ nguyên thứ tự.
+  ///
+  /// Ô "toàn bộ môn" được lưu bằng [MiniGraphPins.allSentinel] vì
+  /// `setStringList` không nhận phần tử null.
+  Future<MiniGraphPins> getPinnedMiniGraphs() async =>
+      MiniGraphPins.decode((await _p).getStringList(_keyPinnedMiniGraphs));
+
+  Future<void> setPinnedMiniGraphs(MiniGraphPins pins) async {
+    final prefs = await _p;
+    if (pins.isEmpty) {
+      await prefs.remove(_keyPinnedMiniGraphs);
+    } else {
+      await prefs.setStringList(_keyPinnedMiniGraphs, pins.encode());
+    }
+  }
+}

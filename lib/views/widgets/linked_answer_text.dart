@@ -1,19 +1,74 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 
-import '../../models/subject.dart';
-import '../../services/obsidian_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 
-/// Bóc `[[MÃ MÔN]]` trong văn bản do AI sinh ra thành liên kết bấm được, bấm
-/// vào là mở thẳng note của môn đó (giống wiki link trong Obsidian).
+/// Hiển thị câu trả lời của AI: render Markdown và biến mã môn thành liên kết
+/// bấm được, bấm vào là mở note của môn đó.
 ///
-/// Mã nào không có trong CSDL thì để nguyên chữ thường, không tạo link chết.
+/// Trước đây chỗ này vẽ chữ thô, nên `**đậm**`, `### tiêu đề` và gạch đầu
+/// dòng của model hiện ra nguyên dấu sao — câu trả lời đầy `*` rất khó đọc.
 ///
-/// Tách ra khỏi `ai_chat_page.dart` để tab Học lực dùng lại được: hai màn hình
+/// Dùng chung cho tab Trợ lý AI, chat theo môn và tab Học lực: ba màn hình
 /// cùng hiển thị câu trả lời của AI, chép đôi thì sửa một chỗ quên chỗ kia.
-class LinkedAnswerText extends StatefulWidget {
+
+/// Giao thức tự đặt cho liên kết nội bộ. Cố tình không dùng `http` để chắc
+/// chắn không có gì mở trình duyệt ngoài.
+const String subjectLinkScheme = 'se-subject:';
+
+/// Một lượt quét duy nhất, phân biệt năm thứ cần xử lý khác nhau.
+///
+/// Thứ tự các nhánh là thứ tự ưu tiên: khối code và link có sẵn phải được
+/// nhận ra **trước** mã môn viết rời, nếu không thì `PRF192` nằm trong
+/// `` `PRF192` `` hay trong đích của một link cũng bị bọc thêm lần nữa.
+final RegExp _tokenPattern = RegExp(
+  r'```[\s\S]*?```' // khối code nhiều dòng
+  r'|`[^`\n]*`' // code trong dòng
+  r'|\[\[([^\[\]]+?)\]\]' // [[MÃ MÔN]], kèm cả bí danh và neo
+  r'|\[[^\]\n]*\]\([^)\n]*\)' // link Markdown đã có sẵn
+  r'|\b([A-Z]{2,4}\d{2,4}[A-Z0-9_]*)\b', // mã môn viết rời
+);
+
+/// Đổi mã môn trong [text] thành liên kết Markdown trỏ vào [subjectLinkScheme].
+///
+/// Nhận hai dạng:
+/// - `[[CSD201]]` — dạng prompt dặn model viết ra;
+/// - `CSD201` viết rời — lưới an toàn cho lúc model quên bọc ngoặc.
+///
+/// Mã không có trong [knownCodes] thì giữ nguyên chữ thường, không tạo link
+/// chết. Phần trong khối code và trong link đã có sẵn được để yên.
+///
+/// Hàm thuần, tách khỏi widget để test được mà không cần dựng UI hay CSDL.
+String wikiLinksToMarkdown(String text, Set<String> knownCodes) {
+  // Mã môn thật có thể chứa `*` và `_` (`SE_COM*2`, `PHE_COM*1`) — đúng hai
+  // ký tự Markdown dùng cho in nghiêng/đậm. Không thoát thì nhãn link vỡ.
+  String escape(String value) =>
+      value.replaceAll('*', r'\*').replaceAll('_', r'\_');
+
+  String link(String code) => '[${escape(code)}]($subjectLinkScheme$code)';
+
+  return text.replaceAllMapped(_tokenPattern, (match) {
+    final whole = match.group(0)!;
+
+    final wiki = match.group(1);
+    if (wiki != null) {
+      // Chấp nhận cả "[[CSD201|Cấu trúc dữ liệu]]" lẫn "[[CSD201#Mục]]".
+      final code = wiki.split(RegExp(r'[|#]')).first.trim().toUpperCase();
+      return knownCodes.contains(code) ? link(code) : escape(wiki);
+    }
+
+    final bare = match.group(2);
+    if (bare != null) {
+      return knownCodes.contains(bare) ? link(bare) : whole;
+    }
+
+    // Khối code hoặc link đã có sẵn — không đụng vào.
+    return whole;
+  });
+}
+
+class LinkedAnswerText extends StatelessWidget {
   final String text;
   final TextStyle style;
 
@@ -24,69 +79,56 @@ class LinkedAnswerText extends StatefulWidget {
   });
 
   @override
-  State<LinkedAnswerText> createState() => _LinkedAnswerTextState();
-}
+  Widget build(BuildContext context) {
+    final byCode = AppState.instance.graph.byCode;
 
-class _LinkedAnswerTextState extends State<LinkedAnswerText> {
-  /// Giữ theo mã môn và tái dùng qua các lần build. Tạo recognizer mới mỗi
-  /// lần build sẽ rò rỉ, vì TextSpan không tự huỷ recognizer của nó.
-  final Map<String, TapGestureRecognizer> _recognizers = {};
-
-  @override
-  void dispose() {
-    for (final r in _recognizers.values) {
-      r.dispose();
-    }
-    super.dispose();
-  }
-
-  TapGestureRecognizer _recognizerFor(Subject subject) {
-    return _recognizers.putIfAbsent(
-      subject.code,
-      () => TapGestureRecognizer()
-        ..onTap = () => AppState.instance.openNoteTab(subject),
+    return MarkdownBody(
+      data: wikiLinksToMarkdown(text, byCode.keys.toSet()),
+      selectable: true,
+      styleSheet: _sheet(context),
+      onTapLink: (label, href, title) {
+        if (href == null || !href.startsWith(subjectLinkScheme)) return;
+        final subject = byCode[href.substring(subjectLinkScheme.length)];
+        if (subject != null) AppState.instance.openNoteTab(subject);
+      },
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final byCode = AppState.instance.graph.byCode;
-    final spans = <InlineSpan>[];
-    var cursor = 0;
+  MarkdownStyleSheet _sheet(BuildContext context) {
+    final base = style;
+    // Tiêu đề chỉ nhỉnh hơn chữ thường một chút: khung chat hẹp, để cỡ mặc
+    // định của theme thì `###` chiếm gần hết bề ngang.
+    TextStyle heading(double size) =>
+        base.copyWith(fontSize: size, fontWeight: FontWeight.w700);
 
-    for (final match in ObsidianService.wikiLinkPattern.allMatches(
-      widget.text,
-    )) {
-      if (match.start > cursor) {
-        spans.add(TextSpan(text: widget.text.substring(cursor, match.start)));
-      }
-      cursor = match.end;
-
-      final raw = match.group(1) ?? '';
-      // Chấp nhận cả "[[CSD201|Cấu trúc dữ liệu]]" lẫn "[[CSD201#Mục]]".
-      final code = raw.split(RegExp(r'[|#]')).first.trim().toUpperCase();
-      final subject = byCode[code];
-
-      if (subject == null) {
-        spans.add(TextSpan(text: raw));
-        continue;
-      }
-      spans.add(
-        TextSpan(
-          text: subject.code,
-          style: TextStyle(
-            color: AppColors.primary,
-            fontWeight: FontWeight.w600,
-          ),
-          recognizer: _recognizerFor(subject),
-        ),
-      );
-    }
-
-    if (cursor < widget.text.length) {
-      spans.add(TextSpan(text: widget.text.substring(cursor)));
-    }
-
-    return SelectableText.rich(TextSpan(style: widget.style, children: spans));
+    return MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+      p: base,
+      listBullet: base,
+      strong: base.copyWith(fontWeight: FontWeight.w700),
+      em: base.copyWith(fontStyle: FontStyle.italic),
+      // Gạch chân chấm lấy từ bản của nhánh kia: link mã môn phải nhìn ra
+      // được là bấm được, chứ chỉ đổi màu thì dễ tưởng là chữ tô màu.
+      a: base.copyWith(
+        color: AppColors.primary,
+        fontWeight: FontWeight.w600,
+        decoration: TextDecoration.underline,
+        decorationStyle: TextDecorationStyle.dotted,
+        decorationColor: AppColors.primary.withValues(alpha: 0.6),
+      ),
+      code: base.copyWith(
+        fontFamily: 'monospace',
+        fontSize: base.fontSize == null ? null : base.fontSize! - 0.5,
+        backgroundColor: AppColors.background,
+      ),
+      h1: heading((base.fontSize ?? 13.5) + 3),
+      h2: heading((base.fontSize ?? 13.5) + 2),
+      h3: heading((base.fontSize ?? 13.5) + 1),
+      h4: heading(base.fontSize ?? 13.5),
+      blockquoteDecoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      pPadding: const EdgeInsets.only(bottom: 2),
+    );
   }
 }

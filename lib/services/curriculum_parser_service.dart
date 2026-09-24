@@ -184,9 +184,14 @@ Curriculum parseCurriculumWorker(String htmlString) {
   final Map<int, List<Course>> semesterMap = {};
   int currentTerm = 1;
 
-  // Regex nhận diện dòng phân tách học kỳ: "Semester 1", "Học kỳ 2", "Term 3", "Kỳ 4"
+  // Regex nhận diện dòng phân tách học kỳ: "Semester 1", "Học kỳ 2", "Term 3", "Kỳ 4", "Kỳ 0"...
   final termHeaderRegex = RegExp(
     r'(?:Semester|Học\s*kỳ|Kỳ|Term)\s*([0-9]{1,2})',
+    caseSensitive: false,
+  );
+  // Regex nhận diện dòng phân tách học kỳ dự bị/chuẩn bị (Kỳ 0)
+  final prepHeaderRegex = RegExp(
+    r'(?:chuẩn\s*bị|dự\s*bị|định\s*hướng|preparation|preparatory|pre-university)',
     caseSensitive: false,
   );
 
@@ -254,16 +259,23 @@ Curriculum parseCurriculumWorker(String htmlString) {
       final fullRowText = row.text.trim().replaceAll(RegExp(r'\s+'), ' ');
 
       // Kiểm tra xem hàng này có phải là hàng tiêu đề phân tách kỳ hay không
+      final isPrepHeader = prepHeaderRegex.hasMatch(fullRowText);
       final termMatch = termHeaderRegex.firstMatch(fullRowText);
-      if (termMatch != null &&
+      if ((termMatch != null || isPrepHeader) &&
           (cells.length <= 2 ||
               (row.attributes['class']?.contains('semester') ?? false) ||
               cells.any((c) => c.attributes.containsKey('colspan')))) {
-        final parsedTerm = int.tryParse(termMatch.group(1) ?? '');
-        if (parsedTerm != null) {
-          currentTerm = parsedTerm;
+        if (isPrepHeader && termMatch == null) {
+          currentTerm = 0;
           semesterMap.putIfAbsent(currentTerm, () => []);
           continue;
+        } else if (termMatch != null) {
+          final parsedTerm = int.tryParse(termMatch.group(1) ?? '');
+          if (parsedTerm != null && parsedTerm >= 0 && parsedTerm <= 15) {
+            currentTerm = parsedTerm;
+            semesterMap.putIfAbsent(currentTerm, () => []);
+            continue;
+          }
         }
       }
 
@@ -376,12 +388,12 @@ Curriculum parseCurriculumWorker(String htmlString) {
           final prerequisites = parsePrerequisites(prereqStr);
 
           // Xác định học kỳ (term):
-          // Ưu tiên lấy từ termIdx nếu cột đó chứa số kỳ (1-15)
+          // Ưu tiên lấy từ termIdx nếu cột đó chứa số kỳ (0-15)
           int term = currentTerm;
           if (termIdx != -1 && termIdx < cells.length) {
             final parsedTerm =
                 int.tryParse(cleanCurriculumText(cells[termIdx].text));
-            if (parsedTerm != null && parsedTerm > 0 && parsedTerm <= 15) {
+            if (parsedTerm != null && parsedTerm >= 0 && parsedTerm <= 15) {
               term = parsedTerm;
             }
           }

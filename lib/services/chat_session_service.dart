@@ -11,11 +11,15 @@ class ChatSession {
   final DateTime createdAt;
   final List<ChatMessage> messages;
 
+  /// Mã khung CTĐT gắn với phiên chat này (null nếu toàn bộ CSDL).
+  String? curriculumCode;
+
   ChatSession({
     required this.id,
     required this.title,
     required this.createdAt,
     List<ChatMessage>? messages,
+    this.curriculumCode,
   }) : messages = messages ?? [];
 
   Map<String, dynamic> toJson() => {
@@ -23,6 +27,7 @@ class ChatSession {
         'title': title,
         'createdAt': createdAt.toIso8601String(),
         'messages': messages.map((m) => m.toJson()).toList(),
+        'curriculumCode': curriculumCode,
       };
 
   factory ChatSession.fromJson(Map<String, dynamic> json) => ChatSession(
@@ -34,6 +39,7 @@ class ChatSession {
                 ?.map((m) => ChatMessage.fromJson(m as Map<String, dynamic>))
                 .toList() ??
             [],
+        curriculumCode: json['curriculumCode'] as String?,
       );
 }
 
@@ -92,23 +98,42 @@ class ChatSessionService extends ChangeNotifier {
     notifyListeners();
   }
 
-  ChatSession _createNewSessionInternal() {
+  ChatSession _createNewSessionInternal({String? curriculumCode, String? title}) {
     final now = DateTime.now();
     return ChatSession(
       id: 'chat_${now.millisecondsSinceEpoch}',
-      title: 'Đoạn chat mới',
+      title: title ?? 'Đoạn chat mới',
       createdAt: now,
+      curriculumCode: curriculumCode,
     );
   }
 
-  void newSession() {
-    // Nếu session hiện tại còn trống thì dùng luôn
+  void newSession({String? curriculumCode, String? title}) {
+    // Nếu session hiện tại còn trống thì dùng luôn và cập nhật khung/tiêu đề
     if (currentSession.messages.isEmpty) {
+      if (curriculumCode != null) {
+        currentSession.curriculumCode = curriculumCode;
+      }
+      if (title != null && title.isNotEmpty) {
+        currentSession.title = title;
+      }
+      notifyListeners();
+      _save();
       return;
     }
-    final s = _createNewSessionInternal();
+    final s = _createNewSessionInternal(
+      curriculumCode: curriculumCode,
+      title: title,
+    );
     _sessions.insert(0, s);
     _currentSessionId = s.id;
+    notifyListeners();
+    _save();
+  }
+
+  void setCurriculumCode(String? code) {
+    if (currentSession.curriculumCode == code) return;
+    currentSession.curriculumCode = code;
     notifyListeners();
     _save();
   }

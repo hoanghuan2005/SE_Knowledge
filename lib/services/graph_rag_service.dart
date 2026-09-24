@@ -1,8 +1,10 @@
+import '../models/curriculum.dart';
 import '../models/graph_data.dart';
 import '../models/graph_rag_context.dart';
 import '../models/prerequisite.dart';
 import '../models/subject.dart';
 import '../models/transcript_entry.dart';
+import '../state/app_state.dart';
 import 'academic_analytics_service.dart';
 import 'db_service.dart';
 import 'fap_markdown_parser.dart';
@@ -136,11 +138,79 @@ class GraphRagService {
   /// trả giá nghìn token cho mỗi đề cương.
   static const int maxMatchesForSpecific = 2;
 
-  Future<GraphRagContext> buildContext(String question, {int hops = 2}) async {
-    final stopwatch = Stopwatch()..start();
-    final graph = await _db.loadGraph();
+  /// Nhận diện xem câu hỏi có nhắc tới khung chương trình hoặc chuyên ngành cụ thể nào không
+  static CurriculumGroup? detectCurriculum(String question, List<CurriculumGroup> groups) {
+    if (groups.isEmpty) return null;
+    final upperQ = question.toUpperCase();
 
-    if (graph.isEmpty) {
+    // 1. Khớp chính xác mã khung đầy đủ (VD: BIT_IA_K18D-19A, BIT_SE_K19B...)
+    for (final g in groups) {
+      if (g.isUnassigned) continue;
+      if (upperQ.contains(g.code.toUpperCase())) {
+        return g;
+      }
+    }
+
+    // 2. Khớp theo phần mã rút gọn khoá học (K18D, K19B, K20D...)
+    final kMatch = RegExp(r'\bK\d{2}[A-Z\d-]*\b', caseSensitive: false).firstMatch(question);
+    if (kMatch != null) {
+      final kText = kMatch.group(0)!.toUpperCase();
+      for (final g in groups) {
+        if (g.isUnassigned) continue;
+        if (g.code.toUpperCase().contains(kText)) {
+          return g;
+        }
+      }
+    }
+
+    // 3. Khớp theo từ khoá chuyên ngành
+    final majorPatterns = {
+      'IA': ['IA', 'AN TOÀN THÔNG TIN', 'INFORMATION ASSURANCE'],
+      'SE': ['SE', 'KỸ THUẬT PHẦN MỀM', 'SOFTWARE ENGINEERING'],
+      'IS': ['IS', 'HỆ THỐNG THÔNG TIN', 'INFORMATION SYSTEMS'],
+      'AI': ['TRÍ TUỆ NHÂN TẠO', 'ARTIFICIAL INTELLIGENCE'],
+      'DS': ['KHOA HỌC DỮ LIỆU', 'DATA SCIENCE'],
+      'IC': ['THIẾT KẾ VI MẠCH', 'CHIP'],
+    };
+
+    for (final entry in majorPatterns.entries) {
+      for (final kw in entry.value) {
+        if (kw.length <= 2) {
+          if (RegExp('\\b$kw\\b', caseSensitive: false).hasMatch(question)) {
+            for (final g in groups) {
+              if (!g.isUnassigned &&
+                  (g.code.toUpperCase().contains('_${entry.key}_') ||
+                      g.major.toUpperCase().contains(entry.key))) {
+                return g;
+              }
+            }
+          }
+        } else {
+          if (upperQ.contains(kw)) {
+            for (final g in groups) {
+              if (!g.isUnassigned &&
+                  (g.code.toUpperCase().contains('_${entry.key}_') ||
+                      g.major.toUpperCase().contains(kw) ||
+                      g.name.toUpperCase().contains(kw))) {
+                return g;
+              }
+            }
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<GraphRagContext> buildContext(
+    String question, {
+    int hops = 2,
+    String? curriculumCode,
+  }) async {
+    final stopwatch = Stopwatch()..start();
+    final fullGraph = await _db.loadGraph();
+
+    if (fullGraph.isEmpty) {
       stopwatch.stop();
       return GraphRagContext(
         promptText: 'Người dùng chưa có môn học nào trong hệ thống.',
@@ -150,9 +220,28 @@ class GraphRagService {
           edgeCount: 0,
           approxTokens: 0,
           elapsedMs: stopwatch.elapsedMilliseconds,
+          curriculumCode: curriculumCode,
         ),
       );
     }
+
+    final groups = await _db.getCurriculumTreeData();
+    CurriculumGroup? targetGroup;
+    if (curriculumCode != null && curriculumCode.isNotEmpty) {
+      for (final g in groups) {
+        if (g.code == curriculumCode) {
+          targetGroup = g;
+          break;
+        }
+      }
+    } else {
+      targetGroup = detectCurriculum(question, groups);
+    }
+
+    // Đồ thị được lọc theo khung CTĐT (nếu có khung được chọn hoặc nhận diện)
+    final graph = targetGroup != null
+        ? AppState.filterGraph(fullGraph, groups, targetGroup.code)
+        : fullGraph;
 
     // Bảng điểm chỉ được đính khi người dùng còn bật công tắc trong Cài đặt —
     // đây là chỗ dữ liệu cá nhân rời khỏi máy, nên tôn trọng lựa chọn đó ngay
@@ -162,7 +251,6 @@ class GraphRagService {
     final seedMatches = seedsWithConfidence(question, graph.subjects);
     final seeds = seedMatches.map((s) => s.subject).toList();
     final isFallback = seeds.isEmpty;
-
 
     // Nhánh fallback cố tình KHÔNG cắt bớt: lúc đã không đoán được câu hỏi
     // nhắm vào môn nào, đưa thiếu môn còn tai hại hơn là đưa dư.
@@ -197,6 +285,25 @@ class GraphRagService {
       seedMatches.where((s) => s.confident).map((s) => s.subject).take(maxSyllabi),
     );
 
+    // Tính toán tiến độ sinh viên đối với khung chương trình nếu có bảng điểm
+    String? curriculumProgressText;
+    if (targetGroup != null && grades.isNotEmpty) {
+      final curriculumSubjects = targetGroup.semesters.values.expand((list) => list).toList();
+      final totalSubjects = curriculumSubjects.length;
+      final passedSubjects = curriculumSubjects
+          .where((s) => grades.byCode[s.code.toUpperCase()]?.status == SubjectStatus.passed)
+          .toList();
+      final passedCredits = passedSubjects.fold<int>(0, (sum, s) => sum + s.credits);
+      final reqCredits = targetGroup.totalCredits > 0
+          ? targetGroup.totalCredits
+          : curriculumSubjects.fold<int>(0, (sum, s) => sum + s.credits);
+      final pct = reqCredits > 0
+          ? (passedCredits / reqCredits * 100).toStringAsFixed(1)
+          : '0.0';
+      curriculumProgressText =
+          'Tiến độ học tập của sinh viên trong khung này: Đã tích lũy $passedCredits/$reqCredits tín chỉ ($pct%) — đã qua ${passedSubjects.length}/$totalSubjects môn.';
+    }
+
     final promptText = _renderPrompt(
       nodes,
       edges,
@@ -206,6 +313,8 @@ class GraphRagService {
       grades.byCode,
       grades.profile,
       ambiguousCodeMatches(seedMatches),
+      curriculum: targetGroup,
+      curriculumProgressText: curriculumProgressText,
     );
     stopwatch.stop();
 
@@ -219,6 +328,10 @@ class GraphRagService {
         elapsedMs: stopwatch.elapsedMilliseconds,
         isFallbackFullGraph: isFallback,
         includesTranscript: grades.isNotEmpty,
+        curriculumCode: targetGroup?.code,
+        curriculumName: targetGroup?.major.isNotEmpty == true
+            ? targetGroup!.major
+            : targetGroup?.name,
       ),
     );
   }
@@ -259,10 +372,19 @@ class GraphRagService {
     // vẫn được ưu tiên, vì lúc đó người dùng đang nhắm vào môn cụ thể.
     if (byCode.isEmpty && _looksGlobal(question)) return const [];
 
+    final byKeyword = _rankByKeyword(question, rest);
+
     return [
       // Gọi thẳng mã môn đầy đủ là tín hiệu chắc chắn nhất, luôn đủ tin.
       for (final s in byCode) (subject: s, confident: true, viaCode: true),
-      ..._rankByKeyword(question, rest),
+
+      // Đã gọi tên môn bằng mã thì người dùng biết rõ mình hỏi gì, nên chỉ
+      // nhận thêm môn khớp chắc chắn (vào mã hoặc tên). Câu "prj301 và
+      // swd392 liên quan gì nhau" từng kéo theo GRC490, JPD316, JPD133 — chỉ
+      // vì mấy chữ còn lại trong câu trùng vài từ trong phần mô tả của chúng.
+      // Vẫn giữ đường cho câu hỏi trộn kiểu "PRJ301 và các môn database",
+      // nơi "database" khớp thẳng vào tên môn.
+      ...byKeyword.where((s) => byCode.isEmpty || s.confident),
     ];
   }
 
@@ -463,7 +585,15 @@ class GraphRagService {
       // cương. "engineer" khớp tên 4 môn kỹ thuật không nói lên câu hỏi đang
       // nhắm vào môn nào trong số đó.
       if (inStrongField && concept.specific) matchedStrongField = true;
-      if (inStrongField || hitForm.contains(' ')) reliable = true;
+
+      // Trường `description` thực chất chứa nguyên văn đề cương, dài hàng
+      // trăm chữ — môn nào có đề cương là gần như chắc chắn chứa mấy từ
+      // chung chung của câu hỏi ("đánh giá", "trình độ", "kiến thức"). Vì
+      // vậy khớp ở đó chỉ được tính khi cụm từ đủ hiếm: "cấu trúc dữ liệu"
+      // (1-2 môn) thì nhận, còn "đánh giá" (rải khắp mọi đề cương) thì không.
+      if (inStrongField || (hitForm.contains(' ') && concept.specific)) {
+        reliable = true;
+      }
     }
     return (
       score: score,
@@ -596,12 +726,46 @@ class GraphRagService {
     List<FapSyllabusImport> syllabi,
     Map<String, TranscriptEntry> gradeByCode,
     AcademicProfile? profile,
-    List<String> ambiguousCodes,
-  ) {
+    List<String> ambiguousCodes, {
+    CurriculumGroup? curriculum,
+    String? curriculumProgressText,
+  }) {
     if (nodes.isEmpty) {
       return 'Không tìm thấy môn học nào liên quan trực tiếp đến câu hỏi trong CSDL.';
     }
     final sb = StringBuffer();
+
+    // 1. Khối thông tin định danh Khung chương trình đào tạo nếu có
+    if (curriculum != null) {
+      sb.writeln('THÔNG TIN KHUNG CHƯƠNG TRÌNH ĐÀO TẠO ĐANG CHỌN:');
+      sb.writeln('- Mã khung: ${curriculum.code}');
+      if (curriculum.name.isNotEmpty) {
+        sb.writeln('- Tên chương trình: ${curriculum.name}');
+      }
+      if (curriculum.major.isNotEmpty) {
+        sb.writeln('- Chuyên ngành: ${curriculum.major}');
+      }
+      if (curriculum.totalCredits > 0) {
+        sb.writeln('- Tổng số tín chỉ yêu cầu tốt nghiệp: ${curriculum.totalCredits} TC');
+      }
+      if (curriculumProgressText != null && curriculumProgressText.isNotEmpty) {
+        sb.writeln('- $curriculumProgressText');
+      }
+      sb.writeln();
+
+      // Cấu trúc phân bổ môn theo từng học kỳ của khung (Kỳ 0 dự bị, Kỳ 1 -> Kỳ 9)
+      sb.writeln('CẤU TRÚC PHÂN BỔ MÔN THEO HỌC KỲ CỦA KHUNG ${curriculum.code}:');
+      final sortedSemesters = curriculum.semesters.keys.toList()..sort();
+      for (final sem in sortedSemesters) {
+        final subs = curriculum.semesters[sem] ?? [];
+        if (subs.isEmpty) continue;
+        final label = sem == 0 ? 'Học kỳ 0 (Dự bị/Chuẩn bị)' : 'Học kỳ $sem';
+        final subCodes = subs.map((s) => s.code).join(', ');
+        sb.writeln('- $label (${subs.length} môn): $subCodes');
+      }
+      sb.writeln();
+    }
+
     if (ambiguousCodes.isNotEmpty) {
       // Đặt lên đầu prompt để AI đọc thấy trước cả danh sách môn, khỏi lỡ
       // chọn đại một môn rồi mới thấy dòng này ở cuối.
@@ -619,18 +783,45 @@ class GraphRagService {
         ..writeln(profile.summaryLine)
         ..writeln();
     }
+
+    // Điểm của những môn KHÔNG lọt vào subgraph.
+    //
+    // Subgraph bị cắt ở 20 node khi có kèm điểm, trong khi sinh viên có thể
+    // đã học 47 môn. Thiếu dòng này thì câu hỏi so sánh ("môn nào tôi thấp
+    // nhất") bị trả lời dựa trên đúng phần AI nhìn thấy, mà AI không hề biết
+    // mình đang nhìn thiếu. Liệt kê dạng "MÃ ĐIỂM" nên rất rẻ so với việc
+    // nâng trần node (mỗi node còn kéo theo mô tả và quan hệ tiên quyết).
+    if (!isFallback && gradeByCode.isNotEmpty) {
+      final shown = nodes.map((s) => s.code.toUpperCase()).toSet();
+      final others = <String>[
+        for (final entry in gradeByCode.entries)
+          if (!shown.contains(entry.key) && entry.value.hasGrade)
+            '${entry.key} ${entry.value.displayGrade}',
+      ]..sort();
+
+      if (others.isNotEmpty) {
+        sb
+          ..writeln(
+            'Điểm các môn đã học khác, không nằm trong danh sách chi tiết '
+            'bên dưới (${others.length} môn): ${others.join(", ")}.',
+          )
+          ..writeln();
+      }
+    }
+
     sb.write(isFallback
-        ? 'Câu hỏi hướng tới cả chương trình, đây là toàn bộ danh sách môn '
-            'học và quan hệ tiên quyết hiện có:\n'
-        : 'Các môn học liên quan trực tiếp đến câu hỏi và quan hệ tiên '
-            'quyết của chúng:\n');
+        ? (curriculum != null
+            ? 'Câu hỏi hướng tới toàn bộ khung ${curriculum.code}, đây là danh sách môn học và quan hệ tiên quyết:\n'
+            : 'Câu hỏi hướng tới cả chương trình, đây là toàn bộ danh sách môn học và quan hệ tiên quyết hiện có:\n')
+        : 'Các môn học liên quan trực tiếp đến câu hỏi và quan hệ tiên quyết của chúng:\n');
     for (final s in nodes) {
       final prereqCodes = edges
           .where((e) => e.subjectId == s.id)
           .map((e) => byId[e.prerequisiteId]?.code)
           .whereType<String>()
           .toList();
-      sb.write('- ${s.code} (${s.name}), kỳ ${s.semester}, ${s.credits} tín chỉ');
+      final semLabel = s.semester == 0 ? 'kỳ 0 (dự bị)' : 'kỳ ${s.semester}';
+      sb.write('- ${s.code} (${s.name}), $semLabel, ${s.credits} tín chỉ');
       sb.write(prereqCodes.isEmpty
           ? ', không có môn tiên quyết'
           : ', tiên quyết: ${prereqCodes.join(", ")}');
@@ -813,6 +1004,10 @@ class GraphRagService {
     // bình", nên để lại chỉ tổ khớp bừa vào tên/mô tả rồi chen chỗ của môn
     // thật — đúng ca "điểm trung bình csd và swr" đã gặp.
     'diem', 'trung', 'binh',
+    // Động từ và danh từ chung của chính câu hỏi. "đánh giá", "kỹ năng",
+    // "trình độ" có mặt trong tên hoặc đề cương của rất nhiều môn, nên giữ
+    // lại thì hỏi "kỹ năng lập trình" lại ra môn "Kỹ năng giao tiếp".
+    'danh', 'gia', 'nang', 'kien', 'thuc',
   };
 
   /// Dấu hiệu câu hỏi nhắm tới cả chương trình chứ không tới một môn nào.

@@ -114,10 +114,40 @@ class _SettingsPageState extends State<SettingsPage> {
     await ObsidianLauncher.openInExplorer(dir.path);
   }
 
+  /// Đổi tab Gemini ↔ OpenAI và **nạp lại cấu hình đã lưu của provider đó**.
+  ///
+  /// Mỗi provider có API key riêng trong SharedPreferences. Trước đây chỗ này
+  /// chỉ đổi tên model, nên ô key vẫn hiện key của provider cũ — nhìn như hai
+  /// bên dùng chung một key. Tệ hơn: bấm Lưu lúc đó là ghi đè key cũ sang
+  /// đúng slot của provider mới, mất key thật đã lưu trước đó.
+  ///
+  /// Lưu lựa chọn provider ngay, không đợi bấm Lưu: người dùng đổi tab là đã
+  /// tỏ rõ ý định, mà các ô phía dưới giờ đọc theo provider nên để lệch giữa
+  /// UI và nơi lưu chỉ sinh thêm ca lạ.
+  Future<void> _switchProvider(String provider) async {
+    if (provider == _provider) return;
+    await _settings.setAiProvider(provider);
+    final key = await _settings.getApiKey(provider);
+    final model = await _settings.getModel(provider);
+    final lightModel = await _settings.getLightModel(provider);
+    if (!mounted) return;
+    setState(() {
+      _provider = provider;
+      _apiKey.text = key ?? '';
+      _model.text = model;
+      // Hai nhà cung cấp có danh sách model phụ khác nhau; giá trị cũ không
+      // nằm trong danh sách mới thì dropdown sẽ ném lỗi khi dựng.
+      _lightModel = AppConstants.lightModelsOf(provider)
+              .any((m) => m.id == lightModel)
+          ? lightModel
+          : null;
+    });
+  }
+
   Future<void> _saveAi() async {
     await _settings.setAiProvider(_provider);
-    await _settings.setApiKey(_apiKey.text);
-    await _settings.setModel(_model.text);
+    await _settings.setApiKey(_apiKey.text, _provider);
+    await _settings.setModel(_model.text, _provider);
     await _settings.setLightModel(_lightModel, _provider);
     if (mounted) Ui.success(context, 'Đã lưu cấu hình AI trên máy này.');
   }
@@ -285,17 +315,7 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ],
             selected: {_provider},
-            onSelectionChanged: (s) {
-              setState(() {
-                _provider = s.first;
-                _model.text = _provider == AppConstants.providerOpenAi
-                    ? AppConstants.defaultOpenAiModel
-                    : AppConstants.defaultGeminiModel;
-                // Hai nhà cung cấp có danh sách model phụ khác nhau, giữ lại
-                // lựa chọn cũ sẽ thành giá trị không có trong danh sách mới.
-                _lightModel = null;
-              });
-            },
+            onSelectionChanged: (s) => _switchProvider(s.first),
           ),
           const SizedBox(height: 16),
           TextField(
@@ -316,10 +336,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           const SizedBox(height: 16),
-          TextField(
-            controller: _model,
-            decoration: const InputDecoration(labelText: 'Tên model'),
-          ),
+          _chatModelField(),
           const SizedBox(height: 16),
           _lightModelField(),
           const SizedBox(height: 16),
@@ -675,6 +692,52 @@ class _SettingsPageState extends State<SettingsPage> {
   /// Dùng danh sách cố định thay vì ô gõ tự do: gõ sai tên model thì lời gọi
   /// hỏng, mà đây là chỗ người dùng không có cách nào biết mình gõ đúng hay
   /// sai. Chọn nhầm cũng không mất tính năng — app tự lùi về model chính.
+  /// Ô chọn model trả lời chính.
+  ///
+  /// Dùng [DropdownMenu] chứ không phải dropdown thuần: danh sách gợi ý đúng
+  /// tên model để khỏi gõ sai, nhưng vẫn gõ tay được. Nhà cung cấp ra model
+  /// mới liên tục, khoá cứng vào danh sách thì mỗi lần đó phải sửa code.
+  Widget _chatModelField() {
+    final options = AppConstants.chatModelsOf(_provider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DropdownMenu<String>(
+          controller: _model,
+          requestFocusOnTap: true,
+          expandedInsets: EdgeInsets.zero,
+          label: const Text('Model trả lời chính'),
+          onSelected: (value) {
+            if (value != null) setState(() => _model.text = value);
+          },
+          dropdownMenuEntries: [
+            for (final option in options)
+              DropdownMenuEntry<String>(
+                value: option.id,
+                label: option.id,
+                labelWidget: Text('${option.label}  ·  ${option.id}'),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          _provider == AppConstants.providerOpenAi
+              ? 'Giá ghi theo 1 triệu token vào / ra. Một câu chat của app tốn '
+                    'khoảng 900 token vào và 800 token ra, nên chênh lệch giữa '
+                    'hai đầu danh sách vào khoảng 0.05 cent và 4 cent mỗi câu.'
+              : 'Chọn trong danh sách hoặc gõ thẳng tên model nếu nhà cung cấp '
+                    'vừa ra bản mới.',
+          style: TextStyle(
+            fontSize: 12,
+            height: 1.5,
+            color: AppColors.textSecondary,
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _lightModelField() {
     final options = AppConstants.lightModelsOf(_provider);
 
@@ -705,6 +768,10 @@ class _SettingsPageState extends State<SettingsPage> {
           options.isEmpty
               ? 'Chưa có danh sách model phụ đã kiểm chứng cho nhà cung cấp '
                     'này, nên tác vụ phụ vẫn dùng model chính.'
+              : _provider == AppConstants.providerOpenAi
+              ? 'Việc sinh câu hỏi gợi ý sẽ gọi model này thay vì model chính. '
+                    'Bên OpenAI hạn mức tính chung cả tổ chức nên không tách '
+                    'được như Gemini — ở đây cái lợi thuần là tiền.'
               : 'Việc sinh câu hỏi gợi ý sẽ gọi model này thay vì model chính. '
                     'Google tính hạn mức riêng cho từng model, nên tách ra thì '
                     'việc phụ không còn ăn vào hạn mức dành cho việc trả lời.',
@@ -714,7 +781,57 @@ class _SettingsPageState extends State<SettingsPage> {
             color: AppColors.textSecondary,
           ),
         ),
+        const SizedBox(height: 12),
+        _fallbackChainNote(),
       ],
+    );
+  }
+
+  /// Nói rõ chuỗi model dự phòng, vì nó chạy tự động và không có ô cấu hình
+  /// nào — không ghi ra thì người dùng thấy câu trả lời do model lạ viết mà
+  /// không hiểu ở đâu ra.
+  Widget _fallbackChainNote() {
+    final chain = AppConstants.fallbackModelsOf(_provider);
+    if (chain.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.shield_outlined, size: 15, color: AppColors.primary),
+              const SizedBox(width: 6),
+              Text(
+                'Khi model chính quá tải',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'App thử lại 2 lần, vẫn hỏng thì lần lượt chuyển sang: '
+            '${chain.join(" → ")}. Model nào tài khoản bạn không dùng được '
+            'thì tự bỏ qua. Câu trả lời sẽ ghi rõ model nào đã viết. '
+            'Danh sách này cố định, không cần cấu hình.',
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.5,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

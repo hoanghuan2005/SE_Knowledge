@@ -24,7 +24,50 @@ class AppConstants {
   static const String openAiBaseUrl = 'https://api.openai.com/v1';
 
   static const String defaultGeminiModel = 'gemini-3.6-flash';
-  static const String defaultOpenAiModel = 'gpt-4o-mini';
+  static const String defaultOpenAiModel = 'gpt-6-sol';
+
+  /// Model chọn được cho việc trả lời người dùng, tách theo nhà cung cấp.
+  ///
+  /// Nhãn kèm **giá vào / giá ra cho 1 triệu token** vì đây là thông tin duy
+  /// nhất giúp chọn có cơ sở: chênh lệch giữa hai đầu danh sách tới 100 lần,
+  /// mà chỉ nhìn tên thì không đoán được. Một câu chat của app tốn ~900 token
+  /// vào và ~800 token ra, nên `gpt-6-luna` rơi vào khoảng 0.05 cent/câu còn
+  /// `gpt-6-astra` khoảng 4 cent/câu.
+  ///
+  /// Không liệt kê bản Pro (`gpt-5.5-pro` 180 USD/1M token ra) và các model
+  /// chuyên code (`gpt-5.3-codex`): đắt hoặc lệch mục đích so với việc giải
+  /// thích lộ trình học bằng tiếng Việt.
+  static const List<({String id, String label})> openAiChatModels = [
+    (id: 'gpt-6-sol', label: 'GPT-6 Sol — \$2 / \$10'),
+    (id: 'gpt-6-astra', label: 'GPT-6 Astra — \$10 / \$50 (mạnh nhất)'),
+    (id: 'gpt-6-luna', label: 'GPT-6 Luna — \$0.10 / \$0.50 (rẻ nhất)'),
+    (id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol — \$4 / \$20'),
+    (id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra — \$2 / \$12'),
+    (id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna — \$0.20 / \$1.20'),
+    (id: 'gpt-5.5', label: 'GPT-5.5 — \$5 / \$30'),
+    (id: 'gpt-5.4', label: 'GPT-5.4 — \$2.50 / \$15'),
+    (id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini — \$0.75 / \$4.50'),
+    (id: 'gpt-5.1', label: 'GPT-5.1 — \$1.25 / \$10'),
+    (id: 'gpt-4.1-mini', label: 'GPT-4.1 Mini — \$0.40 / \$1.60'),
+    (id: 'gpt-4o-mini', label: 'GPT-4o Mini — \$0.15 / \$0.60'),
+  ];
+
+  /// Gemini chưa có bảng giá đối chiếu trong tay nên nhãn để trơn — thà thiếu
+  /// thông tin còn hơn ghi một con số không kiểm chứng được.
+  static const List<({String id, String label})> geminiChatModels = [
+    (id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash'),
+    (id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash'),
+    (id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash'),
+    (id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite'),
+    (id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite'),
+    (id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite'),
+  ];
+
+  static List<({String id, String label})> chatModelsOf(String provider) =>
+      provider == providerOpenAi ? openAiChatModels : geminiChatModels;
+
+  static String defaultModelOf(String provider) =>
+      provider == providerOpenAi ? defaultOpenAiModel : defaultGeminiModel;
 
   /// Khoá lưu model dành cho tác vụ phụ, tách theo từng nhà cung cấp.
   static const String keyAiLightModel = 'AI_LIGHT_MODEL';
@@ -48,9 +91,18 @@ class AppConstants {
     (id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash'),
   ];
 
-  /// Chưa có danh sách ID đã kiểm chứng cho OpenAI, nên để trống — giao diện
-  /// sẽ chỉ hiện mục "dùng model chính" thay vì bịa ra tên model.
-  static const List<({String id, String label})> openAiLightModels = [];
+  /// Bên OpenAI tiêu chí chọn khác Gemini: hạn mức tính trên cả tổ chức chứ
+  /// không tách theo từng model, nên ở đây lý do thuần là **giá**. Chọn các
+  /// model rẻ nhất còn viết được tiếng Việt gọn gàng — việc phụ chỉ là sinh 4
+  /// câu hỏi gợi ý, không cần suy luận.
+  static const List<({String id, String label})> openAiLightModels = [
+    (id: 'gpt-6-luna', label: 'GPT-6 Luna — \$0.10 / \$0.50'),
+    (id: 'gpt-5-nano', label: 'GPT-5 nano — \$0.05 / \$0.40 (rẻ nhất)'),
+    (id: 'gpt-4.1-nano', label: 'GPT-4.1 nano — \$0.10 / \$0.40'),
+    (id: 'gpt-5.4-nano', label: 'GPT-5.4 nano — \$0.20 / \$1.25'),
+    (id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna — \$0.20 / \$1.20'),
+    (id: 'gpt-4o-mini', label: 'GPT-4o Mini — \$0.15 / \$0.60'),
+  ];
 
   static List<({String id, String label})> lightModelsOf(String provider) =>
       provider == providerOpenAi ? openAiLightModels : geminiLightModels;
@@ -70,7 +122,15 @@ class AppConstants {
     'gemini-3.5-flash-lite',
   ];
 
-  static const List<String> openAiFallbackModels = [];
+  /// Cùng tiêu chí với [geminiFallbackModels]: hai model đủ mạnh để thay chỗ
+  /// model chính trước, model rẻ để cuối cùng — thà trả lời gọn còn hơn báo
+  /// lỗi. `gpt-6-astra` cố tình không có mặt: nó đắt gấp 5 lần `gpt-6-sol`,
+  /// mà đường này chạy tự động nên người dùng không kịp biết để từ chối.
+  static const List<String> openAiFallbackModels = [
+    'gpt-6-sol',
+    'gpt-5.6-sol',
+    'gpt-6-luna',
+  ];
 
   static List<String> fallbackModelsOf(String provider) =>
       provider == providerOpenAi ? openAiFallbackModels : geminiFallbackModels;

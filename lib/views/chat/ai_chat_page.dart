@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../models/chat_message.dart';
+import '../../models/curriculum.dart';
 import '../../models/graph_rag_context.dart';
 import '../../services/ai_service.dart';
 import '../../services/chat_session_service.dart';
@@ -123,6 +124,7 @@ class _AiChatPageState extends State<AiChatPage> {
         question: text,
         history: history,
         includeKnowledgeContext: _useContext,
+        curriculumCode: session.curriculumCode,
         onContext: (summary) {
           if (!mounted) return;
           setState(() => _streamRag = summary);
@@ -174,39 +176,49 @@ class _AiChatPageState extends State<AiChatPage> {
           children: [
             PageHeader(
               title: session.title.isEmpty ? 'Trợ lý AI' : session.title,
-              subtitle: _useContext
-                  ? 'Đang gửi kèm ngữ cảnh đồ thị môn học từ SQLite'
-                  : 'Đang hỏi thuần, không gửi dữ liệu môn học',
+              subtitle: !_useContext
+                  ? 'Đang hỏi thuần, không gửi dữ liệu môn học'
+                  : session.curriculumCode != null
+                      ? 'Ngữ cảnh: Khung ${session.curriculumCode}'
+                      : 'Ngữ cảnh: Toàn bộ CSDL (${AppState.instance.stats['subjects'] ?? 0} môn)',
               actions: [
                 _statusChip(),
-                const SizedBox(width: 16),
-                Row(
-                  children: [
-                    Text(
-                      'Gửi kèm ngữ cảnh',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    Switch(
-                      value: _useContext,
-                      onChanged: (v) => setState(() => _useContext = v),
-                    ),
-                  ],
+                const SizedBox(width: 14),
+                Container(
+                  height: 16,
+                  width: 1,
+                  color: AppColors.border.withValues(alpha: 0.6),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 14),
+                _curriculumSelector(session, AppState.instance),
+                const SizedBox(width: 12),
+                _CompactSwitch(
+                  value: _useContext,
+                  onChanged: (v) => setState(() => _useContext = v),
+                ),
+                const SizedBox(width: 14),
+                Container(
+                  height: 16,
+                  width: 1,
+                  color: AppColors.border.withValues(alpha: 0.6),
+                ),
+                const SizedBox(width: 10),
                 IconButton(
                   tooltip: 'Tạo đoạn chat mới',
-                  icon: const Icon(Icons.add_comment_outlined),
+                  icon: const Icon(Icons.add_comment_outlined, size: 18),
+                  splashRadius: 16,
                   onPressed: () {
-                    ChatSessionService.instance.newSession();
+                    ChatSessionService.instance.newSession(
+                      curriculumCode: AppState.instance.activeCurriculumCode,
+                    );
                     setState(() {});
                   },
                 ),
+                const SizedBox(width: 2),
                 IconButton(
                   tooltip: 'Xoá đoạn chat này',
-                  icon: const Icon(Icons.delete_sweep_outlined),
+                  icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                  splashRadius: 16,
                   onPressed: messages.isEmpty
                       ? null
                       : () => setState(() {
@@ -217,7 +229,7 @@ class _AiChatPageState extends State<AiChatPage> {
             ),
             Expanded(
               child: messages.isEmpty
-                  ? _welcome()
+                  ? _welcome(session)
                   : ListView.builder(
                       controller: _scroll,
                       padding: const EdgeInsets.symmetric(
@@ -279,76 +291,221 @@ class _AiChatPageState extends State<AiChatPage> {
     );
   }
 
-  Widget _welcome() {
+  Widget _curriculumSelector(ChatSession session, AppState appState) {
+    final groups = appState.curriculumGroups.where((g) => !g.isUnassigned).toList();
+    if (groups.isEmpty) return const SizedBox.shrink();
+
+    final isDark = AppColors.isDark;
+    final selectedCode = session.curriculumCode;
+    final validCode = (selectedCode == null || groups.any((g) => g.code == selectedCode))
+        ? selectedCode
+        : null;
+
+    return Container(
+      height: 32,
+      constraints: const BoxConstraints(minWidth: 105, maxWidth: 150),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1B1B22) : const Color(0xFFF7F6FA),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: AppColors.border.withValues(alpha: 0.8),
+          width: 0.8,
+        ),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String?>(
+          value: validCode,
+          icon: Icon(Icons.arrow_drop_down, size: 18, color: AppColors.textSecondary),
+          isDense: true,
+          isExpanded: true,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
+          ),
+          dropdownColor: isDark ? const Color(0xFF1E1E26) : Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          selectedItemBuilder: (context) {
+            return [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.public, size: 13.5, color: AppColors.textSecondary),
+                  const SizedBox(width: 5),
+                  const Expanded(
+                    child: Text(
+                      'Toàn bộ CSDL',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              ...groups.map((g) {
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.school_outlined, size: 13.5, color: AppColors.primary),
+                    const SizedBox(width: 5),
+                    Expanded(
+                      child: Text(
+                        g.code,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              }),
+            ];
+          },
+          items: [
+            DropdownMenuItem<String?>(
+              value: null,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.public, size: 14, color: AppColors.textSecondary),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Toàn bộ CSDL',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ),
+            ...groups.map((g) {
+              return DropdownMenuItem<String?>(
+                value: g.code,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.school_outlined, size: 14, color: AppColors.primary),
+                    const SizedBox(width: 8),
+                    Text(
+                      g.isUnassigned ? 'Môn ngoài khung' : g.code,
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+          onChanged: (newCode) {
+            ChatSessionService.instance.setCurriculumCode(newCode);
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _welcome(ChatSession session) {
     return FutureBuilder<bool>(
       future: AiService.instance.isConfigured,
       builder: (context, snapshot) {
         final configured = snapshot.data ?? false;
-        final stats = AppState.instance.stats;
+        final state = AppState.instance;
+        final stats = state.stats;
+        final selectedCode = session.curriculumCode;
+
+        CurriculumGroup? currGroup;
+        if (selectedCode != null) {
+          for (final g in state.curriculumGroups) {
+            if (g.code == selectedCode) {
+              currGroup = g;
+              break;
+            }
+          }
+        }
+
+        final title = currGroup != null
+            ? 'Hỏi về lộ trình: ${currGroup.code}'
+            : 'Hỏi về lộ trình học của bạn';
+
+        final subtitle = !configured
+            ? 'Chưa có API key. Vào tab Cài đặt để nhập key của Gemini hoặc OpenAI trước khi chat.'
+            : currGroup != null
+                ? 'Khung ${currGroup.major.isNotEmpty ? currGroup.major : currGroup.name} · ${currGroup.totalSubjects} môn · ${currGroup.totalCredits} tín chỉ trong CSDL cục bộ của bạn.'
+                : 'Trợ lý đọc được ${stats['subjects'] ?? 0} môn và ${stats['edges'] ?? 0} liên kết trong CSDL cục bộ của bạn.';
+
+        final suggestions = currGroup != null
+            ? [
+                'Tổng quan lộ trình học của khung ${currGroup.code}?',
+                'Kỳ 0 và Kỳ 1 khung này cần học những môn chuẩn bị nào?',
+                'Các môn tiên quyết quan trọng nhất của ngành ${currGroup.major}?',
+                'Dựa vào bảng điểm của tôi, tôi còn thiếu những môn nào để tốt nghiệp?',
+              ]
+            : _suggestions;
 
         return Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 560),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(
-                  Icons.auto_awesome,
-                  size: 48,
-                  color: AppColors.primary,
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Hỏi về lộ trình học của bạn',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(32),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 580),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.auto_awesome,
+                    size: 48,
+                    color: AppColors.primary,
                   ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  configured
-                      ? 'Trợ lý đọc được ${stats['subjects'] ?? 0} môn và '
-                            '${stats['edges'] ?? 0} liên kết trong CSDL cục bộ '
-                            'của bạn.'
-                      : 'Chưa có API key. Vào tab Cài đặt để nhập key của '
-                            'Gemini hoặc OpenAI trước khi chat.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 13,
-                    height: 1.5,
-                    color: AppColors.textSecondary,
+                  const SizedBox(height: 16),
+                  Text(
+                    title,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 24),
-                Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final s in _suggestions)
-                      ActionChip(
-                        elevation: 0,
-                        pressElevation: 0,
-                        backgroundColor: AppColors.surface,
-                        side: BorderSide(color: AppColors.border),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        label: Text(
-                          s,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.textPrimary,
+                  const SizedBox(height: 8),
+                  Text(
+                    subtitle,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.5,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final s in suggestions)
+                        ActionChip(
+                          elevation: 0,
+                          pressElevation: 0,
+                          backgroundColor: AppColors.surface,
+                          side: BorderSide(color: AppColors.border),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
                           ),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          label: Text(
+                            s,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          onPressed: configured ? () => _send(s) : null,
                         ),
-                        onPressed: configured ? () => _send(s) : null,
-                      ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -667,7 +824,9 @@ class _RagContextPanelState extends State<_RagContextPanel> {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    'Graph RAG — ngữ cảnh đã trích từ đồ thị',
+                    summary.curriculumCode != null
+                        ? 'Graph RAG — ngữ cảnh Khung ${summary.curriculumCode}'
+                        : 'Graph RAG — ngữ cảnh đã trích từ đồ thị',
                     style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w700,
@@ -727,6 +886,7 @@ class _RagContextPanelState extends State<_RagContextPanel> {
               ),
             const SizedBox(height: 6),
             Text(
+              '${summary.curriculumCode != null ? "Khung ${summary.curriculumCode} · " : ""}'
               '${summary.nodeCount} node · ${summary.edgeCount} cạnh · '
               '~${summary.approxTokens} token · truy vấn SQLite '
               '${summary.elapsedMs}ms',
@@ -763,3 +923,71 @@ class _RagContextPanelState extends State<_RagContextPanel> {
     );
   }
 }
+
+class _CompactSwitch extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _CompactSwitch({
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = AppColors.isDark;
+    return InkWell(
+      onTap: () => onChanged(!value),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Ngữ cảnh',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: value ? AppColors.textPrimary : AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(width: 6),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              width: 32,
+              height: 18,
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(
+                color: value
+                    ? AppColors.primary
+                    : (isDark ? const Color(0xFF33333E) : const Color(0xFFD3D1DC)),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: AnimatedAlign(
+                duration: const Duration(milliseconds: 180),
+                alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+                child: Container(
+                  width: 14,
+                  height: 14,
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black26,
+                        blurRadius: 2,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
