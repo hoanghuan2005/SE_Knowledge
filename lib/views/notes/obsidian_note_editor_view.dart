@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../../models/subject.dart';
+import '../../services/obsidian_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
@@ -80,7 +81,7 @@ class _ObsidianNoteEditorViewState extends State<ObsidianNoteEditorView> {
     String path = s.notePath ?? '';
 
     if (vaultPath != null && vaultPath.isNotEmpty) {
-      path = '$vaultPath\\${s.code}.md';
+      path = '$vaultPath\\${ObsidianService.sanitizeFileStem(s.code)}.md';
       final file = File(path);
       if (await file.exists()) {
         try {
