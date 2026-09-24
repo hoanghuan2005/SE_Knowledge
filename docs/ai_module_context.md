@@ -47,6 +47,8 @@ Trước đây nó vẽ chữ thô, nên `**đậm**`, `### tiêu đề`, gạch
 
 Chỗ dễ sót: mã môn thật có dạng `SE_COM*2`, `PHE_COM*1` — chứa đúng hai ký tự Markdown dùng cho in đậm/nghiêng. Không thoát thì nhãn link vỡ, nên hàm `wikiLinksToMarkdown()` escape `*` và `_` trong nhãn mà vẫn giữ mã gốc trong URL. Hàm thuần, tách khỏi widget để test được mà không cần dựng UI.
 
+Ngoài `[[MÃ MÔN]]` — dạng prompt dặn model viết ra — hàm này còn bắt **mã môn viết rời** làm lưới an toàn cho lúc model quên bọc ngoặc. Cùng một lượt quét phân biệt năm thứ, và thứ tự các nhánh chính là thứ tự ưu tiên: khối ```` ``` ````, code trong dòng, `[[...]]`, link Markdown đã có sẵn, rồi mới tới mã viết rời. Thiếu bốn nhánh đầu thì `PRF192` nằm trong `` `PRF192` `` hay trong đích của một link cũng bị bọc thêm lần nữa.
+
 Cỡ tiêu đề bị ghi đè nhỏ lại (`h1`..`h4` chỉ nhỉnh hơn chữ thường 0–3pt): khung chat hẹp, để cỡ mặc định của theme thì một dòng `###` chiếm gần hết bề ngang.
 
 ### 2.1 Chat tổng quát
@@ -350,10 +352,10 @@ Câu *"tôi muốn làm AI Engineer nên học gì"*: **~4610 → ~866 token**, 
 | `sse_event_test.dart` | 21 | Gom sự kiện SSE, lọc `thought`, `finishReason`, phân loại lỗi tạm thời, xếp hàng model dự phòng |
 | `suggestion_lines_test.dart` | 6 | Làm sạch 4 câu gợi ý |
 | `academic_ai_cache_test.dart` | 6 | Cache nhận xét học lực, bỏ cache khi dữ liệu đổi, chịu được dữ liệu lưu hỏng |
-| `linked_answer_markdown_test.dart` | 7 | Đổi `[[MÃ]]` thành link Markdown, bỏ alias/neo, mã không có thật, escape `*`/`_` |
-| **Tổng phần AI** | **72** | |
+| `linked_answer_markdown_test.dart` | 12 | Đổi `[[MÃ]]` và mã viết rời thành link, bỏ alias/neo, mã không có thật, escape `*`/`_`, chừa khối code và link sẵn có |
+| **Tổng phần AI** | **77** | |
 
-Toàn dự án: **335 test — 332 pass / 3 fail**. Ba lỗi đều thuộc nhóm bảng điểm (`academic_analytics`, `transcript_db`, `transcript_parser`), nguyên nhân chung là thiếu file `test/fixtures/transcript/StudentTranscript_SE193040.xls`. **Không thuộc phân hệ AI.**
+Toàn dự án: **340 test — 337 pass / 3 fail**. Ba lỗi đều thuộc nhóm bảng điểm (`academic_analytics`, `transcript_db`, `transcript_parser`), nguyên nhân chung là thiếu file `test/fixtures/transcript/StudentTranscript_SE193040.xls`. **Không thuộc phân hệ AI.**
 
 `flutter analyze`: sạch.
 
@@ -386,6 +388,7 @@ Cả hai đều thuần chuyện sắp xếp code, không đổi gì với ngư�
 - **Rác trong danh mục môn**: có mục tên `CURRICULUM DETAILS BIT_IS_K20D` bị coi là một môn học và lọt vào ngữ cảnh gửi AI.
 - **3 test đỏ** vì thiếu file fixture bảng điểm.
 - **`_switchProvider` biến mất** khỏi trang Cài đặt: đổi tab Gemini ↔ OpenAI không nạp lại API key tương ứng.
+- **Thành viên khác sửa thẳng vào file của phân hệ AI.** Commit `ac94586` thêm lọc theo khung chương trình (`detectCurriculum`, tham số `curriculumCode`) vào `graph_rag_service.dart` (+170 dòng) và `ai_service.dart`, viết lại phần lớn `ai_chat_page.dart`. Git gộp sạch, không mất gì, và ý tưởng lọc theo khung chương trình hợp lý — nhưng phần này **chưa được người phụ trách phân hệ AI rà lại**, và chưa có test nào khoá nó. Cùng lúc đó hai người cùng sửa một lỗi hiển thị trong cùng một file mà không ai biết, dẫn tới xung đột phải giải tay. Nhóm nên chốt ranh giới file trước khi chia việc tiếp.
 
 ---
 
