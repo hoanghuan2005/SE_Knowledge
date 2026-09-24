@@ -4,6 +4,7 @@ import '../../models/curriculum.dart';
 import '../../models/subject.dart';
 import '../../models/transcript_entry.dart';
 import '../../services/academic_analytics_service.dart';
+import '../../services/chat_session_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/ui_helpers.dart';
@@ -25,7 +26,14 @@ class CurriculaOverviewPage extends StatefulWidget {
   /// Chuyển sang màn hình Sơ đồ (GraphPage).
   final VoidCallback onOpenCurriculum;
 
-  const CurriculaOverviewPage({super.key, required this.onOpenCurriculum});
+  /// Chuyển sang tab Trợ lý AI (AiChatPage).
+  final void Function(String? curriculumCode)? onOpenAiChat;
+
+  const CurriculaOverviewPage({
+    super.key,
+    required this.onOpenCurriculum,
+    this.onOpenAiChat,
+  });
 
   @override
   State<CurriculaOverviewPage> createState() => _CurriculaOverviewPageState();
@@ -146,7 +154,11 @@ class _CurriculaOverviewPageState extends State<CurriculaOverviewPage> {
                     )
                   : _mode == OverviewViewMode.chart
                   ? _ChartView(summaries: summaries, onOpen: _open)
-                  : _ListView(summaries: summaries, onOpen: _open),
+                  : _ListView(
+                      summaries: summaries,
+                      onOpen: _open,
+                      onOpenAiChat: widget.onOpenAiChat,
+                    ),
             ),
           ],
         );
@@ -309,8 +321,13 @@ class _Summary {
 class _ListView extends StatelessWidget {
   final List<_Summary> summaries;
   final void Function(CurriculumGroup, CurriculumView) onOpen;
+  final void Function(String? curriculumCode)? onOpenAiChat;
 
-  const _ListView({required this.summaries, required this.onOpen});
+  const _ListView({
+    required this.summaries,
+    required this.onOpen,
+    this.onOpenAiChat,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -321,7 +338,11 @@ class _ListView extends StatelessWidget {
         _DomainLegend(domains: domains),
         const SizedBox(height: 12),
         for (final s in summaries) ...[
-          _CurriculumCard(summary: s, onOpen: onOpen),
+          _CurriculumCard(
+            summary: s,
+            onOpen: onOpen,
+            onOpenAiChat: onOpenAiChat,
+          ),
           const SizedBox(height: 12),
         ],
       ],
@@ -332,8 +353,13 @@ class _ListView extends StatelessWidget {
 class _CurriculumCard extends StatefulWidget {
   final _Summary summary;
   final void Function(CurriculumGroup, CurriculumView) onOpen;
+  final void Function(String? curriculumCode)? onOpenAiChat;
 
-  const _CurriculumCard({required this.summary, required this.onOpen});
+  const _CurriculumCard({
+    required this.summary,
+    required this.onOpen,
+    this.onOpenAiChat,
+  });
 
   @override
   State<_CurriculumCard> createState() => _CurriculumCardState();
@@ -510,6 +536,35 @@ class _CurriculumCardState extends State<_CurriculumCard> {
                           ),
                         ),
                         onPressed: () => TranscriptImportDialog.pickAndShow(context),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    SizedBox(
+                      height: 32,
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.auto_awesome, size: 14, color: AppColors.primary),
+                        label: const Text(
+                          'Hỏi AI',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(
+                            color: AppColors.primary.withValues(alpha: 0.45),
+                            width: 1.0,
+                          ),
+                          foregroundColor: AppColors.primary,
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                        onPressed: () {
+                          ChatSessionService.instance.newSession(
+                            curriculumCode: g.isUnassigned ? null : g.code,
+                            title: g.isUnassigned ? 'Hỏi về các môn tự do' : 'Hỏi về ${g.code}',
+                          );
+                          widget.onOpenAiChat?.call(g.code);
+                        },
                       ),
                     ),
                     const SizedBox(width: 6),

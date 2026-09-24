@@ -15,8 +15,13 @@ import 'subject_form_dialog.dart';
 /// và gom nhóm trực quan theo Học kỳ.
 class SubjectsPage extends StatefulWidget {
   final bool showHeader;
+  final bool showDetailPanel;
 
-  const SubjectsPage({super.key, this.showHeader = true});
+  const SubjectsPage({
+    super.key,
+    this.showHeader = true,
+    this.showDetailPanel = true,
+  });
 
   @override
   State<SubjectsPage> createState() => _SubjectsPageState();
@@ -26,6 +31,8 @@ class _SubjectsPageState extends State<SubjectsPage> {
   final TextEditingController _search = TextEditingController();
   String _keyword = '';
   int? _semesterFilter;
+  bool _showSidebar = true;
+  int? _lastSelectedId;
 
   @override
   void dispose() {
@@ -59,6 +66,11 @@ class _SubjectsPageState extends State<SubjectsPage> {
         final state = AppState.instance;
         final currentGraph = state.currentGraph;
         final rows = _filter(currentGraph.subjects);
+
+        if (state.selectedSubjectId != null && state.selectedSubjectId != _lastSelectedId) {
+          _lastSelectedId = state.selectedSubjectId;
+          _showSidebar = true;
+        }
 
         // Gom các kỳ có trong curriculum hiện tại để đưa vào filter
         final availableSemesters = currentGraph.subjects
@@ -167,7 +179,10 @@ class _SubjectsPageState extends State<SubjectsPage> {
                   ],
                 ),
               ),
-              const SubjectDetailPanel(),
+              if (widget.showDetailPanel && _showSidebar)
+                SubjectDetailPanel(
+                  onClose: () => setState(() => _showSidebar = false),
+                ),
             ],
           );
         }
@@ -320,6 +335,37 @@ class _SubjectsPageState extends State<SubjectsPage> {
                     onPressed: () => SubjectFormDialog.show(context),
                   ),
                 ),
+                if (widget.showDetailPanel) ...[
+                  const SizedBox(width: 8),
+                  Tooltip(
+                    message: _showSidebar ? 'Thu gọn bảng chi tiết' : 'Mở bảng chi tiết môn học',
+                    child: InkWell(
+                      onTap: () => setState(() => _showSidebar = !_showSidebar),
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: _showSidebar
+                              ? AppColors.primary.withValues(alpha: 0.12)
+                              : AppColors.surface,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: _showSidebar
+                                ? AppColors.primary.withValues(alpha: 0.5)
+                                : AppColors.border,
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.vertical_split_outlined,
+                          size: 16,
+                          color: _showSidebar ? AppColors.primary : AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
             Expanded(
@@ -338,7 +384,10 @@ class _SubjectsPageState extends State<SubjectsPage> {
                           )
                         : _Table(rows: rows),
                   ),
-                  const SubjectDetailPanel(),
+                  if (widget.showDetailPanel && _showSidebar)
+                    SubjectDetailPanel(
+                      onClose: () => setState(() => _showSidebar = false),
+                    ),
                 ],
               ),
             ),

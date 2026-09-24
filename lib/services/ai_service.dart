@@ -195,7 +195,10 @@ class AiService {
   Future<AiAnswer> ask({
     required String question,
     List<ChatMessage> history = const [],
+    /// Khung chương trình đào tạo cụ thể được chọn cho phiên chat này.
+    String? curriculumCode,
     bool includeKnowledgeContext = true,
+
     /// Ngữ cảnh cố định do màn hình gọi tự cung cấp (ví dụ nội dung file .md
     /// của một môn cụ thể). Khi có giá trị này, Graph RAG bị bỏ qua hoàn
     /// toàn — dùng cho chat theo từng môn học (xem `SubjectChatService`),
@@ -242,7 +245,10 @@ class AiService {
 
     GraphRagContext? ragContext;
     if (extraContext == null && includeKnowledgeContext) {
-      ragContext = await _graphRag.buildContext(question);
+      ragContext = await _graphRag.buildContext(
+        question,
+        curriculumCode: curriculumCode,
+      );
       onContext?.call(ragContext.summary);
     }
 
@@ -251,6 +257,7 @@ class AiService {
         ? _minimalSystemPrompt(context)
         : _systemPrompt(
             context,
+            major: ragContext?.summary.curriculumName,
             hasGrades: extraContext != null
                 ? extraContextHasGrades
                 : (ragContext?.summary.includesTranscript ?? false),
@@ -403,12 +410,18 @@ class AiService {
   /// Quy tắc viết mã môn trong `[[...]]` là điều kiện để Citation Linker ở
   /// tầng UI biến chúng thành link bấm được — bỏ dòng đó thì AI trả về chữ
   /// thường và không còn link nào để bóc.
-  String _systemPrompt(String context, {bool hasGrades = false}) {
+  String _systemPrompt(
+    String context, {
+    String? major,
+    bool hasGrades = false,
+  }) {
+    final audience = (major != null && major.isNotEmpty)
+        ? 'sinh viên ngành $major FPTU'
+        : 'sinh viên FPTU';
     final sb = StringBuffer()
       ..writeln(
-        'Bạn là gia sư học tập trong ứng dụng SE Knowledge, giúp sinh viên '
-        'ngành Kỹ thuật phần mềm FPTU lập lộ trình học dựa trên đồ thị môn '
-        'tiên quyết của chính họ.',
+        'Bạn là gia sư học tập trong ứng dụng SE Knowledge, giúp $audience '
+        'lập lộ trình học dựa trên đồ thị môn tiên quyết của chính họ.',
       )
       ..writeln()
       ..writeln('Quy tắc trả lời:')

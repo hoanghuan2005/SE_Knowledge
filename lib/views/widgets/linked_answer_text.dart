@@ -1,27 +1,43 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
-import '../../services/obsidian_service.dart';
 import '../../state/app_state.dart';
 import '../../utils/app_colors.dart';
 
-/// Hiển thị câu trả lời của AI: render Markdown và biến `[[MÃ MÔN]]` thành
-/// liên kết bấm được, bấm vào là mở note của môn đó.
+/// Hiển thị câu trả lời của AI: render Markdown và biến mã môn thành liên kết
+/// bấm được, bấm vào là mở note của môn đó.
 ///
 /// Trước đây chỗ này vẽ chữ thô, nên `**đậm**`, `### tiêu đề` và gạch đầu
 /// dòng của model hiện ra nguyên dấu sao — câu trả lời đầy `*` rất khó đọc.
 ///
-/// Mã nào không có trong CSDL thì để nguyên chữ thường, không tạo link chết.
-///
 /// Dùng chung cho tab Trợ lý AI, chat theo môn và tab Học lực: ba màn hình
 /// cùng hiển thị câu trả lời của AI, chép đôi thì sửa một chỗ quên chỗ kia.
+
 /// Giao thức tự đặt cho liên kết nội bộ. Cố tình không dùng `http` để chắc
 /// chắn không có gì mở trình duyệt ngoài.
 const String subjectLinkScheme = 'se-subject:';
 
-/// Đổi `[[MÃ MÔN]]` thành liên kết Markdown trỏ vào [subjectLinkScheme].
+/// Một lượt quét duy nhất, phân biệt năm thứ cần xử lý khác nhau.
 ///
-/// Mã không có trong [knownCodes] thì trả về chữ thường, không tạo link chết.
+/// Thứ tự các nhánh là thứ tự ưu tiên: khối code và link có sẵn phải được
+/// nhận ra **trước** mã môn viết rời, nếu không thì `PRF192` nằm trong
+/// `` `PRF192` `` hay trong đích của một link cũng bị bọc thêm lần nữa.
+final RegExp _tokenPattern = RegExp(
+  r'```[\s\S]*?```' // khối code nhiều dòng
+  r'|`[^`\n]*`' // code trong dòng
+  r'|\[\[([^\[\]]+?)\]\]' // [[MÃ MÔN]], kèm cả bí danh và neo
+  r'|\[[^\]\n]*\]\([^)\n]*\)' // link Markdown đã có sẵn
+  r'|\b([A-Z]{2,4}\d{2,4}[A-Z0-9_]*)\b', // mã môn viết rời
+);
+
+/// Đổi mã môn trong [text] thành liên kết Markdown trỏ vào [subjectLinkScheme].
+///
+/// Nhận hai dạng:
+/// - `[[CSD201]]` — dạng prompt dặn model viết ra;
+/// - `CSD201` viết rời — lưới an toàn cho lúc model quên bọc ngoặc.
+///
+/// Mã không có trong [knownCodes] thì giữ nguyên chữ thường, không tạo link
+/// chết. Phần trong khối code và trong link đã có sẵn được để yên.
 ///
 /// Hàm thuần, tách khỏi widget để test được mà không cần dựng UI hay CSDL.
 String wikiLinksToMarkdown(String text, Set<String> knownCodes) {
@@ -30,12 +46,25 @@ String wikiLinksToMarkdown(String text, Set<String> knownCodes) {
   String escape(String value) =>
       value.replaceAll('*', r'\*').replaceAll('_', r'\_');
 
-  return text.replaceAllMapped(ObsidianService.wikiLinkPattern, (match) {
-    final raw = match.group(1) ?? '';
-    // Chấp nhận cả "[[CSD201|Cấu trúc dữ liệu]]" lẫn "[[CSD201#Mục]]".
-    final code = raw.split(RegExp(r'[|#]')).first.trim().toUpperCase();
-    if (!knownCodes.contains(code)) return escape(raw);
-    return '[${escape(code)}]($subjectLinkScheme$code)';
+  String link(String code) => '[${escape(code)}]($subjectLinkScheme$code)';
+
+  return text.replaceAllMapped(_tokenPattern, (match) {
+    final whole = match.group(0)!;
+
+    final wiki = match.group(1);
+    if (wiki != null) {
+      // Chấp nhận cả "[[CSD201|Cấu trúc dữ liệu]]" lẫn "[[CSD201#Mục]]".
+      final code = wiki.split(RegExp(r'[|#]')).first.trim().toUpperCase();
+      return knownCodes.contains(code) ? link(code) : escape(wiki);
+    }
+
+    final bare = match.group(2);
+    if (bare != null) {
+      return knownCodes.contains(bare) ? link(bare) : whole;
+    }
+
+    // Khối code hoặc link đã có sẵn — không đụng vào.
+    return whole;
   });
 }
 
@@ -77,9 +106,14 @@ class LinkedAnswerText extends StatelessWidget {
       listBullet: base,
       strong: base.copyWith(fontWeight: FontWeight.w700),
       em: base.copyWith(fontStyle: FontStyle.italic),
+      // Gạch chân chấm lấy từ bản của nhánh kia: link mã môn phải nhìn ra
+      // được là bấm được, chứ chỉ đổi màu thì dễ tưởng là chữ tô màu.
       a: base.copyWith(
         color: AppColors.primary,
         fontWeight: FontWeight.w600,
+        decoration: TextDecoration.underline,
+        decorationStyle: TextDecorationStyle.dotted,
+        decorationColor: AppColors.primary.withValues(alpha: 0.6),
       ),
       code: base.copyWith(
         fontFamily: 'monospace',

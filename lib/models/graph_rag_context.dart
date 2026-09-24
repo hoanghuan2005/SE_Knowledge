@@ -16,6 +16,12 @@ class GraphRagSummary {
   /// cho người dùng biết lần hỏi này có gửi điểm đi hay không.
   final bool includesTranscript;
 
+  /// Mã khung CTĐT được dùng làm ngữ cảnh (null nếu dùng toàn bộ CSDL hoặc không giới hạn khung).
+  final String? curriculumCode;
+
+  /// Tên chuyên ngành / khung CTĐT hiển thị trên UI.
+  final String? curriculumName;
+
   const GraphRagSummary({
     required this.matchedCodes,
     required this.nodeCount,
@@ -24,6 +30,8 @@ class GraphRagSummary {
     required this.elapsedMs,
     this.isFallbackFullGraph = false,
     this.includesTranscript = false,
+    this.curriculumCode,
+    this.curriculumName,
   });
 
   Map<String, Object?> toJson() => {
@@ -34,6 +42,8 @@ class GraphRagSummary {
         'elapsedMs': elapsedMs,
         'isFallbackFullGraph': isFallbackFullGraph,
         'includesTranscript': includesTranscript,
+        'curriculumCode': curriculumCode,
+        'curriculumName': curriculumName,
       };
 
   factory GraphRagSummary.fromJson(Map<String, dynamic> json) =>
@@ -47,6 +57,8 @@ class GraphRagSummary {
         elapsedMs: json['elapsedMs'] as int? ?? 0,
         isFallbackFullGraph: json['isFallbackFullGraph'] as bool? ?? false,
         includesTranscript: json['includesTranscript'] as bool? ?? false,
+        curriculumCode: json['curriculumCode'] as String?,
+        curriculumName: json['curriculumName'] as String?,
       );
 }
 

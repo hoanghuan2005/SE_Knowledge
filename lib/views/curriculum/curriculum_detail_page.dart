@@ -8,6 +8,7 @@ import '../../utils/ui_helpers.dart';
 import '../subjects/roadmap_dialog.dart';
 import '../subjects/subject_form_dialog.dart';
 import '../subjects/subjects_page.dart';
+import '../widgets/subject_detail_panel.dart';
 import 'semester_board_view.dart';
 
 enum _DetailViewMode { board, subjects }
@@ -35,6 +36,8 @@ class CurriculumDetailPage extends StatefulWidget {
 
 class _CurriculumDetailPageState extends State<CurriculumDetailPage> {
   _DetailViewMode _viewMode = _DetailViewMode.board;
+  bool _showSidebar = true;
+  int? _lastSelectedId;
 
   String _cleanDisplayName(CurriculumGroup g) {
     if (g.isUnassigned) {
@@ -86,6 +89,11 @@ class _CurriculumDetailPageState extends State<CurriculumDetailPage> {
         final currentGraph = state.currentGraph;
         final subjects = currentGraph.subjects;
         final totalCredits = subjects.fold<int>(0, (sum, s) => sum + s.credits);
+
+        if (state.selectedSubjectId != null && state.selectedSubjectId != _lastSelectedId) {
+          _lastSelectedId = state.selectedSubjectId;
+          _showSidebar = true;
+        }
 
         return Column(
           children: [
@@ -273,19 +281,61 @@ class _CurriculumDetailPageState extends State<CurriculumDetailPage> {
                       onPressed: () => SubjectFormDialog.show(context),
                     ),
                   ),
+                  const SizedBox(width: 8),
+
+                  // Nút đóng/mở Sidebar chi tiết môn học bên phải
+                  Tooltip(
+                    message: _showSidebar ? 'Thu gọn bảng chi tiết' : 'Mở bảng chi tiết môn học',
+                    child: InkWell(
+                      onTap: () => setState(() => _showSidebar = !_showSidebar),
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: _showSidebar
+                              ? AppColors.primary.withValues(alpha: 0.12)
+                              : AppColors.surface,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: _showSidebar
+                                ? AppColors.primary.withValues(alpha: 0.5)
+                                : AppColors.border,
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.vertical_split_outlined,
+                          size: 16,
+                          color: _showSidebar ? AppColors.primary : AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
 
             // Thân trang: Bảng học kỳ hoặc Danh sách môn
             Expanded(
-              child: _viewMode == _DetailViewMode.board
-                  ? SemesterBoardView(
-                      data: currentGraph,
-                    )
-                  : const SubjectsPage(
-                      showHeader: false,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _viewMode == _DetailViewMode.board
+                        ? SemesterBoardView(
+                            data: currentGraph,
+                          )
+                        : const SubjectsPage(
+                            showHeader: false,
+                            showDetailPanel: false,
+                          ),
+                  ),
+                  if (_showSidebar)
+                    SubjectDetailPanel(
+                      onClose: () => setState(() => _showSidebar = false),
                     ),
+                ],
+              ),
             ),
           ],
         );

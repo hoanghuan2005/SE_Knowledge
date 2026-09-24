@@ -17,7 +17,9 @@ import 'subject_delete_dialog.dart';
 /// dung .md và tự đề xuất câu hỏi), tab "Chi tiết" bên cạnh giữ nguyên thông
 /// tin môn, tiên quyết và môn mở ra như trước.
 class SubjectDetailPanel extends StatefulWidget {
-  const SubjectDetailPanel({super.key});
+  final VoidCallback? onClose;
+
+  const SubjectDetailPanel({super.key, this.onClose});
 
   @override
   State<SubjectDetailPanel> createState() => _SubjectDetailPanelState();
@@ -49,7 +51,7 @@ class _SubjectDetailPanelState extends State<SubjectDetailPanel> {
             border: Border(left: BorderSide(color: AppColors.divider)),
           ),
           child: subject == null
-              ? const _NoSelection()
+              ? _NoSelection(onClose: widget.onClose)
               : Column(
                   children: [
                     Container(
@@ -75,7 +77,13 @@ class _SubjectDetailPanelState extends State<SubjectDetailPanel> {
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                             color: AppColors.textSecondary,
-                            onPressed: () => AppState.instance.select(null),
+                            onPressed: () {
+                              if (widget.onClose != null) {
+                                widget.onClose!();
+                              } else {
+                                AppState.instance.select(null);
+                              }
+                            },
                           ),
                         ],
                       ),
@@ -208,19 +216,45 @@ class _ToggleItem extends StatelessWidget {
 }
 
 class _NoSelection extends StatelessWidget {
-  const _NoSelection();
+  final VoidCallback? onClose;
+
+  const _NoSelection({this.onClose});
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.all(24),
-      child: EmptyState(
-        icon: Icons.touch_app_outlined,
-        title: 'Chưa chọn môn nào',
-        message:
-            'Bấm vào một node trên đồ thị hoặc một dòng trong danh sách môn '
-            'để xem chi tiết và quản lý liên kết tiên quyết.',
-      ),
+    return Column(
+      children: [
+        if (onClose != null)
+          Container(
+            height: 40,
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: AppColors.divider)),
+            ),
+            child: IconButton(
+              tooltip: 'Đóng bảng chi tiết',
+              icon: const Icon(Icons.close, size: 16),
+              splashRadius: 14,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              color: AppColors.textSecondary,
+              onPressed: onClose,
+            ),
+          ),
+        const Expanded(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: EmptyState(
+              icon: Icons.touch_app_outlined,
+              title: 'Chưa chọn môn nào',
+              message:
+                  'Bấm vào một node trên đồ thị hoặc một thẻ môn học '
+                  'để xem chi tiết và quản lý liên kết tiên quyết.',
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
