@@ -255,7 +255,13 @@ gemini-3.5-flash-lite · gemini-3.1-flash-lite · gemini-2.5-flash-lite
 gemini-3.5-flash      · gemini-2.5-flash
 ```
 
-OpenAI để trống vì chưa có ID đã kiểm chứng.
+Bên OpenAI tiêu chí khác, vì **hạn mức tính chung cả tổ chức chứ không tách theo từng model** — ở đó cái lợi thuần là tiền, nên danh sách xếp theo giá:
+
+```
+gpt-6-luna   $0.10/$0.50   ·  gpt-5-nano  $0.05/$0.40
+gpt-4.1-nano $0.10/$0.40   ·  gpt-5.4-nano $0.20/$1.25
+gpt-5.6-luna $0.20/$1.20   ·  gpt-4o-mini $0.15/$0.60
+```
 
 Chọn sai cũng không mất tính năng: 404/400 → lùi về model chính ngay trong lượt đó, và ngừng thử model phụ cả phiên.
 
@@ -284,6 +290,22 @@ Timeout được tính là quá tải sau khi quan sát thực tế: model chín
 Trang Cài đặt in nguyên chuỗi này ngay dưới ô chọn model, kèm dòng nói rõ danh sách cố định và model nào key không dùng được thì tự bỏ qua — để khi ghi chú kia hiện lên giữa buổi demo thì người dùng đã biết trước nó là gì.
 
 **Đã xác nhận chạy thật**: gặp 503 trong lúc dùng, câu trả lời trả về kèm dòng *"(Model chính đang quá tải nên câu trả lời này do gemini-2.5-flash viết.)"*
+
+Chuỗi bên OpenAI dựng theo đúng tiêu chí đó: `gpt-6-sol` → `gpt-5.6-sol` → `gpt-6-luna`. `gpt-6-astra` **cố tình không có mặt** dù mạnh nhất — nó đắt gấp 5 lần `gpt-6-sol`, mà đường này chạy tự động nên người dùng không kịp biết để từ chối.
+
+### 4.3 Hai nhà cung cấp phải tách hẳn
+
+**API key lưu riêng từng bên.** Tầng lưu trữ vốn đã đúng — `_apiKeyStorageKey(provider)` cho ra hai ô khác nhau. Lỗi nằm ở giao diện: đổi tab chỉ đổi tên model, **không đọc lại key**, nên ô key vẫn hiện key của bên kia. Nhìn thì tưởng hai bên dùng chung một key; thật ra tệ hơn thế — bấm *Lưu cấu hình* lúc đó là ghi cái key đang hiện vào đúng slot của provider mới, **xoá mất key thật đã lưu trước đó**.
+
+Nay `_switchProvider()` nạp lại cả ba thứ (key, model chính, model phụ) của provider vừa chọn, và ghi luôn lựa chọn provider xuống bộ nhớ thay vì đợi bấm Lưu — các ô bên dưới đã đọc theo provider thì để lệch giữa UI và nơi lưu chỉ sinh thêm ca lạ.
+
+**Tham số request khác nhau theo họ model.** Từ GPT-5 và các dòng `o` trở đi, `/chat/completions` từ chối `max_tokens` (phải là `max_completion_tokens`) và chỉ nhận `temperature` mặc định.
+
+Đây là loại lỗi khó lần ra nhất trong cả phân hệ, vì nó **ngụy trang**: API trả 400, mà 400 bị `isModelUnavailableStatus()` xếp vào nhóm "model không dùng được" — đúng với ca gõ sai tên model, nhưng ở đây thì sai. Triệu chứng ngoài app sẽ là chọn model GPT-5/6 nào cũng lặng lẽ tụt về model chính, không một dòng báo lỗi nào nói rằng tham số mới là thứ sai.
+
+`openAiUsesReasoningParams()` nhận diện theo **họ model** (`^o\d`, hoặc `gpt-N` với N ≥ 5) chứ không theo danh sách tên cụ thể, để bản mới ra sau không phải sửa code. Tên lạ thì chọn hợp đồng cũ vì đó là dạng phổ biến hơn ở các endpoint tương thích OpenAI.
+
+**Chưa chạy thử với key OpenAI thật.** Toàn bộ mục này suy ra từ tài liệu API và được khoá bằng test đơn vị; đường end-to-end sang OpenAI vẫn chưa ai thực thi. Ghi lại ở mục 8.1.
 
 ---
 
@@ -353,13 +375,20 @@ Câu *"tôi muốn làm AI Engineer nên học gì"*: **~4610 → ~866 token**, 
 | `suggestion_lines_test.dart` | 6 | Làm sạch 4 câu gợi ý |
 | `academic_ai_cache_test.dart` | 6 | Cache nhận xét học lực, bỏ cache khi dữ liệu đổi, chịu được dữ liệu lưu hỏng |
 | `linked_answer_markdown_test.dart` | 12 | Đổi `[[MÃ]]` và mã viết rời thành link, bỏ alias/neo, mã không có thật, escape `*`/`_`, chừa khối code và link sẵn có |
-| **Tổng phần AI** | **77** | |
+| `openai_provider_test.dart` | 10 | Tham số theo họ model GPT-5/6, tính nhất quán của ba danh sách model |
+| `ai_provider_keys_test.dart` | 6 | Mỗi nhà cung cấp giữ API key / model / model phụ riêng |
+| **Tổng phần AI** | **93** | |
 
-Toàn dự án: **340 test — 337 pass / 3 fail**. Ba lỗi đều thuộc nhóm bảng điểm (`academic_analytics`, `transcript_db`, `transcript_parser`), nguyên nhân chung là thiếu file `test/fixtures/transcript/StudentTranscript_SE193040.xls`. **Không thuộc phân hệ AI.**
+Toàn dự án: **356 test — 351 pass / 5 fail**, **không lỗi nào thuộc phân hệ AI**:
+
+| Nhóm | Nguyên nhân |
+|---|---|
+| `academic_analytics`, `transcript_db`, `transcript_parser` | Thiếu file `test/fixtures/transcript/StudentTranscript_SE193040.xls` — chưa ai commit lên |
+| `md_intake_service` ×2 | Test đọc phải SharedPreferences thật của máy thay vì bản giả, nên kỳ vọng thư mục `fap_inbox` còn thực tế nhận `…\BIT_SE_K19B\FAP`. Đã kiểm chứng bằng cách stash toàn bộ thay đổi: hỏng y hệt, không do lần sửa này |
 
 `flutter analyze`: sạch.
 
-Nguyên tắc khi viết test: mọi logic quyết định được tách thành **hàm thuần** để test không cần mạng hay DB — `sseEventPayloads`, `geminiVisibleText`, `isTransientAiStatus`, `fallbackModelOrder`, `ambiguousCodeMatches`, `findSeeds`, `cleanSuggestionLines`, `wikiLinksToMarkdown`.
+Nguyên tắc khi viết test: mọi logic quyết định được tách thành **hàm thuần** để test không cần mạng hay DB — `sseEventPayloads`, `geminiVisibleText`, `isTransientAiStatus`, `fallbackModelOrder`, `ambiguousCodeMatches`, `findSeeds`, `cleanSuggestionLines`, `wikiLinksToMarkdown`, `openAiUsesReasoningParams`, `openAiRequestBody`.
 
 ---
 
@@ -368,6 +397,8 @@ Nguyên tắc khi viết test: mọi logic quyết định được tách thành
 ### 8.1 Giới hạn thiết kế đã biết
 
 **Ngữ cảnh chi tiết vẫn cắt ở 20 môn khi có điểm.** Điểm của những môn bị cắt nay đã được gửi kèm dạng dòng gọn (mục 3.6), nên câu hỏi so sánh trả lời đúng được. Nhưng phần **mô tả, quan hệ tiên quyết, đề cương** của chúng thì vẫn không có — hỏi sâu về một môn nằm ngoài subgraph thì AI chỉ biết mỗi điểm số.
+
+**Đường OpenAI chưa chạy thử với key thật.** Danh sách model, chuỗi dự phòng và hợp đồng tham số `max_completion_tokens` đều suy ra từ tài liệu API và được khoá bằng test đơn vị, nhưng chưa có lượt gọi end-to-end nào sang `api.openai.com`. Gemini thì ngược lại — đã chạy thật trên cả ba màn hình. Ai có key OpenAI chỉ cần dán vào tab OpenAI trong Cài đặt là kiểm chứng được trong một phút.
 
 **Streaming chỉ chạy thật trên Desktop.** `package:http` trên web dùng `BrowserClient` gom trọn response rồi mới trả, nên `response.stream` chỉ phát một lần ở cuối. Hiện chưa phải vấn đề vì app chốt là desktop (SQLite FFI + `path_provider` vốn không chạy web), chỉ thành vấn đề nếu nhóm quay lại làm bản Web.
 
@@ -387,7 +418,7 @@ Cả hai đều thuần chuyện sắp xếp code, không đổi gì với ngư�
 - **CSDL không có môn AI nào.** `artificial intelligence` khớp 0/64 môn. Mọi câu hỏi định hướng AI đều phải trả lời "chương trình không có môn này" — đúng nhưng nghèo. Thuộc khâu nhập dữ liệu FAP.
 - **Rác trong danh mục môn**: có mục tên `CURRICULUM DETAILS BIT_IS_K20D` bị coi là một môn học và lọt vào ngữ cảnh gửi AI.
 - **3 test đỏ** vì thiếu file fixture bảng điểm.
-- **`_switchProvider` biến mất** khỏi trang Cài đặt: đổi tab Gemini ↔ OpenAI không nạp lại API key tương ứng.
+- **Test `md_intake_service` đọc SharedPreferences thật của máy** thay vì bản giả, nên hai ca đỏ tuỳ theo thư mục FAP người dùng đang đặt. Cách sửa: gọi `SharedPreferences.setMockInitialValues({})` trong `setUp`, giống `academic_ai_cache_test.dart` đang làm.
 - **Thành viên khác sửa thẳng vào file của phân hệ AI.** Commit `ac94586` thêm lọc theo khung chương trình (`detectCurriculum`, tham số `curriculumCode`) vào `graph_rag_service.dart` (+170 dòng) và `ai_service.dart`, viết lại phần lớn `ai_chat_page.dart`. Git gộp sạch, không mất gì, và ý tưởng lọc theo khung chương trình hợp lý — nhưng phần này **chưa được người phụ trách phân hệ AI rà lại**, và chưa có test nào khoá nó. Cùng lúc đó hai người cùng sửa một lỗi hiển thị trong cùng một file mà không ai biết, dẫn tới xung đột phải giải tay. Nhóm nên chốt ranh giới file trước khi chia việc tiếp.
 
 ---

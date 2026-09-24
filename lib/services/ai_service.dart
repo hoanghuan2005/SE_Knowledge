@@ -93,6 +93,46 @@ List<String> fallbackModelOrder({
 bool isTransientAiStatus(int status) =>
     status == 429 || (status >= 500 && status <= 599);
 
+/// Dòng model suy luận của OpenAI có hợp đồng tham số khác dòng cũ.
+///
+/// Từ GPT-5 và các dòng `o` trở đi, `/chat/completions` **từ chối** `max_tokens`
+/// (phải đổi sang `max_completion_tokens`) và chỉ nhận `temperature` mặc định.
+/// Gửi sai thì API trả 400 — mà 400 bị [isModelUnavailableStatus] coi là "model
+/// không dùng được", nên triệu chứng ngoài app là chọn model nào cũng lặng lẽ
+/// tụt về model chính, chứ không hiện ra là lỗi tham số.
+///
+/// Nhận diện theo họ model chứ không theo danh sách tên cụ thể, để bản mới ra
+/// sau không phải sửa code.
+bool openAiUsesReasoningParams(String model) {
+  final id = model.trim().toLowerCase();
+  if (RegExp(r'^o\d').hasMatch(id)) return true;
+  final match = RegExp(r'^gpt-(\d+)').firstMatch(id);
+  if (match == null) return false;
+  return int.parse(match.group(1)!) >= 5;
+}
+
+/// Dựng phần thân request cho `/chat/completions`, tách theo họ model.
+///
+/// Hàm thuần, tách khỏi [AiService] để test được mà không cần gọi mạng.
+Map<String, Object?> openAiRequestBody({
+  required String model,
+  required List<Map<String, String>> messages,
+  required int maxOutputTokens,
+}) {
+  final reasoning = openAiUsesReasoningParams(model);
+  return {
+    'model': model,
+    'messages': messages,
+    // Dòng suy luận chỉ chấp nhận temperature mặc định, gửi kèm là 400.
+    if (!reasoning) 'temperature': 0.4,
+    if (reasoning)
+      'max_completion_tokens': maxOutputTokens
+    else
+      'max_tokens': maxOutputTokens,
+    'stream': true,
+  };
+}
+
 /// Lấy phần chữ **hiển thị được** từ một chunk SSE của Gemini.
 ///
 /// Model đời mới trả kèm những `parts` gắn cờ `thought: true` — đó là phần
@@ -586,13 +626,13 @@ class AiService {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $apiKey',
       },
-      body: jsonEncode({
-        'model': model,
-        'messages': messages,
-        'temperature': 0.4,
-        'max_tokens': maxOutputTokens,
-        'stream': true,
-      }),
+      body: jsonEncode(
+        openAiRequestBody(
+          model: model,
+          messages: messages,
+          maxOutputTokens: maxOutputTokens,
+        ),
+      ),
       onDelta: onDelta,
       extract: (chunk) {
         final choices = chunk['choices'] as List?;
